@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import {
-  GraduationCap, Plus, Trash2, Upload, UserPlus, Users, FolderPlus, CheckSquare, Square
+  GraduationCap, Plus, Trash2, Upload, UserPlus, Users, FolderPlus, CheckSquare, Square, FileSpreadsheet
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
@@ -114,7 +114,25 @@ export default function VisorCurso({
     cargarEstudiantesCurso(cursoActivoId);
   };
 
-  // Subir Excel masivo
+  // Descargar plantilla oficial Excel (.xlsx)
+  const descargarPlantillaExcel = () => {
+    const datosPlantilla = [
+      { RUT: '21.111.111-1', Nombre: 'Ejemplo: Sofía Martínez Rojas' },
+      { RUT: '21.222.222-2', Nombre: 'Ejemplo: Mateo González Silva' }
+    ];
+
+    const hoja = XLSX.utils.json_to_sheet(datosPlantilla);
+    hoja['!cols'] = [{ wch: 18 }, { wch: 40 }];
+
+    const libro = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(libro, hoja, 'Nomina_Curso');
+
+    const cursoObj = cursos.find((c) => c.id === cursoActivoId);
+    const sufijo = cursoObj ? `_${cursoObj.nombre.replace(/\s+/g, '_')}` : '';
+    XLSX.writeFile(libro, `Plantilla_Estudiantes${sufijo}.xlsx`);
+  };
+
+  // Subir Excel masivo completado
   const manejarExcel = (e) => {
     const file = e.target.files[0];
     if (!file || !cursoActivoId) return;
@@ -126,16 +144,31 @@ export default function VisorCurso({
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(ws);
 
+        if (rows.length === 0) {
+          alert('La plantilla está vacía. Completa las filas con RUT y Nombre antes de subirla.');
+          return;
+        }
+
+        const primeraFila = rows[0];
+        const tieneRut = 'RUT' in primeraFila || 'rut' in primeraFila || 'Rut' in primeraFila;
+        const tieneNombre = 'Nombre' in primeraFila || 'NOMBRE' in primeraFila || 'nombre' in primeraFila;
+
+        if (!tieneRut || !tieneNombre) {
+          alert('Formato inválido. Descarga la plantilla oficial y mantén exactamente los encabezados "RUT" y "Nombre".');
+          return;
+        }
+
         const registros = rows
           .map((r) => {
             const rut = String(r.RUT || r.rut || r.Rut || '').trim();
-            const nombre = String(r.Nombre || r.NOMBRE || r.nombre || r['Nombre Completo'] || '').trim();
-            return rut && nombre ? { curso_id: cursoActivoId, rut, nombre } : null;
+            const nombre = String(r.Nombre || r.NOMBRE || r.nombre || '').trim();
+            if (!rut || !nombre || nombre.toLowerCase().startsWith('ejemplo:')) return null;
+            return { curso_id: cursoActivoId, rut, nombre };
           })
           .filter(Boolean);
 
         if (registros.length === 0) {
-          alert('El Excel debe tener columnas "RUT" y "Nombre".');
+          alert('No se encontraron estudiantes válidos (revisa que hayas borrado las filas de ejemplo y completado los datos).');
           return;
         }
 
@@ -144,10 +177,10 @@ export default function VisorCurso({
           .upsert(registros, { onConflict: 'curso_id,rut' });
 
         if (error) throw error;
-        alert(`✅ ${registros.length} estudiantes cargados al curso.`);
+        alert(`✅ ${registros.length} estudiantes cargados correctamente al curso.`);
         cargarEstudiantesCurso(cursoActivoId);
       } catch (err) {
-        alert('Error al leer Excel: ' + err.message);
+        alert('Error al leer la plantilla Excel: ' + err.message);
       }
     };
     reader.readAsBinaryString(file);
@@ -200,7 +233,6 @@ export default function VisorCurso({
         </h2>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-          {/* Crear Nivel */}
           <form onSubmit={crearNivel} style={{ background: '#f8fafc', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
             <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px' }}>
               Nuevo Nivel (ej: 1° Medio, 8° Básico)
@@ -222,7 +254,6 @@ export default function VisorCurso({
             </div>
           </form>
 
-          {/* Crear Curso */}
           <form onSubmit={crearCurso} style={{ background: '#f8fafc', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
             <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px' }}>
               Nuevo Curso dentro de un Nivel
@@ -287,17 +318,6 @@ export default function VisorCurso({
                 </button>
               )}
 
-              <label
-                style={{
-                  background: '#2563eb', color: 'white', padding: '8px 14px', borderRadius: '8px',
-                  cursor: 'pointer', fontWeight: '600', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px'
-                }}
-              >
-                <Upload size={16} />
-                Cargar Excel (.xlsx)
-                <input type="file" accept=".xlsx,.xls" onChange={manejarExcel} style={{ display: 'none' }} />
-              </label>
-
               <button
                 onClick={() => eliminarCurso(cursoObj.id)}
                 style={{
@@ -313,10 +333,45 @@ export default function VisorCurso({
 
         {!cursoObj ? (
           <div style={{ padding: '24px', textAlign: 'center', background: '#f8fafc', borderRadius: '10px', color: '#64748b', fontSize: '14px' }}>
-            Elige un curso desde el menú lateral izquierdo bajo <strong>Mis Cursos</strong> para ver y editar su lista de estudiantes.
+            Elige un curso desde el menú lateral izquierdo bajo <strong>Mis Cursos</strong> para descargar su plantilla, subir la lista y editar estudiantes.
           </div>
         ) : (
           <>
+            {/* Flujo guiado de Plantilla Excel: Paso 1 Descargar -> Paso 2 Llenar -> Paso 3 Subir */}
+            <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '14px 16px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+              <div style={{ fontSize: '13px', color: '#166534' }}>
+                <strong>Carga masiva de curso (3 pasos):</strong>
+                <div style={{ marginTop: '2px' }}>
+                  1. Descarga la plantilla oficial &nbsp;→&nbsp; 2. Llena las columnas <strong>RUT</strong> y <strong>Nombre</strong> &nbsp;→&nbsp; 3. Sube el archivo completado.
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button
+                  onClick={descargarPlantillaExcel}
+                  style={{
+                    background: '#ffffff', color: '#15803d', border: '1px solid #86efac',
+                    padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', fontWeight: '700',
+                    fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px'
+                  }}
+                >
+                  <FileSpreadsheet size={16} />
+                  1. Descargar Plantilla (.xlsx)
+                </button>
+
+                <label
+                  style={{
+                    background: '#16a34a', color: 'white', padding: '8px 14px', borderRadius: '8px',
+                    cursor: 'pointer', fontWeight: '700', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px'
+                  }}
+                >
+                  <Upload size={16} />
+                  2. Subir Plantilla Llena
+                  <input type="file" accept=".xlsx,.xls" onChange={manejarExcel} style={{ display: 'none' }} />
+                </label>
+              </div>
+            </div>
+
             {/* Agregar alumno individual */}
             <form onSubmit={agregarEstudiante} style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
               <input
@@ -344,7 +399,7 @@ export default function VisorCurso({
             {/* Tabla con checkboxes */}
             {estudiantes.length === 0 ? (
               <div style={{ padding: '20px', textAlign: 'center', background: '#f8fafc', borderRadius: '8px', color: '#64748b', fontSize: '14px' }}>
-                No hay estudiantes en este curso. Sube un archivo Excel con columnas <strong>RUT</strong> y <strong>Nombre</strong> o agrégalos arriba.
+                Este curso aún no tiene estudiantes. Usa el botón <strong>1. Descargar Plantilla (.xlsx)</strong> arriba para preparar la nómina.
               </div>
             ) : (
               <div style={{ maxHeight: '420px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
