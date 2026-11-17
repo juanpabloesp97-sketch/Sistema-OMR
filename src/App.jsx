@@ -435,3 +435,277 @@ export default function App() {
                 borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: '600',
                 background: config.id ? '#0284c7' : '#16a34a', color: 'white'
               }}
+            >
+              <Cloud size={17} />
+              {config.id ? 'Actualizar en Nube' : 'Guardar en Nube'}
+            </button>
+          </div>
+        </div>
+
+        {/* MENÚ DE NAVEGACIÓN */}
+        <nav style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <button
+            onClick={() => setPestana('gestion')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: '600',
+              background: pestana === 'gestion' ? '#2563eb' : '#f1f5f9',
+              color: pestana === 'gestion' ? 'white' : '#334155',
+            }}
+          >
+            <GraduationCap size={18} />
+            Cursos y Alumnos
+          </button>
+
+          <button
+            onClick={() => setPestana('generar')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: '600',
+              background: pestana === 'generar' ? '#2563eb' : '#f1f5f9',
+              color: pestana === 'generar' ? 'white' : '#334155',
+            }}
+          >
+            <FileText size={18} />
+            1. Generar Hojas PDF
+          </button>
+
+          <button
+            onClick={() => setPestana('pauta')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: '600',
+              background: pestana === 'pauta' ? '#2563eb' : '#f1f5f9',
+              color: pestana === 'pauta' ? 'white' : '#334155',
+            }}
+          >
+            <CheckSquare size={18} />
+            2. Pauta y Escala ({pautaDefinidaCount}/{config.numPreguntas})
+          </button>
+
+          <button
+            onClick={() => setPestana('escanear')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: '600',
+              background: pestana === 'escanear' ? '#2563eb' : '#f1f5f9',
+              color: pestana === 'escanear' ? 'white' : '#334155',
+            }}
+          >
+            <Camera size={18} />
+            3. Escanear Hojas ({resultadosCurso.length})
+          </button>
+
+          <button
+            onClick={() => setPestana('analisis')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: '600',
+              background: pestana === 'analisis' ? '#2563eb' : '#f1f5f9',
+              color: pestana === 'analisis' ? 'white' : '#334155',
+            }}
+          >
+            <BarChart3 size={18} />
+            4. Análisis y Reportes
+          </button>
+        </nav>
+      </header>
+
+      {/* PESTAÑA 0: GESTIÓN ESCOLAR (NIVELES, CURSOS Y ESTUDIANTES) */}
+      {pestana === 'gestion' && <GestionEscolar onActualizarDatos={cargarEstructuraEscolar} />}
+
+      {/* PESTAÑA 1: GENERAR HOJAS PDF */}
+      {pestana === 'generar' && (
+        <div>
+          {!config.id && (
+            <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af', padding: '12px 16px', borderRadius: '10px', marginBottom: '18px', fontSize: '14px', textAlign: 'center' }}>
+              <strong>Consejo:</strong> Haz clic en <strong>"Guardar en Nube"</strong> arriba a la derecha antes de descargar el PDF para que los resultados escaneados se guarden automáticamente en tu base de datos.
+            </div>
+          )}
+
+          {/* Parámetros de la Evaluación */}
+          <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '20px' }}>
+            <h2 style={{ margin: '0 0 16px 0', fontSize: '17px' }}>1. Parámetros de la Evaluación</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Título de la Prueba</label>
+                <input
+                  type="text"
+                  value={config.tituloPrueba}
+                  onChange={(e) => setConfig({ ...config, tituloPrueba: e.target.value })}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Asignatura</label>
+                <input
+                  type="text"
+                  value={config.asignatura}
+                  onChange={(e) => setConfig({ ...config, asignatura: e.target.value })}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>N° de Preguntas (1 a 50)</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={config.numPreguntas}
+                  onChange={(e) => setConfig({ ...config, numPreguntas: Math.min(50, Math.max(1, Number(e.target.value))) })}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Alternativas</label>
+                <select
+                  value={config.alternativas}
+                  onChange={(e) => setConfig({ ...config, alternativas: e.target.value })}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+                >
+                  <option value="ABCD">4 opciones (A - B - C - D)</option>
+                  <option value="ABCDE">5 opciones (A - B - C - D - E)</option>
+                  <option value="ABC">3 opciones (A - B - C)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Selección de Curso o Lista de Estudiantes */}
+          <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '20px' }}>
+            <h2 style={{ margin: '0 0 14px 0', fontSize: '17px' }}>2. Seleccionar Curso o Subir Nómina</h2>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
+              {/* Selector desde Cursos guardados en la nube */}
+              <div style={{ flex: '1 1 260px' }}>
+                <select
+                  value={cursoSeleccionadoPDF}
+                  onChange={(e) => seleccionarCursoParaPDF(e.target.value)}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #94a3b8', fontSize: '14px', fontWeight: '600' }}
+                >
+                  <option value="">-- Elegir curso guardado en la nube --</option>
+                  {cursosDB.map((c) => {
+                    const niv = nivelesDB.find((n) => n.id === c.nivel_id);
+                    return (
+                      <option key={c.id} value={c.id}>
+                        {niv ? `${niv.nombre} — ` : ''}{c.nombre}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              <span style={{ color: '#94a3b8', fontSize: '13px' }}>o</span>
+
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#2563eb', color: 'white', padding: '10px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '14px' }}>
+                <Upload size={18} />
+                Subir Excel (.xlsx)
+                <input type="file" accept=".xlsx,.xls" onChange={manejarExcelEstudiantes} style={{ display: 'none' }} />
+              </label>
+
+              <button
+                onClick={cargarEjemplo}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#f8fafc', border: '1px solid #cbd5e1', color: '#334155', padding: '10px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '14px' }}
+              >
+                <Users size={18} />
+                3 alumnos de ejemplo
+              </button>
+            </div>
+
+            {estudiantes.length > 0 && (
+              <div style={{ marginTop: '14px', padding: '10px 14px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', color: '#166534', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <CheckCircle2 size={18} />
+                <strong>{estudiantes.length} estudiantes listos</strong> para generar hojas personalizadas con código QR.
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={generarPDF}
+            disabled={estudiantes.length === 0}
+            style={{
+              width: '100%', padding: '14px', borderRadius: '10px', border: 'none', fontSize: '16px', fontWeight: '700',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px',
+              cursor: estudiantes.length > 0 ? 'pointer' : 'not-allowed',
+              background: estudiantes.length > 0 ? '#16a34a' : '#94a3b8',
+              color: 'white'
+            }}
+          >
+            <FileDown size={20} />
+            Descargar PDF con Hojas de Respuestas ({estudiantes.length} páginas)
+          </button>
+        </div>
+      )}
+
+      {/* PESTAÑA 2: PAUTA Y ESCALA */}
+      {pestana === 'pauta' && (
+        <PautaEditor config={config} setConfig={setConfig} />
+      )}
+
+      {/* PESTAÑA 3: ESCANEAR HOJAS */}
+      {pestana === 'escanear' && (
+        <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+          <h2 style={{ margin: '0 0 12px 0', fontSize: '18px' }}>Escanear o Subir Foto de Hoja de Respuestas</h2>
+          <p style={{ color: '#64748b', fontSize: '14px', marginBottom: '16px' }}>
+            Toma una foto nítida donde se vean los <strong>4 cuadrados negros de las esquinas</strong> y el código QR.
+          </p>
+
+          <label
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: '10px',
+              background: procesando ? '#94a3b8' : '#2563eb',
+              color: 'white', padding: '12px 20px', borderRadius: '10px',
+              cursor: procesando ? 'wait' : 'pointer', fontWeight: '700', fontSize: '15px'
+            }}
+          >
+            <Camera size={20} />
+            {procesando ? 'Procesando imagen...' : 'Tomar Foto / Seleccionar Imagen'}
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={manejarEscaneo}
+              disabled={procesando}
+              style={{ display: 'none' }}
+            />
+          </label>
+
+          {ultimoResultado && (
+            <div style={{ marginTop: '20px', padding: '16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #cbd5e1' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '12px' }}>
+                <div>
+                  <strong style={{ fontSize: '16px' }}>{ultimoResultado.nombre}</strong>
+                  <div style={{ fontSize: '13px', color: '#64748b' }}>
+                    RUT: {ultimoResultado.rut} | Curso: {ultimoResultado.curso || '-'}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <span style={{ fontSize: '24px', fontWeight: '800', color: ultimoResultado.nota >= 4.0 ? '#16a34a' : '#dc2626' }}>
+                    Nota: {ultimoResultado.nota.toFixed(1)}
+                  </span>
+                  <div style={{ fontSize: '13px', color: '#475569' }}>
+                    {ultimoResultado.puntaje} / {ultimoResultado.total} pts ({ultimoResultado.porcentaje}%)
+                  </div>
+                </div>
+              </div>
+
+              {ultimoResultado.imagenProcesada && (
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#475569' }}>
+                    Verificación Visual (Verde = Buena | Roja = Mala | Azul = Correcta)
+                  </div>
+                  <img
+                    src={ultimoResultado.imagenProcesada}
+                    alt="Hoja procesada"
+                    style={{ maxWidth: '100%', maxHeight: '420px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* PESTAÑA 4: ANÁLISIS Y REPORTES */}
+      {pestana === 'analisis' && <AnalisisPanel resultados={resultadosCurso} config={config} />}
+    </div>
+  );
+}
