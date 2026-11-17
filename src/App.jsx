@@ -4,7 +4,7 @@ import QRCode from 'qrcode';
 import * as XLSX from 'xlsx';
 import {
   FileDown, Upload, Users, FileText, CheckCircle2,
-  Camera, CheckSquare, ScanLine, Cloud, FolderOpen, Save
+  Camera, CheckSquare, ScanLine, Cloud, FolderOpen, BarChart3
 } from 'lucide-react';
 import PautaEditor from './PautaEditor';
 import AnalisisPanel from './AnalisisPanel';
