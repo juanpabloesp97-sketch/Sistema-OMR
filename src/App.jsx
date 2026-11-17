@@ -6,6 +6,7 @@ import {
   FileDown, Upload, Users, FileText, CheckCircle2,
   Camera, CheckSquare, ScanLine, Cloud, FolderOpen, BarChart3
 } from 'lucide-react';
+import GestionEscolar from './GestionEscolar';
 import PautaEditor from './PautaEditor';
 import AnalisisPanel from './AnalisisPanel';
 import { procesarHojaOMR } from './omrEngine';
@@ -352,6 +353,18 @@ export default function App() {
             }}
           >
             <FileText size={18} />
+            
+            <button
+  onClick={() => setPestana('gestion')}
+  style={{
+    display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: '600',
+    background: pestana === 'gestion' ? '#2563eb' : '#f1f5f9',
+    color: pestana === 'gestion' ? 'white' : '#334155',
+  }}
+>
+  <GraduationCap size={18} />
+  Cursos y Alumnos
+</button>
             1. Generar Hojas PDF
           </button>
 
@@ -573,7 +586,9 @@ export default function App() {
           )}
         </div>
       )}
-      {pestana === 'analisis' && <AnalisisPanel resultados={resultadosCurso} config={config} />}
+      {pestana === 'analisis' && <AnalisisPanel resultados={resultadosCurso} config={config} 
+      />}
+      {pestana === 'gestion' && <GestionEscolar />}
     </div>
   );
 }
