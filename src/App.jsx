@@ -15,7 +15,7 @@ import { supabase } from './supabaseClient';
 export default function App() {
   const [vistaActiva, setVistaActiva] = useState('evaluaciones-creadas');
 
-  // Datos de Perfil Docente (preparado para multi-usuario futuro)
+  // Datos de Perfil Docente
   const [profesor, setProfesor] = useState({
     nombre: 'Profesor(a) Titular',
     asignatura: 'Matemática',
@@ -45,7 +45,7 @@ export default function App() {
   });
 
   // Sub-pestaña dentro de una evaluación creada
-  const [subVistaEval, setSubVistaEval] = useState('avance'); // 'avance' | 'imprimir' | 'pauta' | 'escanear' | 'analisis'
+  const [subVistaEval, setSubVistaEval] = useState('avance');
   const [estudiantesCursoEval, setEstudiantesCursoEval] = useState([]);
   const [resultadosCurso, setResultadosCurso] = useState([]);
   const [seleccionadosImprimir, setSeleccionadosImprimir] = useState([]);
@@ -79,6 +79,7 @@ export default function App() {
       cargarEstudiantesParaEval(config.cursoId);
     } else {
       setEstudiantesCursoEval([]);
+      setSeleccionadosImprimir([]);
     }
   }, [config.id, config.cursoId]);
 
@@ -92,7 +93,7 @@ export default function App() {
     setCursos(cur || []);
   };
 
-  const cargarEvaluacionesNube = async () => {
+  const cargarEvaluacionesNube = async (seleccionarId = null) => {
     if (!supabase) return;
     const { data, error } = await supabase
       .from('evaluaciones')
@@ -101,7 +102,14 @@ export default function App() {
 
     if (!error && data) {
       setEvaluacionesGuardadas(data);
-      if (data.length > 0 && !config.id) {
+      if (data.length === 0) {
+        setConfig((prev) => ({ ...prev, id: null, cursoId: '' }));
+        return;
+      }
+      if (seleccionarId) {
+        const encontrada = data.find((item) => String(item.id) === String(seleccionarId));
+        if (encontrada) abrirEvaluacion(encontrada, false);
+      } else if (!config.id || !data.some((item) => String(item.id) === String(config.id))) {
         abrirEvaluacion(data[0], false);
       }
     }
@@ -212,8 +220,8 @@ export default function App() {
       if (error) {
         alert('Error al actualizar: ' + error.message);
       } else {
-        alert('✅ Evaluación actualizada.');
-        cargarEvaluacionesNube();
+        alert('Evaluación actualizada.');
+        cargarEvaluacionesNube(config.id);
       }
     } else {
       const { data, error } = await supabase
@@ -225,13 +233,54 @@ export default function App() {
       if (error) {
         alert('Error al crear evaluación: ' + error.message);
       } else if (data) {
-        setConfig((prev) => ({ ...prev, id: data.id }));
-        alert('✅ Evaluación creada y guardada en la nube.');
-        await cargarEvaluacionesNube();
+        alert('Evaluación creada y guardada en la nube.');
+        await cargarEvaluacionesNube(data.id);
         setVistaActiva('evaluaciones-creadas');
         setSubVistaEval('avance');
       }
     }
+  };
+
+  // Asignar o cambiar el curso de una evaluación existente directamente
+  const asignarCursoAEvaluacion = async (nuevoCursoId) => {
+    setConfig((prev) => ({ ...prev, cursoId: nuevoCursoId }));
+    if (!supabase || !config.id) return;
+
+    const cursoObj = cursos.find((c) => c.id === nuevoCursoId);
+    const { error } = await supabase
+      .from('evaluaciones')
+      .update({
+        curso_id: nuevoCursoId || null,
+        nivel_id: cursoObj ? cursoObj.nivel_id : null
+      })
+      .eq('id', config.id);
+
+    if (error) {
+      alert('Error al asignar curso: ' + error.message);
+    } else {
+      cargarEvaluacionesNube(config.id);
+    }
+  };
+
+  // Eliminar evaluación completa de Supabase
+  const eliminarEvaluacion = async () => {
+    if (!supabase || !config.id) return;
+    if (!confirm(`¿Eliminar definitivamente la evaluación "${config.tituloPrueba}" y todos sus resultados escaneados?`)) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from('evaluaciones')
+      .delete()
+      .eq('id', config.id);
+
+    if (error) {
+      alert('Error al eliminar evaluación: ' + error.message);
+      return;
+    }
+
+    setUltimoResultado(null);
+    await cargarEvaluacionesNube();
   };
 
   // Agregar o quitar estudiante en la nómina de esta evaluación
@@ -258,10 +307,10 @@ export default function App() {
     setSeleccionadosImprimir((prev) => prev.filter((r) => r !== rut));
   };
 
-  // Generar PDF para un subconjunto de estudiantes (todos o solo pendientes)
+  // Generar PDF para un subconjunto de estudiantes
   const imprimirHojasPDF = async (listaEstudiantesAImprimir, sufijoArchivo = '') => {
     if (!listaEstudiantesAImprimir || listaEstudiantesAImprimir.length === 0) {
-      alert('No hay estudiantes seleccionados para imprimir.');
+      alert('No hay estudiantes seleccionados para imprimir. Asigna un curso primero o agrega alumnos.');
       return;
     }
 
@@ -432,7 +481,6 @@ export default function App() {
       ? Math.round((estudiantesRendidos.length / totalEstudiantesCurso) * 100)
       : 0;
 
-  // Parámetros del gráfico circular SVG
   const radio = 46;
   const circunferencia = 2 * Math.PI * radio;
   const trazoCompletado = circunferencia - (porcentajeAvance / 100) * circunferencia;
@@ -500,7 +548,7 @@ export default function App() {
               <button
                 onClick={() => {
                   localStorage.setItem('omr_perfil_docente', JSON.stringify(profesor));
-                  alert('✅ Perfil guardado.');
+                  alert('Perfil guardado.');
                 }}
                 style={{
                   marginTop: '8px', background: '#2563eb', color: 'white', border: 'none',
@@ -599,7 +647,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Editor de Pauta y Escala */}
             <PautaEditor config={config} setConfig={setConfig} />
 
             <button
@@ -619,49 +666,86 @@ export default function App() {
         {/* VISTA 4: EVALUACIONES CREADAS */}
         {vistaActiva === 'evaluaciones-creadas' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Barra superior de selección de evaluación */}
-            <div style={{ background: '#ffffff', padding: '16px 20px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-              <div style={{ flex: '1 1 300px' }}>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#64748b', marginBottom: '4px' }}>
-                  EVALUACIÓN SELECCIONADA
-                </label>
-                <select
-                  value={config.id || ''}
-                  onChange={(e) => {
-                    const ev = evaluacionesGuardadas.find((x) => String(x.id) === e.target.value);
-                    if (ev) abrirEvaluacion(ev, false);
-                  }}
-                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #94a3b8', fontSize: '15px', fontWeight: '700' }}
-                >
-                  {evaluacionesGuardadas.length === 0 && <option value="">Aún no tienes evaluaciones creadas</option>}
-                  {evaluacionesGuardadas.map((ev) => {
-                    const c = cursos.find((cur) => cur.id === ev.curso_id);
-                    return (
-                      <option key={ev.id} value={ev.id}>
-                        {ev.titulo} — {ev.asignatura} {c ? `(${c.nombre})` : ''}
-                      </option>
-                    );
-                  })}
-                </select>
-              </div>
-
-              {/* Casilla rápida de impresión directa */}
-              {config.id && (
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                  <button
-                    onClick={() => imprimirHojasPDF(estudiantesCursoEval)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px',
-                      borderRadius: '8px', border: '1px solid #2563eb', background: '#eff6ff',
-                      color: '#1d4ed8', fontWeight: '700', cursor: 'pointer', fontSize: '14px'
+            {/* Barra superior de selección, asignación de curso, impresión y eliminación */}
+            <div style={{ background: '#ffffff', padding: '18px 20px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px', alignItems: 'end' }}>
+                {/* Selector de Evaluación */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#64748b', marginBottom: '4px' }}>
+                    EVALUACIÓN SELECCIONADA
+                  </label>
+                  <select
+                    value={config.id || ''}
+                    onChange={(e) => {
+                      const ev = evaluacionesGuardadas.find((x) => String(x.id) === e.target.value);
+                      if (ev) abrirEvaluacion(ev, false);
                     }}
-                    title="Imprimir hojas de todo el curso"
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #94a3b8', fontSize: '14px', fontWeight: '700' }}
                   >
-                    <Printer size={18} />
-                    Imprimir Todo el Curso ({estudiantesCursoEval.length})
-                  </button>
+                    {evaluacionesGuardadas.length === 0 && <option value="">Aún no tienes evaluaciones creadas</option>}
+                    {evaluacionesGuardadas.map((ev) => (
+                      <option key={ev.id} value={ev.id}>
+                        {ev.titulo} ({ev.asignatura})
+                      </option>
+                    ))}
+                  </select>
                 </div>
-              )}
+
+                {/* Selector directo para Asignar / Cambiar Curso */}
+                {config.id && (
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#2563eb', marginBottom: '4px' }}>
+                      CURSO ASIGNADO A ESTA PRUEBA
+                    </label>
+                    <select
+                      value={config.cursoId || ''}
+                      onChange={(e) => asignarCursoAEvaluacion(e.target.value)}
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #3b82f6', background: '#eff6ff', fontSize: '14px', fontWeight: '600' }}
+                    >
+                      <option value="">-- Sin curso asignado --</option>
+                      {cursos.map((c) => {
+                        const niv = niveles.find((n) => n.id === c.nivel_id);
+                        return (
+                          <option key={c.id} value={c.id}>
+                            {niv ? `${niv.nombre} — ` : ''}{c.nombre}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                )}
+
+                {/* Botones de acción: Imprimir Todo y Eliminar Evaluación */}
+                {config.id && (
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => imprimirHojasPDF(estudiantesCursoEval)}
+                      style={{
+                        flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                        padding: '10px 14px', borderRadius: '8px', border: '1px solid #2563eb',
+                        background: '#eff6ff', color: '#1d4ed8', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
+                      }}
+                      title="Imprimir hojas de todo el curso"
+                    >
+                      <Printer size={17} />
+                      Imprimir ({estudiantesCursoEval.length})
+                    </button>
+
+                    <button
+                      onClick={eliminarEvaluacion}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                        padding: '10px 14px', borderRadius: '8px', border: '1px solid #fecaca',
+                        background: '#fef2f2', color: '#dc2626', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
+                      }}
+                      title="Eliminar esta evaluación"
+                    >
+                      <Trash2 size={17} />
+                      Eliminar
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             {config.id && (
@@ -698,130 +782,135 @@ export default function App() {
                 {/* SUBVISTA A: TARJETA CON GRÁFICO DE AVANCE + LISTA DE PENDIENTES AL HACER CLIC */}
                 {subVistaEval === 'avance' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    {/* Tarjeta interactiva con Gráfico Donut */}
-                    <div
-                      onClick={() => setMostrarPendientesDetalle(!mostrarPendientesDetalle)}
-                      style={{
-                        background: '#ffffff', padding: '24px', borderRadius: '14px',
-                        border: '2px solid #cbd5e1', cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        flexWrap: 'wrap', gap: '20px', boxShadow: '0 2px 6px rgba(0,0,0,0.04)'
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
-                        {/* Gráfico Circular SVG */}
-                        <div style={{ position: 'relative', width: '112px', height: '112px' }}>
-                          <svg width="112" height="112" style={{ transform: 'rotate(-90deg)' }}>
-                            <circle
-                              cx="56"
-                              cy="56"
-                              r={radio}
-                              stroke="#e2e8f0"
-                              strokeWidth="12"
-                              fill="transparent"
-                            />
-                            <circle
-                              cx="56"
-                              cy="56"
-                              r={radio}
-                              stroke={porcentajeAvance === 100 ? '#16a34a' : '#2563eb'}
-                              strokeWidth="12"
-                              strokeDasharray={circunferencia}
-                              strokeDashoffset={trazoCompletado}
-                              strokeLinecap="round"
-                              fill="transparent"
-                            />
-                          </svg>
-                          <div
-                            style={{
-                              position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
-                              justifyContent: 'center', fontWeight: '800', fontSize: '20px', color: '#0f172a'
-                            }}
-                          >
-                            {porcentajeAvance}%
-                          </div>
-                        </div>
-
-                        <div>
-                          <div style={{ fontSize: '12px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase' }}>
-                            Cobertura de Aplicación
-                          </div>
-                          <h3 style={{ margin: '4px 0', fontSize: '20px', color: '#0f172a' }}>
-                            {estudiantesRendidos.length} de {totalEstudiantesCurso} estudiantes ya rindieron
-                          </h3>
-                          <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>
-                            {estudiantesPendientes.length === 0
-                              ? '¡Curso completo! Todos los estudiantes tienen su hoja escaneada.'
-                              : `Faltan ${estudiantesPendientes.length} estudiante(s) por rendir. Haz clic aquí para ${mostrarPendientesDetalle ? 'ocultar' : 'ver'} pendientes.`}
-                          </p>
-                        </div>
+                    {!config.cursoId ? (
+                      <div style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', padding: '16px', borderRadius: '12px', fontSize: '14px' }}>
+                        <strong>Esta evaluación aún no tiene un curso asignado.</strong> Selecciónalo arriba en <em>"Curso asignado a esta prueba"</em> para ver el gráfico de porcentaje rendido y la lista de pendientes.
                       </div>
-
-                      {estudiantesPendientes.length > 0 && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            imprimirHojasPDF(estudiantesPendientes, '_Pendientes');
-                          }}
+                    ) : (
+                      <>
+                        <div
+                          onClick={() => setMostrarPendientesDetalle(!mostrarPendientesDetalle)}
                           style={{
-                            background: '#ea580c', color: 'white', border: 'none', borderRadius: '10px',
-                            padding: '12px 18px', fontWeight: '700', cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px'
+                            background: '#ffffff', padding: '24px', borderRadius: '14px',
+                            border: '2px solid #cbd5e1', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            flexWrap: 'wrap', gap: '20px', boxShadow: '0 2px 6px rgba(0,0,0,0.04)'
                           }}
                         >
-                          <Printer size={18} />
-                          Imprimir Hojas de Pendientes ({estudiantesPendientes.length})
-                        </button>
-                      )}
-                    </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
+                            {/* Gráfico Circular SVG */}
+                            <div style={{ position: 'relative', width: '112px', height: '112px' }}>
+                              <svg width="112" height="112" style={{ transform: 'rotate(-90deg)' }}>
+                                <circle
+                                  cx="56"
+                                  cy="56"
+                                  r={radio}
+                                  stroke="#e2e8f0"
+                                  strokeWidth="12"
+                                  fill="transparent"
+                                />
+                                <circle
+                                  cx="56"
+                                  cy="56"
+                                  r={radio}
+                                  stroke={porcentajeAvance === 100 ? '#16a34a' : '#2563eb'}
+                                  strokeWidth="12"
+                                  strokeDasharray={circunferencia}
+                                  strokeDashoffset={trazoCompletado}
+                                  strokeLinecap="round"
+                                  fill="transparent"
+                                />
+                              </svg>
+                              <div
+                                style={{
+                                  position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
+                                  justifyContent: 'center', fontWeight: '800', fontSize: '20px', color: '#0f172a'
+                                }}
+                              >
+                                {porcentajeAvance}%
+                              </div>
+                            </div>
 
-                    {/* Lista desplegable de Pendientes */}
-                    {mostrarPendientesDetalle && (
-                      <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-                          <h4 style={{ margin: 0, fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: '#c2410c' }}>
-                            <AlertCircle size={18} />
-                            Estudiantes Pendientes / Ausentes ({estudiantesPendientes.length})
-                          </h4>
+                            <div>
+                              <div style={{ fontSize: '12px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase' }}>
+                                Cobertura de Aplicación
+                              </div>
+                              <h3 style={{ margin: '4px 0', fontSize: '20px', color: '#0f172a' }}>
+                                {estudiantesRendidos.length} de {totalEstudiantesCurso} estudiantes ya rindieron
+                              </h3>
+                              <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>
+                                {estudiantesPendientes.length === 0
+                                  ? '¡Curso completo! Todos los estudiantes tienen su hoja escaneada.'
+                                  : `Faltan ${estudiantesPendientes.length} estudiante(s) por rendir. Haz clic aquí para ${mostrarPendientesDetalle ? 'ocultar' : 'ver'} pendientes.`}
+                              </p>
+                            </div>
+                          </div>
+
+                          {estudiantesPendientes.length > 0 && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                imprimirHojasPDF(estudiantesPendientes, '_Pendientes');
+                              }}
+                              style={{
+                                background: '#ea580c', color: 'white', border: 'none', borderRadius: '10px',
+                                padding: '12px 18px', fontWeight: '700', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px'
+                              }}
+                            >
+                              <Printer size={18} />
+                              Imprimir Hojas de Pendientes ({estudiantesPendientes.length})
+                            </button>
+                          )}
                         </div>
 
-                        {estudiantesPendientes.length === 0 ? (
-                          <div style={{ padding: '14px', background: '#f0fdf4', color: '#166534', borderRadius: '8px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <CheckCircle2 size={18} />
-                            No hay estudiantes pendientes en este curso.
+                        {/* Lista desplegable de Pendientes */}
+                        {mostrarPendientesDetalle && (
+                          <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                            <h4 style={{ margin: '0 0 12px 0', fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: '#c2410c' }}>
+                              <AlertCircle size={18} />
+                              Estudiantes Pendientes / Ausentes ({estudiantesPendientes.length})
+                            </h4>
+
+                            {estudiantesPendientes.length === 0 ? (
+                              <div style={{ padding: '14px', background: '#f0fdf4', color: '#166534', borderRadius: '8px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <CheckCircle2 size={18} />
+                                No hay estudiantes pendientes en este curso.
+                              </div>
+                            ) : (
+                              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                                <thead style={{ background: '#fff7ed' }}>
+                                  <tr>
+                                    <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>RUT</th>
+                                    <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>Nombre Estudiante</th>
+                                    <th style={{ padding: '10px', textAlign: 'right', borderBottom: '1px solid #fed7aa' }}>Acción Rápida</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {estudiantesPendientes.map((est) => (
+                                    <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                      <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{est.rut}</td>
+                                      <td style={{ padding: '9px 10px', fontWeight: '600' }}>{est.nombre}</td>
+                                      <td style={{ padding: '9px 10px', textAlign: 'right' }}>
+                                        <button
+                                          onClick={() => imprimirHojasPDF([est], `_${est.rut}`)}
+                                          style={{
+                                            background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe',
+                                            borderRadius: '6px', padding: '5px 10px', cursor: 'pointer',
+                                            fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px'
+                                          }}
+                                        >
+                                          <FileDown size={14} /> Imprimir Hoja
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            )}
                           </div>
-                        ) : (
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                            <thead style={{ background: '#fff7ed' }}>
-                              <tr>
-                                <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>RUT</th>
-                                <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>Nombre Estudiante</th>
-                                <th style={{ padding: '10px', textAlign: 'right', borderBottom: '1px solid #fed7aa' }}>Acción Rápida</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {estudiantesPendientes.map((est) => (
-                                <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                  <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{est.rut}</td>
-                                  <td style={{ padding: '9px 10px', fontWeight: '600' }}>{est.nombre}</td>
-                                  <td style={{ padding: '9px 10px', textAlign: 'right' }}>
-                                    <button
-                                      onClick={() => imprimirHojasPDF([est], `_${est.rut}`)}
-                                      style={{
-                                        background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe',
-                                        borderRadius: '6px', padding: '5px 10px', cursor: 'pointer',
-                                        fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px'
-                                      }}
-                                    >
-                                      <FileDown size={14} /> Imprimir Hoja
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
                         )}
-                      </div>
+                      </>
                     )}
                   </div>
                 )}
@@ -853,7 +942,6 @@ export default function App() {
                       </button>
                     </div>
 
-                    {/* Formulario para agregar alumno puntual */}
                     <form onSubmit={agregarEstudianteAEvaluacion} style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
                       <input
                         type="text"
