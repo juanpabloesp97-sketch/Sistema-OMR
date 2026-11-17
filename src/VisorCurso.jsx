@@ -21,8 +21,10 @@ export default function VisorCurso({
   const [nuevoNombre, setNuevoNombre] = useState('');
 
   useEffect(() => {
-    if (niveles.length > 0 && !nivelSeleccionado) {
+    if (niveles.length > 0 && (!nivelSeleccionado || !niveles.some((n) => n.id === nivelSeleccionado))) {
       setNivelSeleccionado(niveles[0].id);
+    } else if (niveles.length === 0) {
+      setNivelSeleccionado('');
     }
   }, [niveles]);
 
@@ -64,6 +66,31 @@ export default function VisorCurso({
     }
     setNuevoNivel('');
     setNivelSeleccionado(data.id);
+    onRecargarEstructura();
+  };
+
+  // Eliminar Nivel (borra también sus cursos y estudiantes por cascada en BD)
+  const eliminarNivel = async () => {
+    if (!nivelSeleccionado || !supabase) return;
+    const nivelObj = niveles.find((n) => n.id === nivelSeleccionado);
+    const nombreNivel = nivelObj ? nivelObj.nombre : 'este nivel';
+
+    if (!confirm(`¿Eliminar definitivamente el nivel "${nombreNivel}" junto con todos sus cursos y estudiantes asociados?`)) {
+      return;
+    }
+
+    const cursosDeEsteNivel = cursos.filter((c) => c.nivel_id === nivelSeleccionado).map((c) => c.id);
+    const { error } = await supabase.from('niveles').delete().eq('id', nivelSeleccionado);
+
+    if (error) {
+      alert('Error al eliminar nivel: ' + error.message);
+      return;
+    }
+
+    if (cursosDeEsteNivel.includes(cursoActivoId)) {
+      setCursoActivoId('');
+    }
+    setNivelSeleccionado('');
     onRecargarEstructura();
   };
 
@@ -225,7 +252,7 @@ export default function VisorCurso({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Panel para Crear Niveles y Cursos */}
+      {/* Panel para Crear/Eliminar Niveles y Cursos */}
       <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
         <h2 style={{ margin: '0 0 14px 0', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <GraduationCap size={22} color="#2563eb" />
@@ -233,6 +260,7 @@ export default function VisorCurso({
         </h2>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+          {/* Crear Nivel */}
           <form onSubmit={crearNivel} style={{ background: '#f8fafc', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
             <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px' }}>
               Nuevo Nivel (ej: 1° Medio, 8° Básico)
@@ -254,33 +282,52 @@ export default function VisorCurso({
             </div>
           </form>
 
+          {/* Crear Curso o Eliminar Nivel */}
           <form onSubmit={crearCurso} style={{ background: '#f8fafc', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
             <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px' }}>
-              Nuevo Curso dentro de un Nivel
+              Gestionar Nivel / Crear Curso
             </label>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
               <select
                 value={nivelSeleccionado}
                 onChange={(e) => setNivelSeleccionado(e.target.value)}
-                style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', minWidth: '120px' }}
+                style={{ flex: 1, padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', minWidth: '130px' }}
               >
-                <option value="">Nivel...</option>
+                <option value="">Seleccionar nivel...</option>
                 {niveles.map((n) => (
                   <option key={n.id} value={n.id}>{n.nombre}</option>
                 ))}
               </select>
+
+              {nivelSeleccionado && (
+                <button
+                  type="button"
+                  onClick={eliminarNivel}
+                  style={{
+                    background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca',
+                    borderRadius: '8px', padding: '8px 12px', cursor: 'pointer', fontWeight: '600',
+                    fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px'
+                  }}
+                  title="Eliminar este nivel y todos sus cursos"
+                >
+                  <Trash2 size={15} /> Eliminar Nivel
+                </button>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <input
                 type="text"
-                placeholder="Ej: 1° Medio A"
+                placeholder="Nuevo curso (ej: 1° Medio A)"
                 value={nuevoCurso}
                 onChange={(e) => setNuevoCurso(e.target.value)}
-                style={{ flex: 1, minWidth: '120px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                style={{ flex: 1, minWidth: '140px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
               />
               <button
                 type="submit"
                 style={{ background: '#059669', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 14px', cursor: 'pointer', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}
               >
-                <FolderPlus size={16} /> Crear
+                <FolderPlus size={16} /> Crear Curso
               </button>
             </div>
           </form>
@@ -337,7 +384,7 @@ export default function VisorCurso({
           </div>
         ) : (
           <>
-            {/* Flujo guiado de Plantilla Excel: Paso 1 Descargar -> Paso 2 Llenar -> Paso 3 Subir */}
+            {/* Flujo guiado de Plantilla Excel */}
             <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '14px 16px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
               <div style={{ fontSize: '13px', color: '#166534' }}>
                 <strong>Carga masiva de curso (3 pasos):</strong>
