@@ -10,7 +10,6 @@ import VisorCurso from './VisorCurso';
 import PautaEditor from './PautaEditor';
 import AnalisisPanel from './AnalisisPanel';
 import { procesarHojaOMR } from './omrEngine';
-import { convertirPdfAImagenes } from './pdfToImages';
 import { supabase } from './supabaseClient';
 
 export default function App() {
@@ -54,7 +53,6 @@ export default function App() {
 
   const [ultimoResultado, setUltimoResultado] = useState(null);
   const [procesando, setProcesando] = useState(false);
-  const [progresoLote, setProgresoLote] = useState('');
 
   // Campos para agregar alumno puntual a una evaluación
   const [rutExtra, setRutExtra] = useState('');
@@ -397,115 +395,77 @@ export default function App() {
     return Number(Math.min(nMax, Math.max(nMin, nota)).toFixed(1));
   };
 
-  // Escaneo de hojas (acepta imágenes individuales/múltiples y PDFs multipágina)
+  // Escaneo de hojas
   const manejarEscaneo = async (e) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
+    const file = e.target.files[0];
+    if (!file) return;
     setProcesando(true);
-    setProgresoLote('Preparando archivos...');
 
     try {
-      // 1. Expandir cualquier PDF en páginas individuales como imágenes
-      let colaImagenes = [];
-      for (const file of files) {
-        if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-          const paginasImg = await convertirPdfAImagenes(file, (actual, total) => {
-            setProgresoLote(`Extrayendo página ${actual} de ${total} del PDF...`);
-          });
-          colaImagenes = colaImagenes.concat(paginasImg);
-        } else {
-          colaImagenes.push(file);
-        }
-      }
+      const resultadoOMR = await procesarHojaOMR(file, {
+        numPreguntas: Number(config.numPreguntas),
+        alternativas: config.alternativas
+      });
 
-      // 2. Procesar cada hoja OMR en secuencia
-      const nuevosResultados = [];
-      const filasSupabase = [];
+      const respuestasAlumno = resultadoOMR.respuestas || {};
+      const totalPreg = Number(config.numPreguntas);
+      let puntosObtenidos = 0;
+      let puntosTotales = 0;
 
-      for (let idx = 0; idx < colaImagenes.length; idx++) {
-        setProgresoLote(`Corrigiendo hoja ${idx + 1} de ${colaImagenes.length}...`);
-        const imgFile = colaImagenes[idx];
+      for (let i = 1; i <= totalPreg; i++) {
+        const item = config.pauta[i];
+        const correcta = typeof item === 'object' ? item?.correcta : item;
+        const puntajeItem = typeof item === 'object' ? Number(item?.puntaje || 1) : 1;
 
-        try {
-          const resultadoOMR = await procesarHojaOMR(imgFile, {
-            numPreguntas: Number(config.numPreguntas),
-            alternativas: config.alternativas
-          });
-
-          const respuestasAlumno = resultadoOMR.respuestas || {};
-          const totalPreg = Number(config.numPreguntas);
-          let puntosObtenidos = 0;
-          let puntosTotales = 0;
-
-          for (let i = 1; i <= totalPreg; i++) {
-            const item = config.pauta[i];
-            const correcta = typeof item === 'object' ? item?.correcta : item;
-            const puntajeItem = typeof item === 'object' ? Number(item?.puntaje || 1) : 1;
-
-            if (correcta) {
-              puntosTotales += puntajeItem;
-              if (respuestasAlumno[i] === correcta) {
-                puntosObtenidos += puntajeItem;
-              }
-            }
+        if (correcta) {
+          puntosTotales += puntajeItem;
+          if (respuestasAlumno[i] === correcta) {
+            puntosObtenidos += puntajeItem;
           }
+        }
+      }
 
-          if (puntosTotales === 0) puntosTotales = totalPreg;
+      if (puntosTotales === 0) puntosTotales = totalPreg;
 
-          const porcentaje = Math.round((puntosObtenidos / puntosTotales) * 100);
-          const nota = calcularNota(puntosObtenidos, puntosTotales);
-          const alumnoInfo = resultadoOMR.qrData || { r: 'Sin QR', n: `Hoja ${idx + 1} (Sin QR)`, c: '' };
+      const porcentaje = Math.round((puntosObtenidos / puntosTotales) * 100);
+      const nota = calcularNota(puntosObtenidos, puntosTotales);
+      const alumnoInfo = imgFile.qrPreDetectado || resultadoOMR.qrData || { r: 'Sin QR', n: `Hoja ${idx + 1} (Sin QR)`, c: '' };
 
-          const nuevoRegistro = {
-            rut: alumnoInfo.r || 'Sin QR',
-            nombre: alumnoInfo.n || `Hoja ${idx + 1}`,
-            curso: alumnoInfo.c || '',
-            puntaje: puntosObtenidos,
-            total: puntosTotales,
-            porcentaje,
-            nota,
-            respuestas: respuestasAlumno,
-            imagenProcesada: resultadoOMR.imagenProcesada
-          };
+      const nuevoRegistro = {
+        rut: alumnoInfo.r || 'Sin QR',
+        nombre: alumnoInfo.n || 'Estudiante no identificado',
+        curso: alumnoInfo.c || '',
+        puntaje: puntosObtenidos,
+        total: puntosTotales,
+        porcentaje,
+        nota,
+        respuestas: respuestasAlumno,
+        imagenProcesada: resultadoOMR.imagenProcesada
+      };
 
-          nuevosResultados.push(nuevoRegistro);
+      setUltimoResultado(nuevoRegistro);
+      setResultadosCurso((prev) => [nuevoRegistro, ...prev]);
 
-          if (supabase && config.id) {
-            filasSupabase.push({
-              evaluacion_id: config.id,
-              curso_id: config.cursoId || null,
-              rut_estudiante: nuevoRegistro.rut,
-              nombre_estudiante: nuevoRegistro.nombre,
-              curso: nuevoRegistro.curso,
-              puntaje_obtenido: nuevoRegistro.puntaje,
-              puntaje_total: nuevoRegistro.total,
-              porcentaje: nuevoRegistro.porcentaje,
-              nota: nuevoRegistro.nota,
-              respuestas_alumno: nuevoRegistro.respuestas
-            });
+      if (supabase && config.id) {
+        await supabase.from('resultados').insert([
+          {
+            evaluacion_id: config.id,
+            curso_id: config.cursoId || null,
+            rut_estudiante: nuevoRegistro.rut,
+            nombre_estudiante: nuevoRegistro.nombre,
+            curso: nuevoRegistro.curso,
+            puntaje_obtenido: nuevoRegistro.puntaje,
+            puntaje_total: nuevoRegistro.total,
+            porcentaje: nuevoRegistro.porcentaje,
+            nota: nuevoRegistro.nota,
+            respuestas_alumno: nuevoRegistro.respuestas
           }
-        } catch (pageErr) {
-          console.warn(`Error en hoja ${idx + 1}:`, pageErr);
-        }
-      }
-
-      if (nuevosResultados.length > 0) {
-        setUltimoResultado(nuevosResultados[nuevosResultados.length - 1]);
-        setResultadosCurso((prev) => [...nuevosResultados.reverse(), ...prev]);
-
-        if (supabase && config.id && filasSupabase.length > 0) {
-          await supabase.from('resultados').insert(filasSupabase);
-        }
-      }
-
-      if (colaImagenes.length > 1) {
-        alert(`✅ Proceso completado: ${nuevosResultados.length} de ${colaImagenes.length} hojas corregidas.`);
+        ]);
       }
     } catch (err) {
-      alert('Error al procesar el archivo: ' + err.message);
+      alert('Error al procesar la hoja: ' + err.message);
     } finally {
       setProcesando(false);
-      setProgresoLote('');
       e.target.value = '';
     }
   };
@@ -1080,10 +1040,7 @@ export default function App() {
                 {/* SUBVISTA C: ESCANEAR */}
                 {subVistaEval === 'escanear' && (
                   <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                    <h3 style={{ margin: '0 0 12px 0', fontSize: '18px' }}>Escanear Hoja de Respuestas o Subir PDF</h3>
-                    <p style={{ color: '#64748b', fontSize: '14px', marginBottom: '16px' }}>
-                      Puedes subir una foto individual, seleccionar varias imágenes o cargar un <strong>PDF multipágina</strong> con todo el curso.
-                    </p>
+                    <h3 style={{ margin: '0 0 12px 0', fontSize: '18px' }}>Escanear Hoja de Respuestas</h3>
                     <label
                       style={{
                         display: 'inline-flex', alignItems: 'center', gap: '10px',
@@ -1093,11 +1050,11 @@ export default function App() {
                       }}
                     >
                       <Camera size={20} />
-                      {procesando ? (progresoLote || 'Procesando...') : 'Subir Foto o PDF Escaneado'}
+                      {procesando ? 'Procesando imagen...' : 'Tomar Foto / Seleccionar Imagen'}
                       <input
                         type="file"
-                        accept="image/*,application/pdf"
-                        multiple
+                        accept="image/*"
+                        capture="environment"
                         onChange={manejarEscaneo}
                         disabled={procesando}
                         style={{ display: 'none' }}
