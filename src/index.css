@@ -19,4 +19,28 @@ h1, h2, h3, label, p, span, td, th {
 select, input, option {
   color: #1e293b !important;
   background-color: #ffffff !important;
+}:root {
+  color-scheme: light only !important;
+  forced-color-adjust: none !important;
+}
+
+html, body, #root {
+  background-color: #ffffff !important;
+  color: #1e293b !important;
+  margin: 0;
+  padding: 0;
+}
+
+h1, h2, h3, label {
+  color: #0f172a !important;
+}
+
+select, option {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+input {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
 }
