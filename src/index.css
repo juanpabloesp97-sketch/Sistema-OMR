@@ -1,12 +1,22 @@
 :root {
   color-scheme: light;
-}
-body {
-  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
   background-color: #ffffff;
   color: #1e293b;
 }
-select, input {
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #ffffff;
+  color: #1e293b;
+}
+
+h1, h2, h3, label, p, span, td, th {
+  color: inherit;
+}
+
+select, input, option {
   color: #1e293b !important;
   background-color: #ffffff !important;
 }
