@@ -430,6 +430,7 @@ export default function App() {
           const resultadoOMR = await procesarHojaOMR(imgFile, {
             numPreguntas: Number(config.numPreguntas),
             alternativas: config.alternativas
+            pauta: config.pauta
           });
 
           const respuestasAlumno = resultadoOMR.respuestas || {};
