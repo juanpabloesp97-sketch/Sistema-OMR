@@ -822,7 +822,11 @@ export default function App() {
               </div>
             </div>
 
-            <PautaEditor config={config} setConfig={setConfig} />
+            <PautaEditor
+              config={config}
+              setConfig={setConfig}
+              nivelNombre={niveles.find((n) => n.id === cursos.find((c) => c.id === config.cursoId)?.nivel_id)?.nombre || ''}
+            />
 
             <button
               onClick={guardarEvaluacionNube}
@@ -1337,7 +1341,12 @@ export default function App() {
                 {/* SUBVISTA D: EDITAR PAUTA */}
                 {subVistaEval === 'pauta' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                    <PautaEditor config={config} setConfig={setConfig} />
+                    
+                    <PautaEditor
+                      config={config}
+                      setConfig={setConfig}
+                      nivelNombre={niveles.find((n) => n.id === cursos.find((c) => c.id === config.cursoId)?.nivel_id)?.nombre || ''}
+                    />
                     <button
                       onClick={guardarEvaluacionNube}
                       style={{
