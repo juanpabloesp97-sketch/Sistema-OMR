@@ -429,7 +429,7 @@ export default function App() {
         try {
           const resultadoOMR = await procesarHojaOMR(imgFile, {
             numPreguntas: Number(config.numPreguntas),
-            alternativas: config.alternativas
+            alternativas: config.alternativas,
             pauta: config.pauta
           });
 
@@ -455,7 +455,11 @@ export default function App() {
 
           const porcentaje = Math.round((puntosObtenidos / puntosTotales) * 100);
           const nota = calcularNota(puntosObtenidos, puntosTotales);
-          const alumnoInfo = imgFile.qrPreDetectado || resultadoOMR.qrData || { r: 'Sin QR', n: `Hoja ${idx + 1} (Sin QR)`, c: '' };
+          const alumnoInfo = imgFile.qrPreDetectado || resultadoOMR.qrData || {
+            r: 'Sin QR',
+            n: `Hoja ${idx + 1} (Sin QR)`,
+            c: ''
+          };
 
           const nuevoRegistro = {
             rut: alumnoInfo.r || 'Sin QR',
