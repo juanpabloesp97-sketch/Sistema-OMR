@@ -69,23 +69,15 @@ export default function App() {
         setProfesor(JSON.parse(perfilGuardado));
       } catch (e) {}
     }
+    const ultimaEvalId = localStorage.getItem('omr_ultima_eval_id');
     cargarEstructuraEscolar();
-    cargarEvaluacionesNube();
+    cargarEvaluacionesNube(ultimaEvalId);
   }, []);
 
   useEffect(() => {
     if (config.id) {
+      localStorage.setItem('omr_ultima_eval_id', String(config.id));
       cargarResultadosNube(config.id);
-      const guardadosEximidos = localStorage.getItem(`omr_eximidos_${config.id}`);
-      if (guardadosEximidos) {
-        try {
-          setEximidosRuts(JSON.parse(guardadosEximidos));
-        } catch (e) {
-          setEximidosRuts([]);
-        }
-      } else {
-        setEximidosRuts([]);
-      }
     } else {
       setResultadosCurso([]);
       setEximidosRuts([]);
@@ -99,17 +91,22 @@ export default function App() {
     }
   }, [config.id, config.cursoId]);
 
-  // Eximir / Deseximir estudiante en la evaluación actual
-  const toggleEximirEstudiante = (rut) => {
+  // Eximir / Deseximir estudiante y sincronizar en Supabase + respaldo local
+  const toggleEximirEstudiante = async (rut) => {
     const rutNorm = rut.trim().toLowerCase();
-    setEximidosRuts((prev) => {
-      const existe = prev.includes(rutNorm);
-      const actualizada = existe ? prev.filter((r) => r !== rutNorm) : [...prev, rutNorm];
-      if (config.id) {
-        localStorage.setItem(`omr_eximidos_${config.id}`, JSON.stringify(actualizada));
+    const existe = eximidosRuts.includes(rutNorm);
+    const actualizada = existe ? eximidosRuts.filter((r) => r !== rutNorm) : [...eximidosRuts, rutNorm];
+    setEximidosRuts(actualizada);
+
+    if (config.id) {
+      localStorage.setItem(`omr_eximidos_${config.id}`, JSON.stringify(actualizada));
+      if (supabase) {
+        await supabase
+          .from('evaluaciones')
+          .update({ eximidos: actualizada })
+          .eq('id', config.id);
       }
-      return actualizada;
-    });
+    }
   };
 
   const cargarEstructuraEscolar = async () => {
@@ -129,7 +126,12 @@ export default function App() {
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (!error && data) {
+    if (error) {
+      console.error('Error cargando evaluaciones:', error);
+      return;
+    }
+
+    if (data) {
       setEvaluacionesGuardadas(data);
       if (data.length === 0) {
         setConfig((prev) => ({ ...prev, id: null, cursoId: '' }));
@@ -137,8 +139,12 @@ export default function App() {
       }
       if (seleccionarId) {
         const encontrada = data.find((item) => String(item.id) === String(seleccionarId));
-        if (encontrada) abrirEvaluacion(encontrada, false);
-      } else if (!config.id || !data.some((item) => String(item.id) === String(config.id))) {
+        if (encontrada) {
+          abrirEvaluacion(encontrada, false);
+          return;
+        }
+      }
+      if (!config.id || !data.some((item) => String(item.id) === String(config.id))) {
         abrirEvaluacion(data[0], false);
       }
     }
@@ -166,17 +172,22 @@ export default function App() {
       .eq('evaluacion_id', evaluacionId)
       .order('created_at', { ascending: false });
 
-    if (!error && data) {
+    if (error) {
+      console.error('Error cargando resultados:', error);
+      return;
+    }
+
+    if (data) {
       setResultadosCurso(
         data.map((r) => ({
           id: r.id,
-          rut: r.rut_estudiante,
-          nombre: r.nombre_estudiante,
+          rut: r.rut_estudiante || 'Sin RUT',
+          nombre: r.nombre_estudiante || 'Estudiante',
           curso: r.curso || '',
-          puntaje: r.puntaje_obtenido,
-          total: r.puntaje_total,
-          porcentaje: r.porcentaje,
-          nota: r.nota,
+          puntaje: Number(r.puntaje_obtenido ?? 0),
+          total: Number(r.puntaje_total ?? 0),
+          porcentaje: Number(r.porcentaje ?? 0),
+          nota: Number(r.nota ?? 1.0),
           respuestas: r.respuestas_alumno || {}
         }))
       );
@@ -197,6 +208,15 @@ export default function App() {
       exigencia: ev.exigencia ?? 60,
       pauta: ev.pauta || {}
     });
+
+    // Cargar eximidos desde BD o respaldo local
+    if (Array.isArray(ev.eximidos)) {
+      setEximidosRuts(ev.eximidos);
+    } else {
+      const localEx = localStorage.getItem(`omr_eximidos_${ev.id}`);
+      setEximidosRuts(localEx ? JSON.parse(localEx) : []);
+    }
+
     setSubVistaEval('avance');
     if (cambiarDeVista) setVistaActiva('evaluaciones-creadas');
   };
@@ -219,7 +239,10 @@ export default function App() {
   };
 
   const guardarEvaluacionNube = async () => {
-    if (!supabase) return;
+    if (!supabase) {
+      alert('No hay conexión activa con Supabase.');
+      return;
+    }
     if (!config.tituloPrueba.trim()) {
       alert('Escribe un título para la evaluación.');
       return;
@@ -237,7 +260,8 @@ export default function App() {
       nota_max: Number(config.notaMax),
       nota_aprob: Number(config.notaAprob),
       exigencia: Number(config.exigencia),
-      pauta: config.pauta
+      pauta: config.pauta,
+      eximidos: eximidosRuts
     };
 
     if (config.id) {
@@ -247,10 +271,10 @@ export default function App() {
         .eq('id', config.id);
 
       if (error) {
-        alert('Error al actualizar: ' + error.message);
+        alert('Error al guardar cambios en la nube: ' + error.message);
       } else {
-        alert('Evaluación actualizada.');
-        cargarEvaluacionesNube(config.id);
+        alert('✅ Cambios guardados en la nube.');
+        await cargarEvaluacionesNube(config.id);
       }
     } else {
       const { data, error } = await supabase
@@ -260,9 +284,9 @@ export default function App() {
         .single();
 
       if (error) {
-        alert('Error al crear evaluación: ' + error.message);
+        alert('Error al crear evaluación en la nube: ' + error.message);
       } else if (data) {
-        alert('Evaluación creada y guardada en la nube.');
+        alert('✅ Evaluación creada y guardada en la nube.');
         await cargarEvaluacionesNube(data.id);
         setVistaActiva('evaluaciones-creadas');
         setSubVistaEval('avance');
@@ -270,7 +294,7 @@ export default function App() {
     }
   };
 
-  // Asignar o cambiar el curso de una evaluación existente directamente
+  // Asignar o cambiar el curso de una evaluación existente
   const asignarCursoAEvaluacion = async (nuevoCursoId) => {
     setConfig((prev) => ({ ...prev, cursoId: nuevoCursoId }));
     if (!supabase || !config.id) return;
@@ -285,7 +309,7 @@ export default function App() {
       .eq('id', config.id);
 
     if (error) {
-      alert('Error al asignar curso: ' + error.message);
+      alert('Error al asignar curso en la nube: ' + error.message);
     } else {
       cargarEvaluacionesNube(config.id);
     }
@@ -308,11 +332,12 @@ export default function App() {
       return;
     }
 
+    localStorage.removeItem('omr_ultima_eval_id');
     setUltimoResultado(null);
     await cargarEvaluacionesNube();
   };
 
-  // Eliminar un resultado escaneado individual (desde la tabla inferior)
+  // Eliminar un resultado escaneado individual
   const eliminarResultadoEscaneo = async (resultadoObj) => {
     if (!confirm(`¿Eliminar el escaneo de "${resultadoObj.nombre}" (${resultadoObj.rut})?`)) {
       return;
@@ -325,7 +350,7 @@ export default function App() {
         .eq('id', resultadoObj.id);
 
       if (error) {
-        alert('Error al eliminar resultado: ' + error.message);
+        alert('Error al eliminar resultado en la nube: ' + error.message);
         return;
       }
       await cargarResultadosNube(config.id);
@@ -334,7 +359,7 @@ export default function App() {
     }
   };
 
-  // Agregar estudiante desde la nómina de evaluación (lo guarda en la tabla oficial del curso)
+  // Agregar estudiante desde la nómina de evaluación
   const agregarEstudianteAEvaluacion = async (e) => {
     e.preventDefault();
     if (!rutExtra.trim() || !nombreExtra.trim()) return;
@@ -379,14 +404,12 @@ export default function App() {
       if (i > 0) doc.addPage();
       const est = listaEstudiantesAImprimir[i];
 
-      // 4 marcas fiduciales
       doc.setFillColor(0, 0, 0);
       doc.rect(12, 12, 8, 8, 'F');
       doc.rect(195, 12, 8, 8, 'F');
       doc.rect(12, 258, 8, 8, 'F');
       doc.rect(195, 258, 8, 8, 'F');
 
-      // Encabezado
       doc.setFontSize(14);
       doc.setFont('helvetica', 'bold');
       doc.text(config.tituloPrueba, 25, 20);
@@ -396,7 +419,6 @@ export default function App() {
       doc.text(`Estudiante: ${est.nombre}`, 25, 32);
       doc.text(`RUT: ${est.rut}   |   Curso: ${nombreCurso || '-'}`, 25, 38);
 
-      // QR
       const qrPayload = JSON.stringify({
         r: est.rut,
         n: est.nombre,
@@ -406,7 +428,6 @@ export default function App() {
       const qrDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 120 });
       doc.addImage(qrDataUrl, 'PNG', 162, 14, 28, 28);
 
-      // Burbujas
       doc.setDrawColor(60, 60, 60);
       doc.setLineWidth(0.3);
 
@@ -450,15 +471,20 @@ export default function App() {
     return Number(Math.min(nMax, Math.max(nMin, nota)).toFixed(1));
   };
 
-  // Escaneo de hojas con detección de duplicados y opción de sobrescribir
+  // Escaneo de hojas con guardado garantizado en Supabase y control de duplicados
   const manejarEscaneo = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
+
+    if (!config.id) {
+      alert('Primero debes seleccionar o guardar una evaluación en la nube.');
+      return;
+    }
+
     setProcesando(true);
     setProgresoLote('Preparando archivos...');
 
     try {
-      // 1. Expandir cualquier PDF en páginas individuales como imágenes
       let colaImagenes = [];
       for (const file of files) {
         if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
@@ -471,7 +497,6 @@ export default function App() {
         }
       }
 
-      // 2. Procesar cada hoja OMR en secuencia
       const nuevosResultados = [];
 
       for (let idx = 0; idx < colaImagenes.length; idx++) {
@@ -530,7 +555,6 @@ export default function App() {
       }
 
       if (nuevosResultados.length > 0) {
-        // 3. Verificar si hay RUTs ya escaneados previamente en esta evaluación
         const rutsExistentesMap = new Map();
         resultadosCurso.forEach((r) => {
           const clave = r.rut.trim().toLowerCase();
@@ -563,7 +587,7 @@ export default function App() {
           setUltimoResultado(resultadosAGuardar[resultadosAGuardar.length - 1]);
 
           if (supabase && config.id) {
-            // Si el usuario eligió sobrescribir, borrar los registros anteriores de esos RUT en esta evaluación
+            setProgresoLote('Guardando resultados en la nube...');
             if (sobreescribir && duplicados.length > 0) {
               const rutsABorrar = duplicados.map((d) => d.rut);
               await supabase
@@ -575,33 +599,28 @@ export default function App() {
 
             const filasSupabase = resultadosAGuardar.map((reg) => ({
               evaluacion_id: config.id,
-              curso_id: config.cursoId || null,
               rut_estudiante: reg.rut,
               nombre_estudiante: reg.nombre,
               curso: reg.curso,
-              puntaje_obtenido: reg.puntaje,
-              puntaje_total: reg.total,
-              porcentaje: reg.porcentaje,
-              nota: reg.nota,
+              puntaje_obtenido: Number(reg.puntaje),
+              puntaje_total: Number(reg.total),
+              porcentaje: Number(reg.porcentaje),
+              nota: Number(reg.nota),
               respuestas_alumno: reg.respuestas
             }));
 
-            await supabase.from('resultados').insert(filasSupabase);
-            await cargarResultadosNube(config.id);
-          } else {
-            setResultadosCurso((prev) => {
-              const sinDup = sobreescribir
-                ? prev.filter(
-                    (p) => !duplicados.some((d) => d.rut.trim().toLowerCase() === p.rut.trim().toLowerCase())
-                  )
-                : prev;
-              return [...resultadosAGuardar.reverse(), ...sinDup];
-            });
-          }
-        }
+            const { error: insertError } = await supabase
+              .from('resultados')
+              .insert(filasSupabase)
+              .select();
 
-        if (colaImagenes.length > 1) {
-          alert(`✅ Proceso completado: ${resultadosAGuardar.length} hoja(s) guardada(s).`);
+            if (insertError) {
+              alert('❌ Error al guardar en la nube: ' + insertError.message);
+            } else {
+              await cargarResultadosNube(config.id);
+              alert(`✅ ${resultadosAGuardar.length} resultado(s) guardado(s) correctamente en la nube.`);
+            }
+          }
         }
       }
     } catch (err) {
@@ -951,7 +970,6 @@ export default function App() {
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
-                            {/* Gráfico Circular SVG */}
                             <div style={{ position: 'relative', width: '112px', height: '112px' }}>
                               <svg width="112" height="112" style={{ transform: 'rotate(-90deg)' }}>
                                 <circle cx="56" cy="56" r={radio} stroke="#e2e8f0" strokeWidth="12" fill="transparent" />
@@ -1011,7 +1029,6 @@ export default function App() {
                           )}
                         </div>
 
-                        {/* Tabla de Pendientes + Control de Eximidos */}
                         {mostrarPendientesDetalle && (
                           <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '20px' }}>
                             <div>
@@ -1069,7 +1086,6 @@ export default function App() {
                               )}
                             </div>
 
-                            {/* Sección de Estudiantes Eximidos (para deseximir fácilmente) */}
                             {estudiantesEximidos.length > 0 && (
                               <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
                                 <h4 style={{ margin: '0 0 10px 0', fontSize: '15px', display: 'flex', alignItems: 'center', gap: '8px', color: '#475569' }}>
@@ -1114,7 +1130,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* SUBVISTA B: IMPRIMIR SELECTIVO Y AGREGAR ESTUDIANTES CON BANNER INFORMATIVO */}
+                {/* SUBVISTA B: IMPRIMIR SELECTIVO Y AGREGAR ESTUDIANTES */}
                 {subVistaEval === 'imprimir' && (
                   <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
@@ -1141,7 +1157,6 @@ export default function App() {
                       </button>
                     </div>
 
-                    {/* Banner informativo: agregar aquí guarda directamente en el curso oficial */}
                     <div
                       style={{
                         background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af',
@@ -1269,7 +1284,7 @@ export default function App() {
                   <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                     <h3 style={{ margin: '0 0 12px 0', fontSize: '18px' }}>Escanear Hoja de Respuestas o Subir PDF</h3>
                     <p style={{ color: '#64748b', fontSize: '14px', marginBottom: '16px' }}>
-                      Puedes subir una foto individual, seleccionar varias imágenes o cargar un <strong>PDF multipágina</strong> con todo el curso. Si un estudiante ya fue escaneado, el sistema te preguntará si deseas sobrescribir su resultado.
+                      Puedes subir una foto individual, seleccionar varias imágenes o cargar un <strong>PDF multipágina</strong> con todo el curso. Los resultados quedan guardados automáticamente en la nube.
                     </p>
                     <label
                       style={{
@@ -1300,7 +1315,7 @@ export default function App() {
                           </div>
                           <div style={{ textAlign: 'right' }}>
                             <span style={{ fontSize: '24px', fontWeight: '800', color: ultimoResultado.nota >= 4.0 ? '#16a34a' : '#dc2626' }}>
-                              Nota: {ultimoResultado.nota.toFixed(1)}
+                              Nota: {Number(ultimoResultado.nota).toFixed(1)}
                             </span>
                             <div style={{ fontSize: '13px', color: '#475569' }}>
                               {ultimoResultado.puntaje} / {ultimoResultado.total} pts ({ultimoResultado.porcentaje}%)
@@ -1340,7 +1355,6 @@ export default function App() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                     <AnalisisPanel resultados={resultadosCurso} config={config} />
 
-                    {/* Lista administrable para eliminar escaneos individuales */}
                     <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                       <h3 style={{ margin: '0 0 12px 0', fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <Trash2 size={18} color="#dc2626" />
