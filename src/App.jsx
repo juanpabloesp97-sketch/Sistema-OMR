@@ -35,6 +35,7 @@ export default function App() {
   const [config, setConfig] = useState({
     id: null,
     cursoId: '',
+    nivelId: '',
     tituloPrueba: 'Evaluación Sumativa N° 1',
     asignatura: 'Matemática',
     numPreguntas: 30,
@@ -84,18 +85,62 @@ export default function App() {
     }
 
     if (config.cursoId) {
-      cargarEstudiantesParaEval(config.cursoId);
+      cargarEstudiantesParaEval(config.cursoId, null);
+    } else if (config.nivelId) {
+      cargarEstudiantesParaEval(null, config.nivelId);
     } else {
       setEstudiantesCursoEval([]);
       setSeleccionadosImprimir([]);
     }
-  }, [config.id, config.cursoId]);
+  }, [config.id, config.cursoId, config.nivelId, cursos]);
 
-  // Eximir / Deseximir estudiante y sincronizar en Supabase + respaldo local
+  // Obtener nombre del nivel activo (ya sea por cursoId o por nivelId directo)
+  const obtenerNombreNivelActivo = () => {
+    if (config.cursoId) {
+      const c = cursos.find((cur) => cur.id === config.cursoId);
+      if (c) {
+        const n = niveles.find((niv) => niv.id === c.nivel_id);
+        if (n) return n.nombre;
+      }
+    }
+    if (config.nivelId) {
+      const n = niveles.find((niv) => niv.id === config.nivelId);
+      if (n) return n.nombre;
+    }
+    return '';
+  };
+
+  // Manejar selección de "Curso individual" o "Nivel completo" (valor con prefijo "nivel:")
+  const manejarCambioDestinoEvaluacion = (valorSelect) => {
+    if (!valorSelect) {
+      setConfig((prev) => ({ ...prev, cursoId: '', nivelId: '' }));
+      return;
+    }
+    if (valorSelect.startsWith('nivel:')) {
+      const nId = valorSelect.replace('nivel:', '');
+      setConfig((prev) => ({ ...prev, cursoId: '', nivelId: nId }));
+    } else {
+      const cObj = cursos.find((c) => c.id === valorSelect);
+      setConfig((prev) => ({
+        ...prev,
+        cursoId: valorSelect,
+        nivelId: cObj ? cObj.nivel_id : ''
+      }));
+    }
+  };
+
+  // Valor actual para el <select> unificado de Curso / Nivel
+  const valorSelectDestino = config.cursoId
+    ? config.cursoId
+    : config.nivelId
+    ? `nivel:${config.nivelId}`
+    : '';
+
+  // Eximir / Deseximir estudiante
   const toggleEximirEstudiante = async (rut) => {
     const rutNorm = rut.trim().toLowerCase();
     const existe = eximidosRuts.includes(rutNorm);
-    const actualizada = existe ? eximidosRuts.filter((r) => r !== rutNorm) : [...eximidosRuts, rutNorm];
+    const actualizada = existe ? eximidosRuts.filter((r) => r !== rutNorm) : [...prevSafe(eximidosRuts), rutNorm];
     setEximidosRuts(actualizada);
 
     if (config.id) {
@@ -108,6 +153,8 @@ export default function App() {
       }
     }
   };
+
+  const prevSafe = (arr) => (Array.isArray(arr) ? arr : []);
 
   const cargarEstructuraEscolar = async () => {
     if (!supabase) return;
@@ -134,7 +181,7 @@ export default function App() {
     if (data) {
       setEvaluacionesGuardadas(data);
       if (data.length === 0) {
-        setConfig((prev) => ({ ...prev, id: null, cursoId: '' }));
+        setConfig((prev) => ({ ...prev, id: null, cursoId: '', nivelId: '' }));
         return;
       }
       if (seleccionarId) {
@@ -150,17 +197,52 @@ export default function App() {
     }
   };
 
-  const cargarEstudiantesParaEval = async (cursoId) => {
-    if (!supabase || !cursoId) return;
-    const { data, error } = await supabase
-      .from('estudiantes')
-      .select('*')
-      .eq('curso_id', cursoId)
-      .order('nombre');
+  // Carga estudiantes de un curso puntual o de TODOS los cursos de un nivel
+  const cargarEstudiantesParaEval = async (cursoId, nivelId) => {
+    if (!supabase) return;
 
-    if (!error && data) {
-      setEstudiantesCursoEval(data);
-      setSeleccionadosImprimir(data.map((e) => e.rut));
+    if (cursoId) {
+      const cObj = cursos.find((c) => c.id === cursoId);
+      const { data, error } = await supabase
+        .from('estudiantes')
+        .select('*')
+        .eq('curso_id', cursoId)
+        .order('nombre');
+
+      if (!error && data) {
+        const conCurso = data.map((e) => ({
+          ...e,
+          curso_nombre: cObj ? cObj.nombre : ''
+        }));
+        setEstudiantesCursoEval(conCurso);
+        setSeleccionadosImprimir(conCurso.map((e) => e.rut));
+      }
+    } else if (nivelId) {
+      const cursosDelNivel = cursos.filter((c) => c.nivel_id === nivelId);
+      const idsCursos = cursosDelNivel.map((c) => c.id);
+      if (idsCursos.length === 0) {
+        setEstudiantesCursoEval([]);
+        setSeleccionadosImprimir([]);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('estudiantes')
+        .select('*')
+        .in('curso_id', idsCursos)
+        .order('nombre');
+
+      if (!error && data) {
+        const conCurso = data.map((e) => {
+          const cObj = cursosDelNivel.find((c) => c.id === e.curso_id);
+          return {
+            ...e,
+            curso_nombre: cObj ? cObj.nombre : ''
+          };
+        });
+        setEstudiantesCursoEval(conCurso);
+        setSeleccionadosImprimir(conCurso.map((e) => e.rut));
+      }
     }
   };
 
@@ -198,6 +280,7 @@ export default function App() {
     setConfig({
       id: ev.id,
       cursoId: ev.curso_id || '',
+      nivelId: ev.nivel_id || '',
       tituloPrueba: ev.titulo,
       asignatura: ev.asignatura || '',
       numPreguntas: ev.num_preguntas || 30,
@@ -209,7 +292,6 @@ export default function App() {
       pauta: ev.pauta || {}
     });
 
-    // Cargar eximidos desde BD o respaldo local
     if (Array.isArray(ev.eximidos)) {
       setEximidosRuts(ev.eximidos);
     } else {
@@ -222,9 +304,11 @@ export default function App() {
   };
 
   const iniciarNuevaEvaluacion = () => {
+    const nivelDefecto = niveles.find((n) => n.nombre.includes('6°')) || niveles[0];
     setConfig({
       id: null,
-      cursoId: cursos.length > 0 ? cursos[0].id : '',
+      cursoId: '',
+      nivelId: nivelDefecto ? nivelDefecto.id : '',
       tituloPrueba: '',
       asignatura: profesor.asignatura || 'Matemática',
       numPreguntas: 30,
@@ -249,11 +333,13 @@ export default function App() {
     }
 
     const cursoObj = cursos.find((c) => c.id === config.cursoId);
+    const nivelFinalId = cursoObj ? cursoObj.nivel_id : (config.nivelId || null);
+
     const payload = {
       titulo: config.tituloPrueba.trim(),
       asignatura: config.asignatura,
       curso_id: config.cursoId || null,
-      nivel_id: cursoObj ? cursoObj.nivel_id : null,
+      nivel_id: nivelFinalId,
       num_preguntas: Number(config.numPreguntas),
       alternativas: config.alternativas,
       nota_min: Number(config.notaMin),
@@ -294,22 +380,32 @@ export default function App() {
     }
   };
 
-  // Asignar o cambiar el curso de una evaluación existente
-  const asignarCursoAEvaluacion = async (nuevoCursoId) => {
-    setConfig((prev) => ({ ...prev, cursoId: nuevoCursoId }));
+  // Asignar o cambiar curso o nivel completo en una evaluación existente
+  const actualizarDestinoEvaluacionNube = async (valorSelect) => {
+    manejarCambioDestinoEvaluacion(valorSelect);
     if (!supabase || !config.id) return;
 
-    const cursoObj = cursos.find((c) => c.id === nuevoCursoId);
+    let nuevoCursoId = null;
+    let nuevoNivelId = null;
+
+    if (valorSelect.startsWith('nivel:')) {
+      nuevoNivelId = valorSelect.replace('nivel:', '');
+    } else if (valorSelect) {
+      nuevoCursoId = valorSelect;
+      const cObj = cursos.find((c) => c.id === valorSelect);
+      nuevoNivelId = cObj ? cObj.nivel_id : null;
+    }
+
     const { error } = await supabase
       .from('evaluaciones')
       .update({
-        curso_id: nuevoCursoId || null,
-        nivel_id: cursoObj ? cursoObj.nivel_id : null
+        curso_id: nuevoCursoId,
+        nivel_id: nuevoNivelId
       })
       .eq('id', config.id);
 
     if (error) {
-      alert('Error al asignar curso en la nube: ' + error.message);
+      alert('Error al asignar curso/nivel: ' + error.message);
     } else {
       cargarEvaluacionesNube(config.id);
     }
@@ -365,15 +461,17 @@ export default function App() {
     if (!rutExtra.trim() || !nombreExtra.trim()) return;
     const nuevo = { id: 'local-' + Date.now(), rut: rutExtra.trim(), nombre: nombreExtra.trim() };
 
-    if (config.cursoId && supabase) {
+    const cursoDestinoId = config.cursoId || (config.nivelId ? cursos.find((c) => c.nivel_id === config.nivelId)?.id : null);
+
+    if (cursoDestinoId && supabase) {
       const { error } = await supabase
         .from('estudiantes')
-        .upsert([{ curso_id: config.cursoId, rut: nuevo.rut, nombre: nuevo.nombre }], { onConflict: 'curso_id,rut' });
+        .upsert([{ curso_id: cursoDestinoId, rut: nuevo.rut, nombre: nuevo.nombre }], { onConflict: 'curso_id,rut' });
       if (error) {
         alert('Error al agregar estudiante al curso: ' + error.message);
         return;
       }
-      await cargarEstudiantesParaEval(config.cursoId);
+      await cargarEstudiantesParaEval(config.cursoId, config.nivelId);
     } else {
       setEstudiantesCursoEval((prev) => [...prev, nuevo]);
       setSeleccionadosImprimir((prev) => [...prev, nuevo.rut]);
@@ -387,22 +485,22 @@ export default function App() {
     setSeleccionadosImprimir((prev) => prev.filter((r) => r !== rut));
   };
 
-  // Generar PDF para un subconjunto de estudiantes
+  // Generar PDF para un subconjunto de estudiantes (respeta el curso individual de cada estudiante si es nivel completo)
   const imprimirHojasPDF = async (listaEstudiantesAImprimir, sufijoArchivo = '') => {
     if (!listaEstudiantesAImprimir || listaEstudiantesAImprimir.length === 0) {
-      alert('No hay estudiantes seleccionados para imprimir. Asigna un curso primero o agrega alumnos.');
+      alert('No hay estudiantes seleccionados para imprimir. Asigna un curso o nivel primero.');
       return;
     }
 
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
     const opciones = config.alternativas.split('');
     const totalPreg = Number(config.numPreguntas);
-    const cursoObj = cursos.find((c) => c.id === config.cursoId);
-    const nombreCurso = cursoObj ? cursoObj.nombre : '';
+    const cursoGlobalObj = cursos.find((c) => c.id === config.cursoId);
 
     for (let i = 0; i < listaEstudiantesAImprimir.length; i++) {
       if (i > 0) doc.addPage();
       const est = listaEstudiantesAImprimir[i];
+      const nombreCursoEst = est.curso_nombre || (cursoGlobalObj ? cursoGlobalObj.nombre : '');
 
       doc.setFillColor(0, 0, 0);
       doc.rect(12, 12, 8, 8, 'F');
@@ -417,12 +515,12 @@ export default function App() {
       doc.setFont('helvetica', 'normal');
       doc.text(`Asignatura: ${config.asignatura}`, 25, 26);
       doc.text(`Estudiante: ${est.nombre}`, 25, 32);
-      doc.text(`RUT: ${est.rut}   |   Curso: ${nombreCurso || '-'}`, 25, 38);
+      doc.text(`RUT: ${est.rut}   |   Curso: ${nombreCursoEst || '-'}`, 25, 38);
 
       const qrPayload = JSON.stringify({
         r: est.rut,
         n: est.nombre,
-        c: nombreCurso,
+        c: nombreCursoEst,
         e: config.id || ''
       });
       const qrDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 120 });
@@ -471,7 +569,7 @@ export default function App() {
     return Number(Math.min(nMax, Math.max(nMin, nota)).toFixed(1));
   };
 
-  // Escaneo de hojas con guardado garantizado en Supabase y control de duplicados
+  // Escaneo de hojas
   const manejarEscaneo = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
@@ -658,7 +756,8 @@ export default function App() {
   const circunferencia = 2 * Math.PI * radio;
   const trazoCompletado = circunferencia - (porcentajeAvance / 100) * circunferencia;
 
-  const cursoAsignadoObj = cursos.find((c) => c.id === config.cursoId);
+  const nivelActivoNombre = obtenerNombreNivelActivo();
+  const tieneDestinoAsignado = Boolean(config.cursoId || config.nivelId);
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#1e293b' }}>
@@ -767,21 +866,33 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Curso al que se aplica</label>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Nivel completo o Curso</label>
                   <select
-                    value={config.cursoId}
-                    onChange={(e) => setConfig({ ...config, cursoId: e.target.value })}
-                    style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+                    value={valorSelectDestino}
+                    onChange={(e) => manejarCambioDestinoEvaluacion(e.target.value)}
+                    style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box', fontWeight: '600' }}
                   >
-                    <option value="">-- Seleccionar curso --</option>
-                    {cursos.map((c) => {
-                      const niv = niveles.find((n) => n.id === c.nivel_id);
-                      return (
-                        <option key={c.id} value={c.id}>
-                          {niv ? `${niv.nombre} — ` : ''}{c.nombre}
-                        </option>
-                      );
-                    })}
+                    <option value="">-- Seleccionar nivel o curso --</option>
+                    <optgroup label="Aplicar a Nivel Completo (todos sus cursos)">
+                      {niveles.map((n) => {
+                        const cantCursos = cursos.filter((c) => c.nivel_id === n.id).length;
+                        return (
+                          <option key={`niv-${n.id}`} value={`nivel:${n.id}`}>
+                            📚 Nivel Completo: {n.nombre} ({cantCursos} curso{cantCursos === 1 ? '' : 's'})
+                          </option>
+                        );
+                      })}
+                    </optgroup>
+                    <optgroup label="Aplicar a un Curso Específico">
+                      {cursos.map((c) => {
+                        const niv = niveles.find((n) => n.id === c.nivel_id);
+                        return (
+                          <option key={c.id} value={c.id}>
+                            {niv ? `${niv.nombre} — ` : ''}{c.nombre}
+                          </option>
+                        );
+                      })}
+                    </optgroup>
                   </select>
                 </div>
 
@@ -825,7 +936,7 @@ export default function App() {
             <PautaEditor
               config={config}
               setConfig={setConfig}
-              nivelNombre={niveles.find((n) => n.id === cursos.find((c) => c.id === config.cursoId)?.nivel_id)?.nombre || ''}
+              nivelNombre={nivelActivoNombre}
             />
 
             <button
@@ -845,7 +956,7 @@ export default function App() {
         {/* VISTA 4: EVALUACIONES CREADAS */}
         {vistaActiva === 'evaluaciones-creadas' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Barra superior de selección, asignación de curso, impresión y eliminación */}
+            {/* Barra superior de selección, asignación de nivel/curso, impresión y eliminación */}
             <div style={{ background: '#ffffff', padding: '18px 20px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px', alignItems: 'end' }}>
                 <div>
@@ -872,22 +983,34 @@ export default function App() {
                 {config.id && (
                   <div>
                     <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#2563eb', marginBottom: '4px' }}>
-                      CURSO ASIGNADO A ESTA PRUEBA
+                      NIVEL O CURSO ASIGNADO
                     </label>
                     <select
-                      value={config.cursoId || ''}
-                      onChange={(e) => asignarCursoAEvaluacion(e.target.value)}
+                      value={valorSelectDestino}
+                      onChange={(e) => actualizarDestinoEvaluacionNube(e.target.value)}
                       style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #3b82f6', background: '#eff6ff', fontSize: '14px', fontWeight: '600' }}
                     >
-                      <option value="">-- Sin curso asignado --</option>
-                      {cursos.map((c) => {
-                        const niv = niveles.find((n) => n.id === c.nivel_id);
-                        return (
-                          <option key={c.id} value={c.id}>
-                            {niv ? `${niv.nombre} — ` : ''}{c.nombre}
-                          </option>
-                        );
-                      })}
+                      <option value="">-- Sin asignar --</option>
+                      <optgroup label="Nivel Completo (todos sus cursos)">
+                        {niveles.map((n) => {
+                          const cantCursos = cursos.filter((c) => c.nivel_id === n.id).length;
+                          return (
+                            <option key={`niv-${n.id}`} value={`nivel:${n.id}`}>
+                              📚 Nivel Completo: {n.nombre} ({cantCursos} curso{cantCursos === 1 ? '' : 's'})
+                            </option>
+                          );
+                        })}
+                      </optgroup>
+                      <optgroup label="Curso Individual">
+                        {cursos.map((c) => {
+                          const niv = niveles.find((n) => n.id === c.nivel_id);
+                          return (
+                            <option key={c.id} value={c.id}>
+                              {niv ? `${niv.nombre} — ` : ''}{c.nombre}
+                            </option>
+                          );
+                        })}
+                      </optgroup>
                     </select>
                   </div>
                 )}
@@ -958,9 +1081,9 @@ export default function App() {
                 {/* SUBVISTA A: AVANCE, PENDIENTES Y EXIMIR / DESEXIMIR */}
                 {subVistaEval === 'avance' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    {!config.cursoId ? (
+                    {!tieneDestinoAsignado ? (
                       <div style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', padding: '16px', borderRadius: '12px', fontSize: '14px' }}>
-                        <strong>Esta evaluación aún no tiene un curso asignado.</strong> Selecciónalo arriba en <em>"Curso asignado a esta prueba"</em> para ver el gráfico de porcentaje rendido y controlar los estudiantes eximidos o pendientes.
+                        <strong>Esta evaluación aún no tiene un curso o nivel asignado.</strong> Selecciónalo arriba en <em>"Nivel o Curso Asignado"</em> para ver el gráfico de cobertura y controlar los estudiantes eximidos o pendientes.
                       </div>
                     ) : (
                       <>
@@ -1001,14 +1124,14 @@ export default function App() {
 
                             <div>
                               <div style={{ fontSize: '12px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase' }}>
-                                Cobertura de Aplicación
+                                Cobertura de Aplicación {config.nivelId && !config.cursoId ? `(Nivel ${nivelActivoNombre})` : ''}
                               </div>
                               <h3 style={{ margin: '4px 0', fontSize: '20px', color: '#0f172a' }}>
                                 {estudiantesRendidos.length} de {totalActivos} estudiantes ya rindieron
                               </h3>
                               <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>
                                 {estudiantesPendientes.length === 0
-                                  ? '¡Curso completo! Todos los estudiantes activos tienen su hoja escaneada.'
+                                  ? '¡Completo! Todos los estudiantes activos tienen su hoja escaneada.'
                                   : `Faltan ${estudiantesPendientes.length} estudiante(s) por rendir.`}
                                 {estudiantesEximidos.length > 0 && ` (${estudiantesEximidos.length} eximido(s) excluidos del cálculo).`}
                               </p>
@@ -1044,7 +1167,7 @@ export default function App() {
                               {estudiantesPendientes.length === 0 ? (
                                 <div style={{ padding: '14px', background: '#f0fdf4', color: '#166534', borderRadius: '8px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                                   <CheckCircle2 size={18} />
-                                  No hay estudiantes pendientes en este curso.
+                                  No hay estudiantes pendientes.
                                 </div>
                               ) : (
                                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
@@ -1052,6 +1175,7 @@ export default function App() {
                                     <tr>
                                       <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>RUT</th>
                                       <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>Nombre Estudiante</th>
+                                      <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>Curso</th>
                                       <th style={{ padding: '10px', textAlign: 'right', borderBottom: '1px solid #fed7aa' }}>Acciones</th>
                                     </tr>
                                   </thead>
@@ -1060,6 +1184,7 @@ export default function App() {
                                       <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9' }}>
                                         <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{est.rut}</td>
                                         <td style={{ padding: '9px 10px', fontWeight: '600' }}>{est.nombre}</td>
+                                        <td style={{ padding: '9px 10px', color: '#64748b' }}>{est.curso_nombre || '-'}</td>
                                         <td style={{ padding: '9px 10px', textAlign: 'right', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                                           <button
                                             onClick={() => toggleEximirEstudiante(est.rut)}
@@ -1068,7 +1193,6 @@ export default function App() {
                                               borderRadius: '6px', padding: '5px 10px', cursor: 'pointer',
                                               fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px'
                                             }}
-                                            title="Eximir de esta evaluación"
                                           >
                                             <UserX size={14} /> Eximir
                                           </button>
@@ -1094,7 +1218,7 @@ export default function App() {
                               <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
                                 <h4 style={{ margin: '0 0 10px 0', fontSize: '15px', display: 'flex', alignItems: 'center', gap: '8px', color: '#475569' }}>
                                   <UserX size={17} />
-                                  Estudiantes Eximidos de esta Evaluación ({estudiantesEximidos.length})
+                                  Estudiantes Eximidos ({estudiantesEximidos.length})
                                 </h4>
                                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                                   <thead style={{ background: '#f8fafc' }}>
@@ -1170,7 +1294,7 @@ export default function App() {
                     >
                       <Info size={18} style={{ flexShrink: 0 }} />
                       <div>
-                        <strong>Nota:</strong> Para mantener la lista unificada, los estudiantes nuevos deberían crearse en la pestaña <strong>Mis Cursos</strong>. Si agregas un estudiante desde aquí, <strong>se incorporará automáticamente a la nómina oficial del curso {cursoAsignadoObj ? `(${cursoAsignadoObj.nombre})` : ''}</strong>.
+                        <strong>Nota:</strong> Para mantener la lista unificada, los estudiantes nuevos deberían crearse en <strong>Mis Cursos</strong>. Si agregas un estudiante desde aquí, <strong>se incorporará automáticamente a la nómina oficial del curso</strong>.
                       </div>
                     </div>
 
@@ -1217,6 +1341,7 @@ export default function App() {
                           </th>
                           <th style={{ padding: '10px', textAlign: 'left' }}>RUT</th>
                           <th style={{ padding: '10px', textAlign: 'left' }}>Estudiante</th>
+                          <th style={{ padding: '10px', textAlign: 'left' }}>Curso</th>
                           <th style={{ padding: '10px', textAlign: 'center' }}>Estado</th>
                           <th style={{ padding: '10px', textAlign: 'center' }}>Eximir</th>
                           <th style={{ padding: '10px', textAlign: 'center' }}>Quitar</th>
@@ -1243,6 +1368,7 @@ export default function App() {
                               </td>
                               <td style={{ padding: '8px 10px', fontFamily: 'monospace' }}>{est.rut}</td>
                               <td style={{ padding: '8px 10px', fontWeight: '500' }}>{est.nombre}</td>
+                              <td style={{ padding: '8px 10px', color: '#64748b' }}>{est.curso_nombre || '-'}</td>
                               <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                                 <span
                                   style={{
@@ -1270,7 +1396,6 @@ export default function App() {
                                 <button
                                   onClick={() => quitarEstudianteDeEvaluacion(est.rut)}
                                   style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer' }}
-                                  title="Quitar de esta lista de impresión"
                                 >
                                   <Trash2 size={15} />
                                 </button>
@@ -1288,7 +1413,7 @@ export default function App() {
                   <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                     <h3 style={{ margin: '0 0 12px 0', fontSize: '18px' }}>Escanear Hoja de Respuestas o Subir PDF</h3>
                     <p style={{ color: '#64748b', fontSize: '14px', marginBottom: '16px' }}>
-                      Puedes subir una foto individual, seleccionar varias imágenes o cargar un <strong>PDF multipágina</strong> con todo el curso. Los resultados quedan guardados automáticamente en la nube.
+                      Puedes subir una foto individual, seleccionar varias imágenes o cargar un <strong>PDF multipágina</strong>. Los resultados quedan guardados automáticamente en la nube.
                     </p>
                     <label
                       style={{
@@ -1338,14 +1463,13 @@ export default function App() {
                   </div>
                 )}
 
-                {/* SUBVISTA D: EDITAR PAUTA */}
+                {/* SUBVISTA D: EDITAR PAUTA CON DESPLEGABLE DE OAs DEL NIVEL */}
                 {subVistaEval === 'pauta' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                    
                     <PautaEditor
                       config={config}
                       setConfig={setConfig}
-                      nivelNombre={niveles.find((n) => n.id === cursos.find((c) => c.id === config.cursoId)?.nivel_id)?.nombre || ''}
+                      nivelNombre={nivelActivoNombre}
                     />
                     <button
                       onClick={guardarEvaluacionNube}
