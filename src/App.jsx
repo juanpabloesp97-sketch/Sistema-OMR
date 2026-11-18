@@ -3,7 +3,8 @@ import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
 import {
   FileDown, User, CheckCircle2, Camera, CheckSquare, Square,
-  Cloud, BarChart3, Printer, Clock, AlertCircle, Save, Trash2, UserPlus
+  Cloud, BarChart3, Printer, Clock, AlertCircle, Save, Trash2, UserPlus,
+  UserX, UserCheck, Info
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import VisorCurso from './VisorCurso';
@@ -50,6 +51,7 @@ export default function App() {
   const [estudiantesCursoEval, setEstudiantesCursoEval] = useState([]);
   const [resultadosCurso, setResultadosCurso] = useState([]);
   const [seleccionadosImprimir, setSeleccionadosImprimir] = useState([]);
+  const [eximidosRuts, setEximidosRuts] = useState([]);
   const [mostrarPendientesDetalle, setMostrarPendientesDetalle] = useState(true);
 
   const [ultimoResultado, setUltimoResultado] = useState(null);
@@ -74,9 +76,21 @@ export default function App() {
   useEffect(() => {
     if (config.id) {
       cargarResultadosNube(config.id);
+      const guardadosEximidos = localStorage.getItem(`omr_eximidos_${config.id}`);
+      if (guardadosEximidos) {
+        try {
+          setEximidosRuts(JSON.parse(guardadosEximidos));
+        } catch (e) {
+          setEximidosRuts([]);
+        }
+      } else {
+        setEximidosRuts([]);
+      }
     } else {
       setResultadosCurso([]);
+      setEximidosRuts([]);
     }
+
     if (config.cursoId) {
       cargarEstudiantesParaEval(config.cursoId);
     } else {
@@ -84,6 +98,19 @@ export default function App() {
       setSeleccionadosImprimir([]);
     }
   }, [config.id, config.cursoId]);
+
+  // Eximir / Deseximir estudiante en la evaluación actual
+  const toggleEximirEstudiante = (rut) => {
+    const rutNorm = rut.trim().toLowerCase();
+    setEximidosRuts((prev) => {
+      const existe = prev.includes(rutNorm);
+      const actualizada = existe ? prev.filter((r) => r !== rutNorm) : [...prev, rutNorm];
+      if (config.id) {
+        localStorage.setItem(`omr_eximidos_${config.id}`, JSON.stringify(actualizada));
+      }
+      return actualizada;
+    });
+  };
 
   const cargarEstructuraEscolar = async () => {
     if (!supabase) return;
@@ -285,17 +312,43 @@ export default function App() {
     await cargarEvaluacionesNube();
   };
 
-  // Agregar o quitar estudiante en la nómina de esta evaluación
+  // Eliminar un resultado escaneado individual (desde la tabla inferior)
+  const eliminarResultadoEscaneo = async (resultadoObj) => {
+    if (!confirm(`¿Eliminar el escaneo de "${resultadoObj.nombre}" (${resultadoObj.rut})?`)) {
+      return;
+    }
+
+    if (supabase && resultadoObj.id) {
+      const { error } = await supabase
+        .from('resultados')
+        .delete()
+        .eq('id', resultadoObj.id);
+
+      if (error) {
+        alert('Error al eliminar resultado: ' + error.message);
+        return;
+      }
+      await cargarResultadosNube(config.id);
+    } else {
+      setResultadosCurso((prev) => prev.filter((r) => r !== resultadoObj));
+    }
+  };
+
+  // Agregar estudiante desde la nómina de evaluación (lo guarda en la tabla oficial del curso)
   const agregarEstudianteAEvaluacion = async (e) => {
     e.preventDefault();
     if (!rutExtra.trim() || !nombreExtra.trim()) return;
     const nuevo = { id: 'local-' + Date.now(), rut: rutExtra.trim(), nombre: nombreExtra.trim() };
 
     if (config.cursoId && supabase) {
-      await supabase
+      const { error } = await supabase
         .from('estudiantes')
         .upsert([{ curso_id: config.cursoId, rut: nuevo.rut, nombre: nuevo.nombre }], { onConflict: 'curso_id,rut' });
-      cargarEstudiantesParaEval(config.cursoId);
+      if (error) {
+        alert('Error al agregar estudiante al curso: ' + error.message);
+        return;
+      }
+      await cargarEstudiantesParaEval(config.cursoId);
     } else {
       setEstudiantesCursoEval((prev) => [...prev, nuevo]);
       setSeleccionadosImprimir((prev) => [...prev, nuevo.rut]);
@@ -397,7 +450,7 @@ export default function App() {
     return Number(Math.min(nMax, Math.max(nMin, nota)).toFixed(1));
   };
 
-  // Escaneo de hojas (acepta imágenes individuales/múltiples y PDFs multipágina)
+  // Escaneo de hojas con detección de duplicados y opción de sobrescribir
   const manejarEscaneo = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
@@ -420,7 +473,6 @@ export default function App() {
 
       // 2. Procesar cada hoja OMR en secuencia
       const nuevosResultados = [];
-      const filasSupabase = [];
 
       for (let idx = 0; idx < colaImagenes.length; idx++) {
         setProgresoLote(`Corrigiendo hoja ${idx + 1} de ${colaImagenes.length}...`);
@@ -461,7 +513,7 @@ export default function App() {
             c: ''
           };
 
-          const nuevoRegistro = {
+          nuevosResultados.push({
             rut: alumnoInfo.r || 'Sin QR',
             nombre: alumnoInfo.n || `Hoja ${idx + 1}`,
             curso: alumnoInfo.c || '',
@@ -471,40 +523,86 @@ export default function App() {
             nota,
             respuestas: respuestasAlumno,
             imagenProcesada: resultadoOMR.imagenProcesada
-          };
-
-          nuevosResultados.push(nuevoRegistro);
-
-          if (supabase && config.id) {
-            filasSupabase.push({
-              evaluacion_id: config.id,
-              curso_id: config.cursoId || null,
-              rut_estudiante: nuevoRegistro.rut,
-              nombre_estudiante: nuevoRegistro.nombre,
-              curso: nuevoRegistro.curso,
-              puntaje_obtenido: nuevoRegistro.puntaje,
-              puntaje_total: nuevoRegistro.total,
-              porcentaje: nuevoRegistro.porcentaje,
-              nota: nuevoRegistro.nota,
-              respuestas_alumno: nuevoRegistro.respuestas
-            });
-          }
+          });
         } catch (pageErr) {
           console.warn(`Error en hoja ${idx + 1}:`, pageErr);
         }
       }
 
       if (nuevosResultados.length > 0) {
-        setUltimoResultado(nuevosResultados[nuevosResultados.length - 1]);
-        setResultadosCurso((prev) => [...nuevosResultados.reverse(), ...prev]);
+        // 3. Verificar si hay RUTs ya escaneados previamente en esta evaluación
+        const rutsExistentesMap = new Map();
+        resultadosCurso.forEach((r) => {
+          const clave = r.rut.trim().toLowerCase();
+          if (clave && clave !== 'sin qr' && clave !== 'sin rut') {
+            rutsExistentesMap.set(clave, r);
+          }
+        });
 
-        if (supabase && config.id && filasSupabase.length > 0) {
-          await supabase.from('resultados').insert(filasSupabase);
+        const duplicados = nuevosResultados.filter((n) =>
+          rutsExistentesMap.has(n.rut.trim().toLowerCase())
+        );
+
+        let sobreescribir = true;
+        if (duplicados.length > 0) {
+          const nombresDup = duplicados
+            .slice(0, 5)
+            .map((d) => `• ${d.nombre} (${d.rut})`)
+            .join('\n');
+          const extraTxt = duplicados.length > 5 ? `\n...y ${duplicados.length - 5} más.` : '';
+          sobreescribir = confirm(
+            `⚠️ Se detectaron ${duplicados.length} estudiante(s) que ya tienen un escaneo guardado:\n\n${nombresDup}${extraTxt}\n\n¿Deseas SOBREESCRIBIR sus resultados anteriores con este nuevo escaneo?\n(Aceptar = Sobreescribir | Cancelar = Omitir duplicados)`
+          );
         }
-      }
 
-      if (colaImagenes.length > 1) {
-        alert(`✅ Proceso completado: ${nuevosResultados.length} de ${colaImagenes.length} hojas corregidas.`);
+        const resultadosAGuardar = sobreescribir
+          ? nuevosResultados
+          : nuevosResultados.filter((n) => !rutsExistentesMap.has(n.rut.trim().toLowerCase()));
+
+        if (resultadosAGuardar.length > 0) {
+          setUltimoResultado(resultadosAGuardar[resultadosAGuardar.length - 1]);
+
+          if (supabase && config.id) {
+            // Si el usuario eligió sobrescribir, borrar los registros anteriores de esos RUT en esta evaluación
+            if (sobreescribir && duplicados.length > 0) {
+              const rutsABorrar = duplicados.map((d) => d.rut);
+              await supabase
+                .from('resultados')
+                .delete()
+                .eq('evaluacion_id', config.id)
+                .in('rut_estudiante', rutsABorrar);
+            }
+
+            const filasSupabase = resultadosAGuardar.map((reg) => ({
+              evaluacion_id: config.id,
+              curso_id: config.cursoId || null,
+              rut_estudiante: reg.rut,
+              nombre_estudiante: reg.nombre,
+              curso: reg.curso,
+              puntaje_obtenido: reg.puntaje,
+              puntaje_total: reg.total,
+              porcentaje: reg.porcentaje,
+              nota: reg.nota,
+              respuestas_alumno: reg.respuestas
+            }));
+
+            await supabase.from('resultados').insert(filasSupabase);
+            await cargarResultadosNube(config.id);
+          } else {
+            setResultadosCurso((prev) => {
+              const sinDup = sobreescribir
+                ? prev.filter(
+                    (p) => !duplicados.some((d) => d.rut.trim().toLowerCase() === p.rut.trim().toLowerCase())
+                  )
+                : prev;
+              return [...resultadosAGuardar.reverse(), ...sinDup];
+            });
+          }
+        }
+
+        if (colaImagenes.length > 1) {
+          alert(`✅ Proceso completado: ${resultadosAGuardar.length} hoja(s) guardada(s).`);
+        }
       }
     } catch (err) {
       alert('Error al procesar el archivo: ' + err.message);
@@ -515,20 +613,33 @@ export default function App() {
     }
   };
 
-  // Cálculo de porcentaje rendido y lista de pendientes
+  // Cálculo de porcentaje rendido considerando estudiantes EXIMIDOS
   const rutsRendidos = new Set(resultadosCurso.map((r) => r.rut.trim().toLowerCase()));
-  const totalEstudiantesCurso = estudiantesCursoEval.length;
-  const estudiantesRendidos = estudiantesCursoEval.filter((e) => rutsRendidos.has(e.rut.trim().toLowerCase()));
-  const estudiantesPendientes = estudiantesCursoEval.filter((e) => !rutsRendidos.has(e.rut.trim().toLowerCase()));
+  const eximidosSet = new Set(eximidosRuts);
+
+  const estudiantesActivos = estudiantesCursoEval.filter(
+    (e) => !eximidosSet.has(e.rut.trim().toLowerCase())
+  );
+  const estudiantesEximidos = estudiantesCursoEval.filter(
+    (e) => eximidosSet.has(e.rut.trim().toLowerCase())
+  );
+
+  const totalActivos = estudiantesActivos.length;
+  const estudiantesRendidos = estudiantesActivos.filter((e) =>
+    rutsRendidos.has(e.rut.trim().toLowerCase())
+  );
+  const estudiantesPendientes = estudiantesActivos.filter(
+    (e) => !rutsRendidos.has(e.rut.trim().toLowerCase())
+  );
 
   const porcentajeAvance =
-    totalEstudiantesCurso > 0
-      ? Math.round((estudiantesRendidos.length / totalEstudiantesCurso) * 100)
-      : 0;
+    totalActivos > 0 ? Math.round((estudiantesRendidos.length / totalActivos) * 100) : 0;
 
   const radio = 46;
   const circunferencia = 2 * Math.PI * radio;
   const trazoCompletado = circunferencia - (porcentajeAvance / 100) * circunferencia;
+
+  const cursoAsignadoObj = cursos.find((c) => c.id === config.cursoId);
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#1e293b' }}>
@@ -714,7 +825,6 @@ export default function App() {
             {/* Barra superior de selección, asignación de curso, impresión y eliminación */}
             <div style={{ background: '#ffffff', padding: '18px 20px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px', alignItems: 'end' }}>
-                {/* Selector de Evaluación */}
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#64748b', marginBottom: '4px' }}>
                     EVALUACIÓN SELECCIONADA
@@ -736,7 +846,6 @@ export default function App() {
                   </select>
                 </div>
 
-                {/* Selector directo para Asignar / Cambiar Curso */}
                 {config.id && (
                   <div>
                     <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#2563eb', marginBottom: '4px' }}>
@@ -760,20 +869,19 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Botones de acción: Imprimir Todo y Eliminar Evaluación */}
                 {config.id && (
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                     <button
-                      onClick={() => imprimirHojasPDF(estudiantesCursoEval)}
+                      onClick={() => imprimirHojasPDF(estudiantesActivos)}
                       style={{
                         flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
                         padding: '10px 14px', borderRadius: '8px', border: '1px solid #2563eb',
                         background: '#eff6ff', color: '#1d4ed8', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
                       }}
-                      title="Imprimir hojas de todo el curso"
+                      title="Imprimir hojas de estudiantes no eximidos"
                     >
                       <Printer size={17} />
-                      Imprimir ({estudiantesCursoEval.length})
+                      Imprimir ({estudiantesActivos.length})
                     </button>
 
                     <button
@@ -824,12 +932,12 @@ export default function App() {
                   })}
                 </div>
 
-                {/* SUBVISTA A: TARJETA CON GRÁFICO DE AVANCE + LISTA DE PENDIENTES AL HACER CLIC */}
+                {/* SUBVISTA A: AVANCE, PENDIENTES Y EXIMIR / DESEXIMIR */}
                 {subVistaEval === 'avance' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                     {!config.cursoId ? (
                       <div style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', padding: '16px', borderRadius: '12px', fontSize: '14px' }}>
-                        <strong>Esta evaluación aún no tiene un curso asignado.</strong> Selecciónalo arriba en <em>"Curso asignado a esta prueba"</em> para ver el gráfico de porcentaje rendido y la lista de pendientes.
+                        <strong>Esta evaluación aún no tiene un curso asignado.</strong> Selecciónalo arriba en <em>"Curso asignado a esta prueba"</em> para ver el gráfico de porcentaje rendido y controlar los estudiantes eximidos o pendientes.
                       </div>
                     ) : (
                       <>
@@ -846,14 +954,7 @@ export default function App() {
                             {/* Gráfico Circular SVG */}
                             <div style={{ position: 'relative', width: '112px', height: '112px' }}>
                               <svg width="112" height="112" style={{ transform: 'rotate(-90deg)' }}>
-                                <circle
-                                  cx="56"
-                                  cy="56"
-                                  r={radio}
-                                  stroke="#e2e8f0"
-                                  strokeWidth="12"
-                                  fill="transparent"
-                                />
+                                <circle cx="56" cy="56" r={radio} stroke="#e2e8f0" strokeWidth="12" fill="transparent" />
                                 <circle
                                   cx="56"
                                   cy="56"
@@ -881,12 +982,13 @@ export default function App() {
                                 Cobertura de Aplicación
                               </div>
                               <h3 style={{ margin: '4px 0', fontSize: '20px', color: '#0f172a' }}>
-                                {estudiantesRendidos.length} de {totalEstudiantesCurso} estudiantes ya rindieron
+                                {estudiantesRendidos.length} de {totalActivos} estudiantes ya rindieron
                               </h3>
                               <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>
                                 {estudiantesPendientes.length === 0
-                                  ? '¡Curso completo! Todos los estudiantes tienen su hoja escaneada.'
-                                  : `Faltan ${estudiantesPendientes.length} estudiante(s) por rendir. Haz clic aquí para ${mostrarPendientesDetalle ? 'ocultar' : 'ver'} pendientes.`}
+                                  ? '¡Curso completo! Todos los estudiantes activos tienen su hoja escaneada.'
+                                  : `Faltan ${estudiantesPendientes.length} estudiante(s) por rendir.`}
+                                {estudiantesEximidos.length > 0 && ` (${estudiantesEximidos.length} eximido(s) excluidos del cálculo).`}
                               </p>
                             </div>
                           </div>
@@ -909,49 +1011,101 @@ export default function App() {
                           )}
                         </div>
 
-                        {/* Lista desplegable de Pendientes */}
+                        {/* Tabla de Pendientes + Control de Eximidos */}
                         {mostrarPendientesDetalle && (
-                          <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                            <h4 style={{ margin: '0 0 12px 0', fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: '#c2410c' }}>
-                              <AlertCircle size={18} />
-                              Estudiantes Pendientes / Ausentes ({estudiantesPendientes.length})
-                            </h4>
+                          <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                            <div>
+                              <h4 style={{ margin: '0 0 12px 0', fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: '#c2410c' }}>
+                                <AlertCircle size={18} />
+                                Estudiantes Pendientes / Ausentes ({estudiantesPendientes.length})
+                              </h4>
 
-                            {estudiantesPendientes.length === 0 ? (
-                              <div style={{ padding: '14px', background: '#f0fdf4', color: '#166534', borderRadius: '8px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <CheckCircle2 size={18} />
-                                No hay estudiantes pendientes en este curso.
-                              </div>
-                            ) : (
-                              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                                <thead style={{ background: '#fff7ed' }}>
-                                  <tr>
-                                    <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>RUT</th>
-                                    <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>Nombre Estudiante</th>
-                                    <th style={{ padding: '10px', textAlign: 'right', borderBottom: '1px solid #fed7aa' }}>Acción Rápida</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {estudiantesPendientes.map((est) => (
-                                    <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                      <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{est.rut}</td>
-                                      <td style={{ padding: '9px 10px', fontWeight: '600' }}>{est.nombre}</td>
-                                      <td style={{ padding: '9px 10px', textAlign: 'right' }}>
-                                        <button
-                                          onClick={() => imprimirHojasPDF([est], `_${est.rut}`)}
-                                          style={{
-                                            background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe',
-                                            borderRadius: '6px', padding: '5px 10px', cursor: 'pointer',
-                                            fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px'
-                                          }}
-                                        >
-                                          <FileDown size={14} /> Imprimir Hoja
-                                        </button>
-                                      </td>
+                              {estudiantesPendientes.length === 0 ? (
+                                <div style={{ padding: '14px', background: '#f0fdf4', color: '#166534', borderRadius: '8px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <CheckCircle2 size={18} />
+                                  No hay estudiantes pendientes en este curso.
+                                </div>
+                              ) : (
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                                  <thead style={{ background: '#fff7ed' }}>
+                                    <tr>
+                                      <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>RUT</th>
+                                      <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>Nombre Estudiante</th>
+                                      <th style={{ padding: '10px', textAlign: 'right', borderBottom: '1px solid #fed7aa' }}>Acciones</th>
                                     </tr>
-                                  ))}
-                                </tbody>
-                              </table>
+                                  </thead>
+                                  <tbody>
+                                    {estudiantesPendientes.map((est) => (
+                                      <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                        <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{est.rut}</td>
+                                        <td style={{ padding: '9px 10px', fontWeight: '600' }}>{est.nombre}</td>
+                                        <td style={{ padding: '9px 10px', textAlign: 'right', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                                          <button
+                                            onClick={() => toggleEximirEstudiante(est.rut)}
+                                            style={{
+                                              background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1',
+                                              borderRadius: '6px', padding: '5px 10px', cursor: 'pointer',
+                                              fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px'
+                                            }}
+                                            title="Eximir de esta evaluación"
+                                          >
+                                            <UserX size={14} /> Eximir
+                                          </button>
+                                          <button
+                                            onClick={() => imprimirHojasPDF([est], `_${est.rut}`)}
+                                            style={{
+                                              background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe',
+                                              borderRadius: '6px', padding: '5px 10px', cursor: 'pointer',
+                                              fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px'
+                                            }}
+                                          >
+                                            <FileDown size={14} /> Imprimir Hoja
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              )}
+                            </div>
+
+                            {/* Sección de Estudiantes Eximidos (para deseximir fácilmente) */}
+                            {estudiantesEximidos.length > 0 && (
+                              <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
+                                <h4 style={{ margin: '0 0 10px 0', fontSize: '15px', display: 'flex', alignItems: 'center', gap: '8px', color: '#475569' }}>
+                                  <UserX size={17} />
+                                  Estudiantes Eximidos de esta Evaluación ({estudiantesEximidos.length})
+                                </h4>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                                  <thead style={{ background: '#f8fafc' }}>
+                                    <tr>
+                                      <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>RUT</th>
+                                      <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Nombre Estudiante</th>
+                                      <th style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid #e2e8f0' }}>Restaurar</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {estudiantesEximidos.map((est) => (
+                                      <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9', background: '#f8fafc' }}>
+                                        <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: '#64748b' }}>{est.rut}</td>
+                                        <td style={{ padding: '8px 10px', color: '#64748b', textDecoration: 'line-through' }}>{est.nombre}</td>
+                                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                                          <button
+                                            onClick={() => toggleEximirEstudiante(est.rut)}
+                                            style={{
+                                              background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0',
+                                              borderRadius: '6px', padding: '5px 10px', cursor: 'pointer',
+                                              fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px'
+                                            }}
+                                          >
+                                            <UserCheck size={14} /> Deseximir
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
                             )}
                           </div>
                         )}
@@ -960,14 +1114,14 @@ export default function App() {
                   </div>
                 )}
 
-                {/* SUBVISTA B: IMPRIMIR SELECTIVO Y AGREGAR/ELIMINAR ESTUDIANTES */}
+                {/* SUBVISTA B: IMPRIMIR SELECTIVO Y AGREGAR ESTUDIANTES CON BANNER INFORMATIVO */}
                 {subVistaEval === 'imprimir' && (
                   <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
                       <div>
                         <h3 style={{ margin: 0, fontSize: '17px' }}>Nómina de Impresión de Hojas de Respuestas</h3>
                         <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#64748b' }}>
-                          Marca o desmarca estudiantes, o agrega alumnos nuevos antes de imprimir el PDF.
+                          Marca o desmarca estudiantes antes de descargar el PDF.
                         </p>
                       </div>
 
@@ -985,6 +1139,20 @@ export default function App() {
                         <FileDown size={18} />
                         Descargar PDF Seleccionados ({seleccionadosImprimir.length})
                       </button>
+                    </div>
+
+                    {/* Banner informativo: agregar aquí guarda directamente en el curso oficial */}
+                    <div
+                      style={{
+                        background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af',
+                        padding: '12px 14px', borderRadius: '8px', fontSize: '13px',
+                        display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px'
+                      }}
+                    >
+                      <Info size={18} style={{ flexShrink: 0 }} />
+                      <div>
+                        <strong>Nota:</strong> Para mantener la lista unificada, los estudiantes nuevos deberían crearse en la pestaña <strong>Mis Cursos</strong>. Si agregas un estudiante desde aquí, <strong>se incorporará automáticamente a la nómina oficial del curso {cursoAsignadoObj ? `(${cursoAsignadoObj.nombre})` : ''}</strong>.
+                      </div>
                     </div>
 
                     <form onSubmit={agregarEstudianteAEvaluacion} style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
@@ -1006,7 +1174,7 @@ export default function App() {
                         type="submit"
                         style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 14px', cursor: 'pointer', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}
                       >
-                        <UserPlus size={16} /> Agregar
+                        <UserPlus size={16} /> Agregar al Curso
                       </button>
                     </form>
 
@@ -1031,6 +1199,7 @@ export default function App() {
                           <th style={{ padding: '10px', textAlign: 'left' }}>RUT</th>
                           <th style={{ padding: '10px', textAlign: 'left' }}>Estudiante</th>
                           <th style={{ padding: '10px', textAlign: 'center' }}>Estado</th>
+                          <th style={{ padding: '10px', textAlign: 'center' }}>Eximir</th>
                           <th style={{ padding: '10px', textAlign: 'center' }}>Quitar</th>
                         </tr>
                       </thead>
@@ -1038,8 +1207,9 @@ export default function App() {
                         {estudiantesCursoEval.map((est) => {
                           const marcado = seleccionadosImprimir.includes(est.rut);
                           const yaRindio = rutsRendidos.has(est.rut.trim().toLowerCase());
+                          const esEximido = eximidosSet.has(est.rut.trim().toLowerCase());
                           return (
-                            <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                            <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9', opacity: esEximido ? 0.65 : 1 }}>
                               <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                                 <button
                                   onClick={() =>
@@ -1058,18 +1228,30 @@ export default function App() {
                                 <span
                                   style={{
                                     padding: '3px 8px', borderRadius: '999px', fontSize: '12px', fontWeight: '600',
-                                    background: yaRindio ? '#dcfce7' : '#ffedd5',
-                                    color: yaRindio ? '#166534' : '#9a3412'
+                                    background: esEximido ? '#e2e8f0' : yaRindio ? '#dcfce7' : '#ffedd5',
+                                    color: esEximido ? '#475569' : yaRindio ? '#166534' : '#9a3412'
                                   }}
                                 >
-                                  {yaRindio ? 'Rindió' : 'Pendiente'}
+                                  {esEximido ? 'Eximido' : yaRindio ? 'Rindió' : 'Pendiente'}
                                 </span>
+                              </td>
+                              <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                                <button
+                                  onClick={() => toggleEximirEstudiante(est.rut)}
+                                  style={{
+                                    background: 'transparent', border: '1px solid #cbd5e1', borderRadius: '6px',
+                                    padding: '3px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer',
+                                    color: esEximido ? '#047857' : '#475569'
+                                  }}
+                                >
+                                  {esEximido ? 'Deseximir' : 'Eximir'}
+                                </button>
                               </td>
                               <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                                 <button
                                   onClick={() => quitarEstudianteDeEvaluacion(est.rut)}
                                   style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer' }}
-                                  title="Quitar de esta lista"
+                                  title="Quitar de esta lista de impresión"
                                 >
                                   <Trash2 size={15} />
                                 </button>
@@ -1087,7 +1269,7 @@ export default function App() {
                   <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                     <h3 style={{ margin: '0 0 12px 0', fontSize: '18px' }}>Escanear Hoja de Respuestas o Subir PDF</h3>
                     <p style={{ color: '#64748b', fontSize: '14px', marginBottom: '16px' }}>
-                      Puedes subir una foto individual, seleccionar varias imágenes o cargar un <strong>PDF multipágina</strong> con todo el curso.
+                      Puedes subir una foto individual, seleccionar varias imágenes o cargar un <strong>PDF multipágina</strong> con todo el curso. Si un estudiante ya fue escaneado, el sistema te preguntará si deseas sobrescribir su resultado.
                     </p>
                     <label
                       style={{
@@ -1153,8 +1335,78 @@ export default function App() {
                   </div>
                 )}
 
-                {/* SUBVISTA E: ANÁLISIS Y REPORTES */}
-                {subVistaEval === 'analisis' && <AnalisisPanel resultados={resultadosCurso} config={config} />}
+                {/* SUBVISTA E: ANÁLISIS, REPORTES Y GESTIÓN DE ESCANEOS INDIVIDUALES */}
+                {subVistaEval === 'analisis' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    <AnalisisPanel resultados={resultadosCurso} config={config} />
+
+                    {/* Lista administrable para eliminar escaneos individuales */}
+                    <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                      <h3 style={{ margin: '0 0 12px 0', fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Trash2 size={18} color="#dc2626" />
+                        Administrar Hojas Escaneadas ({resultadosCurso.length})
+                      </h3>
+                      <p style={{ margin: '0 0 14px 0', fontSize: '13px', color: '#64748b' }}>
+                        Si algún escaneo quedó duplicado, sin QR o con error de lectura, elimínalo aquí para que el estudiante vuelva a estado pendiente.
+                      </p>
+
+                      {resultadosCurso.length === 0 ? (
+                        <div style={{ padding: '14px', background: '#f8fafc', borderRadius: '8px', color: '#64748b', fontSize: '14px' }}>
+                          No hay hojas escaneadas registradas en esta evaluación.
+                        </div>
+                      ) : (
+                        <div style={{ overflowX: 'auto' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                            <thead style={{ background: '#f1f5f9' }}>
+                              <tr>
+                                <th style={{ padding: '10px', textAlign: 'left' }}>Estudiante</th>
+                                <th style={{ padding: '10px', textAlign: 'left' }}>RUT</th>
+                                <th style={{ padding: '10px', textAlign: 'center' }}>Puntaje</th>
+                                <th style={{ padding: '10px', textAlign: 'center' }}>Logro</th>
+                                <th style={{ padding: '10px', textAlign: 'center' }}>Nota</th>
+                                <th style={{ padding: '10px', textAlign: 'right' }}>Eliminar Escaneo</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {resultadosCurso.map((res, idx) => (
+                                <tr key={res.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                  <td style={{ padding: '9px 10px', fontWeight: '600' }}>{res.nombre}</td>
+                                  <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{res.rut}</td>
+                                  <td style={{ padding: '9px 10px', textAlign: 'center' }}>
+                                    {res.puntaje} / {res.total}
+                                  </td>
+                                  <td style={{ padding: '9px 10px', textAlign: 'center' }}>{res.porcentaje}%</td>
+                                  <td
+                                    style={{
+                                      padding: '9px 10px',
+                                      textAlign: 'center',
+                                      fontWeight: '800',
+                                      color: Number(res.nota) >= 4.0 ? '#16a34a' : '#dc2626'
+                                    }}
+                                  >
+                                    {Number(res.nota).toFixed(1)}
+                                  </td>
+                                  <td style={{ padding: '9px 10px', textAlign: 'right' }}>
+                                    <button
+                                      onClick={() => eliminarResultadoEscaneo(res)}
+                                      style={{
+                                        background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca',
+                                        borderRadius: '6px', padding: '5px 10px', cursor: 'pointer',
+                                        fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px'
+                                      }}
+                                    >
+                                      <Trash2 size={14} /> Eliminar
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>
