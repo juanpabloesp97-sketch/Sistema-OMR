@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { UserPlus, Users, BookOpen, CheckCircle2, XCircle, GraduationCap } from 'lucide-react';
+import { UserPlus, Users, BookOpen, CheckCircle2, XCircle, GraduationCap, RefreshCw } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
 export default function GestionUsuarios({ perfilActual }) {
   const [listaUsuarios, setListaUsuarios] = useState([]);
   const [niveles, setNiveles] = useState([]);
   const [cursos, setCursos] = useState([]);
-  const [asignaciones, setAsignaciones] = useState([]); // [{ docente_id, curso_id }]
+  const [asignaciones, setAsignaciones] = useState([]);
+  const [cargandoLista, setCargandoLista] = useState(false);
 
   const [nombre, setNombre] = useState('');
   const [email, setEmail] = useState('');
@@ -22,17 +23,30 @@ export default function GestionUsuarios({ perfilActual }) {
 
   const cargarTodo = async () => {
     if (!supabase) return;
-    const [{ data: users }, { data: niv }, { data: cur }, { data: asig }] = await Promise.all([
-      supabase.from('perfiles').select('*').order('created_at', { ascending: true }),
-      supabase.from('niveles').select('*').order('orden', { ascending: true }),
-      supabase.from('cursos').select('*').order('nombre'),
-      supabase.from('docente_cursos').select('*')
-    ]);
+    setCargandoLista(true);
+    try {
+      const { data: users, error: errUsers } = await supabase
+        .from('perfiles')
+        .select('*');
 
-    if (users) setListaUsuarios(users);
-    if (niv) setNiveles(niv);
-    if (cur) setCursos(cur);
-    if (asig) setAsignaciones(asig);
+      if (errUsers) {
+        console.error('Error cargando perfiles:', errUsers);
+      } else if (users) {
+        setListaUsuarios(users);
+      }
+
+      const [{ data: niv }, { data: cur }, { data: asig }] = await Promise.all([
+        supabase.from('niveles').select('*').order('orden', { ascending: true }),
+        supabase.from('cursos').select('*').order('nombre'),
+        supabase.from('docente_cursos').select('*')
+      ]);
+
+      if (niv) setNiveles(niv);
+      if (cur) setCursos(cur);
+      if (asig) setAsignaciones(asig);
+    } finally {
+      setCargandoLista(false);
+    }
   };
 
   const toggleCursoDocente = async (docenteId, cursoId) => {
@@ -171,10 +185,18 @@ export default function GestionUsuarios({ perfilActual }) {
 
       {/* Tabla de docentes y asignación de cursos */}
       <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-        <h3 style={{ margin: '0 0 14px 0', fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Users size={19} color="#0f172a" />
-          Docentes y Cursos Asignados ({listaUsuarios.length})
-        </h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+          <h3 style={{ margin: 0, fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Users size={19} color="#0f172a" />
+            Docentes y Cursos Asignados ({listaUsuarios.length})
+          </h3>
+          <button
+            onClick={cargarTodo}
+            style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '7px', padding: '6px 10px', fontSize: '12.5px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}
+          >
+            <RefreshCw size={14} /> {cargandoLista ? 'Actualizando...' : 'Actualizar lista'}
+          </button>
+        </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {listaUsuarios.map((u) => {
@@ -219,7 +241,6 @@ export default function GestionUsuarios({ perfilActual }) {
                   </div>
                 </div>
 
-                {/* Selector de cursos para docentes */}
                 {u.rol === 'admin' ? (
                   <div style={{ fontSize: '12px', color: '#1d4ed8', fontWeight: '600', background: '#eff6ff', padding: '6px 10px', borderRadius: '6px' }}>
                     Acceso completo a todos los niveles y cursos del establecimiento.
