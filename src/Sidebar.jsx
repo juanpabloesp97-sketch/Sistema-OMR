@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
-  User, GraduationCap, FileText, ChevronDown, ChevronRight,
-  PlusCircle, FolderOpen, ScanLine, PanelLeftClose, PanelLeftOpen
+  User, GraduationCap, FilePlus2, FolderOpen,
+  ChevronDown, ChevronRight, Menu, X, CheckSquare, Users, LogOut
 } from 'lucide-react';
 
 export default function Sidebar({
@@ -11,24 +11,13 @@ export default function Sidebar({
   cursos,
   cursoActivoId,
   setCursoActivoId,
-  profesor
+  profesor,
+  onCerrarSesion
 }) {
   const [colapsado, setColapsado] = useState(false);
-  const [esMovil, setEsMovil] = useState(window.innerWidth < 768);
-  const [cursosExpandido, setCursosExpandido] = useState(true);
-  const [evalExpandido, setEvalExpandido] = useState(true);
+  const [menuCursosAbierto, setMenuCursosAbierto] = useState(true);
+  const [menuEvalAbierto, setMenuEvalAbierto] = useState(true);
   const [nivelesAbiertos, setNivelesAbiertos] = useState({});
-
-  useEffect(() => {
-    const manejarResize = () => {
-      const movil = window.innerWidth < 768;
-      setEsMovil(movil);
-      if (movil) setColapsado(true);
-    };
-    manejarResize();
-    window.addEventListener('resize', manejarResize);
-    return () => window.removeEventListener('resize', manejarResize);
-  }, []);
 
   const toggleNivel = (nivelId) => {
     setNivelesAbiertos((prev) => ({
@@ -37,199 +26,194 @@ export default function Sidebar({
     }));
   };
 
-  const irACurso = (cursoId) => {
-    setCursoActivoId(cursoId);
-    setVistaActiva('visor-curso');
-    if (esMovil) setColapsado(true);
-  };
-
-  const cambiarVista = (vista) => {
-    setVistaActiva(vista);
-    if (esMovil) setColapsado(true);
-  };
-
-  const estiloItem = (activo) => ({
+  const estiloBotonMenu = (activo) => ({
+    width: '100%',
     display: 'flex',
     alignItems: 'center',
     justifyContent: colapsado ? 'center' : 'space-between',
-    width: '100%',
-    padding: colapsado ? '10px 0' : '10px 12px',
+    gap: '10px',
+    padding: '10px 12px',
     borderRadius: '8px',
     border: 'none',
-    cursor: 'pointer',
+    background: activo ? '#eff6ff' : 'transparent',
+    color: activo ? '#1d4ed8' : '#334155',
+    fontWeight: activo ? '700' : '500',
     fontSize: '14px',
-    fontWeight: activo ? '700' : '600',
-    background: activo ? '#2563eb' : 'transparent',
-    color: activo ? '#ffffff' : '#334155',
+    cursor: 'pointer',
     textAlign: 'left',
-    transition: 'all 0.15s',
-    whiteSpace: 'nowrap'
+    transition: 'all 0.15s'
   });
+
+  const esAdmin = profesor?.rol === 'admin';
 
   return (
     <aside
       style={{
-        width: colapsado ? '68px' : '260px',
-        minWidth: colapsado ? '68px' : '260px',
+        width: colapsado ? '68px' : '265px',
+        minHeight: '100vh',
         background: '#ffffff',
         borderRight: '1px solid #e2e8f0',
-        minHeight: '100vh',
         display: 'flex',
         flexDirection: 'column',
-        padding: colapsado ? '16px 10px' : '18px 14px',
-        boxSizing: 'border-box',
-        transition: 'width 0.2s ease, min-width 0.2s ease',
-        position: 'sticky',
-        top: 0,
-        height: '100vh',
-        zIndex: 20
+        transition: 'width 0.2s ease',
+        flexShrink: 0,
+        userSelect: 'none'
       }}
     >
-      {/* CABECERA CON LOGO Y BOTÓN COLAPSAR */}
+      {/* Cabecera */}
       <div
         style={{
+          padding: '16px 14px',
+          borderBottom: '1px solid #e2e8f0',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: colapsado ? 'center' : 'space-between',
-          paddingBottom: '16px',
-          marginBottom: '16px',
-          borderBottom: '1px solid #e2e8f0',
-          gap: '8px'
+          justifyContent: colapsado ? 'center' : 'space-between'
         }}
       >
         {!colapsado && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
-            <div style={{ background: '#eff6ff', padding: '7px', borderRadius: '8px', display: 'flex' }}>
-              <ScanLine size={22} color="#2563eb" />
-            </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <CheckSquare size={22} color="#2563eb" />
             <div>
-              <div style={{ fontWeight: '800', fontSize: '16px', color: '#0f172a', lineHeight: '1.1', whiteSpace: 'nowrap' }}>
+              <div style={{ fontWeight: '800', fontSize: '15px', color: '#0f172a', lineHeight: 1.1 }}>
                 Sistema OMR
               </div>
-              <div style={{ fontSize: '11px', color: '#64748b', whiteSpace: 'nowrap' }}>
-                Gestión Escolar
-              </div>
+              <div style={{ fontSize: '11px', color: '#64748b' }}>Gestión Escolar</div>
             </div>
           </div>
         )}
-
         <button
           onClick={() => setColapsado(!colapsado)}
           title={colapsado ? 'Expandir menú' : 'Colapsar menú'}
           style={{
-            background: '#f8fafc',
-            border: '1px solid #e2e8f0',
-            borderRadius: '8px',
-            padding: '7px',
+            background: '#f1f5f9',
+            border: 'none',
+            borderRadius: '6px',
+            padding: '6px',
             cursor: 'pointer',
             color: '#475569',
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
+            alignItems: 'center'
           }}
         >
-          {colapsado ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          {colapsado ? <Menu size={18} /> : <X size={18} />}
         </button>
       </div>
 
-      {/* NAVEGACIÓN PRINCIPAL */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
-        {/* 1. MI PERFIL */}
+      {/* Navegación */}
+      <nav style={{ padding: '12px 10px', flex: 1, display: 'flex', flexDirection: 'column', gap: '4px', overflowY: 'auto' }}>
+        {/* 1. Mi Perfil */}
         <button
-          onClick={() => cambiarVista('perfil')}
-          style={estiloItem(vistaActiva === 'perfil')}
-          title="Mi Perfil"
+          onClick={() => setVistaActiva('perfil')}
+          style={estiloBotonMenu(vistaActiva === 'perfil')}
+          title="Mi Perfil Docente"
         >
           <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <User size={18} />
-            {!colapsado && 'Mi Perfil'}
+            {!colapsado && <span>Mi Perfil</span>}
           </span>
         </button>
 
-        {/* 2. MIS CURSOS */}
-        <div>
+        {/* 1B. Gestión de Cuentas (Solo visible para Admin / UTP) */}
+        {esAdmin && (
+          <button
+            onClick={() => setVistaActiva('usuarios')}
+            style={estiloBotonMenu(vistaActiva === 'usuarios')}
+            title="Administrar Cuentas Docentes"
+          >
+            <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Users size={18} />
+              {!colapsado && <span>Cuentas Docentes</span>}
+            </span>
+          </button>
+        )}
+
+        {/* 2. Mis Cursos */}
+        <div style={{ marginTop: '4px' }}>
           <button
             onClick={() => {
               if (colapsado) {
                 setColapsado(false);
-                setCursosExpandido(true);
+                setMenuCursosAbierto(true);
               } else {
-                setCursosExpandido(!cursosExpandido);
+                setMenuCursosAbierto(!menuCursosAbierto);
               }
             }}
-            style={{
-              ...estiloItem(colapsado && vistaActiva === 'visor-curso'),
-              color: colapsado && vistaActiva === 'visor-curso' ? '#ffffff' : '#0f172a',
-              background: colapsado && vistaActiva === 'visor-curso' ? '#2563eb' : '#f8fafc'
-            }}
+            style={estiloBotonMenu(vistaActiva === 'visor-curso')}
             title="Mis Cursos"
           >
             <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <GraduationCap size={18} color={colapsado && vistaActiva === 'visor-curso' ? '#ffffff' : '#2563eb'} />
-              {!colapsado && 'Mis Cursos'}
+              <GraduationCap size={18} />
+              {!colapsado && <span>Mis Cursos</span>}
             </span>
-            {!colapsado && (cursosExpandido ? <ChevronDown size={15} /> : <ChevronRight size={15} />)}
+            {!colapsado && (menuCursosAbierto ? <ChevronDown size={16} /> : <ChevronRight size={16} />)}
           </button>
 
-          {!colapsado && cursosExpandido && (
-            <div style={{ paddingLeft: '10px', marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '4px', borderLeft: '2px solid #e2e8f0', marginLeft: '14px' }}>
+          {!colapsado && menuCursosAbierto && (
+            <div style={{ paddingLeft: '14px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
               <button
                 onClick={() => {
                   setCursoActivoId('');
-                  cambiarVista('visor-curso');
+                  setVistaActiva('visor-curso');
                 }}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 10px',
-                  borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '12.5px',
-                  fontWeight: '600', color: '#2563eb', whiteSpace: 'nowrap',
-                  background: vistaActiva === 'visor-curso' && !cursoActivoId ? '#eff6ff' : 'transparent'
+                  ...estiloBotonMenu(vistaActiva === 'visor-curso' && !cursoActivoId),
+                  fontSize: '13px',
+                  padding: '7px 10px'
                 }}
               >
-                <PlusCircle size={14} />
-                Niveles y Cursos
+                <span>⚙️ Niveles y Cursos</span>
               </button>
 
-              {niveles.map((niv) => {
-                const cursosNiv = cursos.filter((c) => c.nivel_id === niv.id);
-                const abierto = nivelesAbiertos[niv.id] !== false;
+              {niveles.map((nivel) => {
+                const cursosDelNivel = cursos.filter((c) => c.nivel_id === nivel.id);
+                const abierto = nivelesAbiertos[nivel.id] !== false;
                 return (
-                  <div key={niv.id} style={{ marginTop: '2px' }}>
+                  <div key={nivel.id} style={{ marginTop: '2px' }}>
                     <button
-                      onClick={() => toggleNivel(niv.id)}
+                      onClick={() => toggleNivel(nivel.id)}
                       style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        width: '100%', padding: '5px 8px', border: 'none', background: 'transparent',
-                        cursor: 'pointer', fontSize: '11.5px', fontWeight: '700', color: '#64748b',
-                        textTransform: 'uppercase', letterSpacing: '0.03em'
+                        width: '100%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '6px 10px',
+                        border: 'none',
+                        background: 'transparent',
+                        color: '#475569',
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                        textTransform: 'uppercase'
                       }}
                     >
-                      <span>{niv.nombre}</span>
-                      {abierto ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                      <span>{nivel.nombre}</span>
+                      {abierto ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </button>
 
                     {abierto && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', paddingLeft: '6px' }}>
-                        {cursosNiv.length === 0 && (
-                          <span style={{ fontSize: '12px', color: '#94a3b8', padding: '4px 8px' }}>Sin cursos</span>
-                        )}
-                        {cursosNiv.map((cur) => {
-                          const esActivo = vistaActiva === 'visor-curso' && cursoActivoId === cur.id;
-                          return (
+                      <div style={{ paddingLeft: '10px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        {cursosDelNivel.length === 0 ? (
+                          <span style={{ fontSize: '11.5px', color: '#94a3b8', padding: '4px 8px' }}>
+                            Sin cursos
+                          </span>
+                        ) : (
+                          cursosDelNivel.map((curso) => (
                             <button
-                              key={cur.id}
-                              onClick={() => irACurso(cur.id)}
+                              key={curso.id}
+                              onClick={() => {
+                                setCursoActivoId(curso.id);
+                                setVistaActiva('visor-curso');
+                              }}
                               style={{
-                                padding: '7px 10px', borderRadius: '6px', border: 'none', cursor: 'pointer',
-                                fontSize: '13px', textAlign: 'left', whiteSpace: 'nowrap',
-                                fontWeight: esActivo ? '700' : '500',
-                                background: esActivo ? '#dbeafe' : 'transparent',
-                                color: esActivo ? '#1d4ed8' : '#334155'
+                                ...estiloBotonMenu(vistaActiva === 'visor-curso' && cursoActivoId === curso.id),
+                                fontSize: '13px',
+                                padding: '6px 10px'
                               }}
                             >
-                              {cur.nombre}
+                              <span>{curso.nombre}</span>
                             </button>
-                          );
-                        })}
+                          ))
+                        )}
                       </div>
                     )}
                   </div>
@@ -239,110 +223,114 @@ export default function Sidebar({
           )}
         </div>
 
-        {/* 3. EVALUACIONES */}
-        <div>
+        {/* 3. Evaluaciones */}
+        <div style={{ marginTop: '4px' }}>
           <button
             onClick={() => {
               if (colapsado) {
                 setColapsado(false);
-                setEvalExpandido(true);
+                setMenuEvalAbierto(true);
               } else {
-                setEvalExpandido(!evalExpandido);
+                setMenuEvalAbierto(!menuEvalAbierto);
               }
             }}
-            style={{
-              ...estiloItem(colapsado && (vistaActiva === 'evaluaciones-creadas' || vistaActiva === 'crear-evaluacion')),
-              color: colapsado && (vistaActiva === 'evaluaciones-creadas' || vistaActiva === 'crear-evaluacion') ? '#ffffff' : '#0f172a',
-              background: colapsado && (vistaActiva === 'evaluaciones-creadas' || vistaActiva === 'crear-evaluacion') ? '#2563eb' : '#f8fafc'
-            }}
+            style={estiloBotonMenu(vistaActiva === 'evaluaciones-creadas' || vistaActiva === 'crear-evaluacion')}
             title="Evaluaciones"
           >
             <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <FileText
-                size={18}
-                color={colapsado && (vistaActiva === 'evaluaciones-creadas' || vistaActiva === 'crear-evaluacion') ? '#ffffff' : '#059669'}
-              />
-              {!colapsado && 'Evaluaciones'}
+              <FolderOpen size={18} />
+              {!colapsado && <span>Evaluaciones</span>}
             </span>
-            {!colapsado && (evalExpandido ? <ChevronDown size={15} /> : <ChevronRight size={15} />)}
+            {!colapsado && (menuEvalAbierto ? <ChevronDown size={16} /> : <ChevronRight size={16} />)}
           </button>
 
-          {!colapsado && evalExpandido && (
-            <div style={{ paddingLeft: '10px', marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '4px', borderLeft: '2px solid #e2e8f0', marginLeft: '14px' }}>
+          {!colapsado && menuEvalAbierto && (
+            <div style={{ paddingLeft: '14px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
               <button
-                onClick={() => cambiarVista('evaluaciones-creadas')}
+                onClick={() => setVistaActiva('evaluaciones-creadas')}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px',
-                  borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px',
-                  whiteSpace: 'nowrap',
-                  fontWeight: vistaActiva === 'evaluaciones-creadas' ? '700' : '500',
-                  background: vistaActiva === 'evaluaciones-creadas' ? '#dbeafe' : 'transparent',
-                  color: vistaActiva === 'evaluaciones-creadas' ? '#1d4ed8' : '#334155'
+                  ...estiloBotonMenu(vistaActiva === 'evaluaciones-creadas'),
+                  fontSize: '13px',
+                  padding: '8px 10px'
                 }}
               >
-                <FolderOpen size={15} />
-                Evaluaciones Creadas
+                <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <FolderOpen size={15} />
+                  <span>Evaluaciones Creadas</span>
+                </span>
               </button>
 
               <button
-                onClick={() => cambiarVista('crear-evaluacion')}
+                onClick={() => setVistaActiva('crear-evaluacion')}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px',
-                  borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px',
-                  whiteSpace: 'nowrap',
-                  fontWeight: vistaActiva === 'crear-evaluacion' ? '700' : '500',
-                  background: vistaActiva === 'crear-evaluacion' ? '#dbeafe' : 'transparent',
-                  color: vistaActiva === 'crear-evaluacion' ? '#1d4ed8' : '#334155'
+                  ...estiloBotonMenu(vistaActiva === 'crear-evaluacion'),
+                  fontSize: '13px',
+                  padding: '8px 10px'
                 }}
               >
-                <PlusCircle size={15} />
-                Crear Evaluación
+                <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <FilePlus2 size={15} />
+                  <span>Crear Evaluación</span>
+                </span>
               </button>
             </div>
           )}
         </div>
-      </div>
+      </nav>
 
-      {/* PIE DEL MENÚ CON PERFIL DEL DOCENTE */}
-      <div
-        style={{
-          borderTop: '1px solid #e2e8f0',
-          paddingTop: '12px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: colapsado ? 'center' : 'flex-start',
-          gap: '10px'
-        }}
-      >
-        <div
-          style={{
-            width: '32px',
-            height: '32px',
-            minWidth: '32px',
-            borderRadius: '999px',
-            background: '#dbeafe',
-            color: '#1d4ed8',
-            fontWeight: '800',
-            fontSize: '13px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}
-        >
-          {(profesor.nombre || 'P').charAt(0).toUpperCase()}
-        </div>
-
-        {!colapsado && (
-          <div style={{ overflow: 'hidden' }}>
-            <div style={{ fontWeight: '700', fontSize: '13px', color: '#1e293b', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
-              {profesor.nombre}
+      {/* Pie de barra lateral con perfil activo y botón cerrar sesión */}
+      {!colapsado && (
+        <div style={{ padding: '12px 14px', borderTop: '1px solid #e2e8f0', background: '#f8fafc', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div
+              style={{
+                width: '34px',
+                height: '34px',
+                borderRadius: '999px',
+                background: esAdmin ? '#dbeafe' : '#e2e8f0',
+                color: esAdmin ? '#1d4ed8' : '#334155',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: '800',
+                fontSize: '14px',
+                flexShrink: 0
+              }}
+            >
+              {(profesor?.nombre || 'P').charAt(0).toUpperCase()}
             </div>
-            <div style={{ fontSize: '11px', color: '#64748b', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
-              {profesor.asignatura}
+            <div style={{ overflow: 'hidden' }}>
+              <div style={{ fontSize: '13px', fontWeight: '700', color: '#0f172a', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                {profesor?.nombre || 'Docente'}
+              </div>
+              <div style={{ fontSize: '11px', color: '#64748b' }}>
+                {esAdmin ? 'Admin / UTP' : 'Docente'} • {profesor?.asignatura || 'Matemática'}
+              </div>
             </div>
           </div>
-        )}
-      </div>
+
+          <button
+            onClick={onCerrarSesion}
+            style={{
+              width: '100%',
+              background: '#ffffff',
+              border: '1px solid #cbd5e1',
+              borderRadius: '7px',
+              padding: '7px 10px',
+              fontSize: '12.5px',
+              fontWeight: '600',
+              color: '#475569',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px'
+            }}
+          >
+            <LogOut size={14} /> Cerrar Sesión
+          </button>
+        </div>
+      )}
     </aside>
   );
 }
