@@ -146,7 +146,7 @@ export default function App() {
     setCargandoSesion(false);
 
     const ultimaEvalId = localStorage.getItem(`omr_ultima_eval_${user.id}`);
-    cargarEstructuraEscolar();
+    cargarEstructuraEscolar(perfilFinal);
     cargarEvaluacionesNube(perfilFinal, ultimaEvalId);
   };
 
@@ -228,14 +228,31 @@ export default function App() {
     }
   };
 
-  const cargarEstructuraEscolar = async () => {
+  const cargarEstructuraEscolar = async (perfilUsuario = profesor) => {
     if (!supabase) return;
     const [{ data: niv }, { data: cur }] = await Promise.all([
       supabase.from('niveles').select('*').order('orden', { ascending: true }).order('nombre'),
       supabase.from('cursos').select('*').order('nombre')
     ]);
-    setNiveles(niv || []);
-    setCursos(cur || []);
+
+    let cursosVisibles = cur || [];
+    let nivelesVisibles = niv || [];
+
+    if (perfilUsuario && perfilUsuario.rol !== 'admin' && perfilUsuario.id) {
+      const { data: asig } = await supabase
+        .from('docente_cursos')
+        .select('curso_id')
+        .eq('docente_id', perfilUsuario.id);
+
+      const idsPermitidos = new Set((asig || []).map((a) => a.curso_id));
+      cursosVisibles = cursosVisibles.filter((c) => idsPermitidos.has(c.id));
+
+      const nivelesConCurso = new Set(cursosVisibles.map((c) => c.nivel_id));
+      nivelesVisibles = nivelesVisibles.filter((n) => nivelesConCurso.has(n.id));
+    }
+
+    setNiveles(nivelesVisibles);
+    setCursos(cursosVisibles);
   };
 
   // Cargar evaluaciones según rol (Admin ve todas; Docente ve las suyas + compartidas)
