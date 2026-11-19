@@ -278,6 +278,6 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   return {
     qrData,
     respuestas,
-    imagenProcesada: outCanvas.toDataURL('image/jpeg', 0.85)
+    imagenProcesada: outCanvas.toDataURL('image/jpeg', 0.6)
   };
 }

@@ -3,8 +3,7 @@ import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
 import {
   FileDown, User, CheckCircle2, Camera, CheckSquare, Square,
-  Cloud, BarChart3, Printer, Clock, AlertCircle, Save, Trash2, UserPlus,
-  UserX, UserCheck, Info
+  Cloud, BarChart3, Printer, Clock, AlertCircle, Save, Trash2, UserPlus, Info
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import VisorCurso from './VisorCurso';
@@ -17,7 +16,6 @@ import { supabase } from './supabaseClient';
 export default function App() {
   const [vistaActiva, setVistaActiva] = useState('evaluaciones-creadas');
 
-  // Datos de Perfil Docente
   const [profesor, setProfesor] = useState({
     nombre: 'Profesor(a) Titular',
     asignatura: 'Matemática',
@@ -25,17 +23,14 @@ export default function App() {
     email: ''
   });
 
-  // Estructura escolar (Niveles y Cursos)
   const [niveles, setNiveles] = useState([]);
   const [cursos, setCursos] = useState([]);
   const [cursoActivoId, setCursoActivoId] = useState('');
 
-  // Evaluaciones y Resultados
   const [evaluacionesGuardadas, setEvaluacionesGuardadas] = useState([]);
   const [config, setConfig] = useState({
     id: null,
     cursoId: '',
-    nivelId: '',
     tituloPrueba: 'Evaluación Sumativa N° 1',
     asignatura: 'Matemática',
     numPreguntas: 30,
@@ -44,22 +39,20 @@ export default function App() {
     notaMax: 7.0,
     notaAprob: 4.0,
     exigencia: 60,
-    pauta: {}
+    pauta: {},
+    eximidos: []
   });
 
-  // Sub-pestaña dentro de una evaluación creada
   const [subVistaEval, setSubVistaEval] = useState('avance');
   const [estudiantesCursoEval, setEstudiantesCursoEval] = useState([]);
   const [resultadosCurso, setResultadosCurso] = useState([]);
   const [seleccionadosImprimir, setSeleccionadosImprimir] = useState([]);
-  const [eximidosRuts, setEximidosRuts] = useState([]);
   const [mostrarPendientesDetalle, setMostrarPendientesDetalle] = useState(true);
 
   const [ultimoResultado, setUltimoResultado] = useState(null);
   const [procesando, setProcesando] = useState(false);
   const [progresoLote, setProgresoLote] = useState('');
 
-  // Campos para agregar alumno puntual a una evaluación
   const [rutExtra, setRutExtra] = useState('');
   const [nombreExtra, setNombreExtra] = useState('');
 
@@ -70,9 +63,8 @@ export default function App() {
         setProfesor(JSON.parse(perfilGuardado));
       } catch (e) {}
     }
-    const ultimaEvalId = localStorage.getItem('omr_ultima_eval_id');
     cargarEstructuraEscolar();
-    cargarEvaluacionesNube(ultimaEvalId);
+    cargarEvaluacionesNube();
   }, []);
 
   useEffect(() => {
@@ -81,80 +73,13 @@ export default function App() {
       cargarResultadosNube(config.id);
     } else {
       setResultadosCurso([]);
-      setEximidosRuts([]);
     }
-
     if (config.cursoId) {
-      cargarEstudiantesParaEval(config.cursoId, null);
-    } else if (config.nivelId) {
-      cargarEstudiantesParaEval(null, config.nivelId);
+      cargarEstudiantesParaEval(config.cursoId);
     } else {
       setEstudiantesCursoEval([]);
-      setSeleccionadosImprimir([]);
     }
-  }, [config.id, config.cursoId, config.nivelId, cursos]);
-
-  // Obtener nombre del nivel activo (ya sea por cursoId o por nivelId directo)
-  const obtenerNombreNivelActivo = () => {
-    if (config.cursoId) {
-      const c = cursos.find((cur) => cur.id === config.cursoId);
-      if (c) {
-        const n = niveles.find((niv) => niv.id === c.nivel_id);
-        if (n) return n.nombre;
-      }
-    }
-    if (config.nivelId) {
-      const n = niveles.find((niv) => niv.id === config.nivelId);
-      if (n) return n.nombre;
-    }
-    return '';
-  };
-
-  // Manejar selección de "Curso individual" o "Nivel completo" (valor con prefijo "nivel:")
-  const manejarCambioDestinoEvaluacion = (valorSelect) => {
-    if (!valorSelect) {
-      setConfig((prev) => ({ ...prev, cursoId: '', nivelId: '' }));
-      return;
-    }
-    if (valorSelect.startsWith('nivel:')) {
-      const nId = valorSelect.replace('nivel:', '');
-      setConfig((prev) => ({ ...prev, cursoId: '', nivelId: nId }));
-    } else {
-      const cObj = cursos.find((c) => c.id === valorSelect);
-      setConfig((prev) => ({
-        ...prev,
-        cursoId: valorSelect,
-        nivelId: cObj ? cObj.nivel_id : ''
-      }));
-    }
-  };
-
-  // Valor actual para el <select> unificado de Curso / Nivel
-  const valorSelectDestino = config.cursoId
-    ? config.cursoId
-    : config.nivelId
-    ? `nivel:${config.nivelId}`
-    : '';
-
-  // Eximir / Deseximir estudiante
-  const toggleEximirEstudiante = async (rut) => {
-    const rutNorm = rut.trim().toLowerCase();
-    const existe = eximidosRuts.includes(rutNorm);
-    const actualizada = existe ? eximidosRuts.filter((r) => r !== rutNorm) : [...prevSafe(eximidosRuts), rutNorm];
-    setEximidosRuts(actualizada);
-
-    if (config.id) {
-      localStorage.setItem(`omr_eximidos_${config.id}`, JSON.stringify(actualizada));
-      if (supabase) {
-        await supabase
-          .from('evaluaciones')
-          .update({ eximidos: actualizada })
-          .eq('id', config.id);
-      }
-    }
-  };
-
-  const prevSafe = (arr) => (Array.isArray(arr) ? arr : []);
+  }, [config.id, config.cursoId]);
 
   const cargarEstructuraEscolar = async () => {
     if (!supabase) return;
@@ -166,83 +91,34 @@ export default function App() {
     setCursos(cur || []);
   };
 
-  const cargarEvaluacionesNube = async (seleccionarId = null) => {
+  const cargarEvaluacionesNube = async () => {
     if (!supabase) return;
     const { data, error } = await supabase
       .from('evaluaciones')
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('Error cargando evaluaciones:', error);
-      return;
-    }
-
-    if (data) {
+    if (!error && data) {
       setEvaluacionesGuardadas(data);
-      if (data.length === 0) {
-        setConfig((prev) => ({ ...prev, id: null, cursoId: '', nivelId: '' }));
-        return;
-      }
-      if (seleccionarId) {
-        const encontrada = data.find((item) => String(item.id) === String(seleccionarId));
-        if (encontrada) {
-          abrirEvaluacion(encontrada, false);
-          return;
-        }
-      }
-      if (!config.id || !data.some((item) => String(item.id) === String(config.id))) {
-        abrirEvaluacion(data[0], false);
+      const ultimaId = localStorage.getItem('omr_ultima_eval_id');
+      const encontrada = data.find((ev) => String(ev.id) === String(ultimaId)) || data[0];
+      if (encontrada && !config.id) {
+        abrirEvaluacion(encontrada, false);
       }
     }
   };
 
-  // Carga estudiantes de un curso puntual o de TODOS los cursos de un nivel
-  const cargarEstudiantesParaEval = async (cursoId, nivelId) => {
-    if (!supabase) return;
+  const cargarEstudiantesParaEval = async (cursoId) => {
+    if (!supabase || !cursoId) return;
+    const { data, error } = await supabase
+      .from('estudiantes')
+      .select('*')
+      .eq('curso_id', cursoId)
+      .order('nombre');
 
-    if (cursoId) {
-      const cObj = cursos.find((c) => c.id === cursoId);
-      const { data, error } = await supabase
-        .from('estudiantes')
-        .select('*')
-        .eq('curso_id', cursoId)
-        .order('nombre');
-
-      if (!error && data) {
-        const conCurso = data.map((e) => ({
-          ...e,
-          curso_nombre: cObj ? cObj.nombre : ''
-        }));
-        setEstudiantesCursoEval(conCurso);
-        setSeleccionadosImprimir(conCurso.map((e) => e.rut));
-      }
-    } else if (nivelId) {
-      const cursosDelNivel = cursos.filter((c) => c.nivel_id === nivelId);
-      const idsCursos = cursosDelNivel.map((c) => c.id);
-      if (idsCursos.length === 0) {
-        setEstudiantesCursoEval([]);
-        setSeleccionadosImprimir([]);
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from('estudiantes')
-        .select('*')
-        .in('curso_id', idsCursos)
-        .order('nombre');
-
-      if (!error && data) {
-        const conCurso = data.map((e) => {
-          const cObj = cursosDelNivel.find((c) => c.id === e.curso_id);
-          return {
-            ...e,
-            curso_nombre: cObj ? cObj.nombre : ''
-          };
-        });
-        setEstudiantesCursoEval(conCurso);
-        setSeleccionadosImprimir(conCurso.map((e) => e.rut));
-      }
+    if (!error && data) {
+      setEstudiantesCursoEval(data);
+      setSeleccionadosImprimir(data.map((e) => e.rut));
     }
   };
 
@@ -254,23 +130,19 @@ export default function App() {
       .eq('evaluacion_id', evaluacionId)
       .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('Error cargando resultados:', error);
-      return;
-    }
-
-    if (data) {
+    if (!error && data) {
       setResultadosCurso(
         data.map((r) => ({
           id: r.id,
-          rut: r.rut_estudiante || 'Sin RUT',
-          nombre: r.nombre_estudiante || 'Estudiante',
+          rut: r.rut_estudiante,
+          nombre: r.nombre_estudiante,
           curso: r.curso || '',
           puntaje: Number(r.puntaje_obtenido ?? 0),
-          total: Number(r.puntaje_total ?? 0),
+          total: Number(r.puntaje_total ?? config.numPreguntas),
           porcentaje: Number(r.porcentaje ?? 0),
           nota: Number(r.nota ?? 1.0),
-          respuestas: r.respuestas_alumno || {}
+          respuestas: r.respuestas_alumno || {},
+          imagenUrl: r.imagen_url || null
         }))
       );
     }
@@ -280,7 +152,6 @@ export default function App() {
     setConfig({
       id: ev.id,
       cursoId: ev.curso_id || '',
-      nivelId: ev.nivel_id || '',
       tituloPrueba: ev.titulo,
       asignatura: ev.asignatura || '',
       numPreguntas: ev.num_preguntas || 30,
@@ -289,26 +160,18 @@ export default function App() {
       notaMax: ev.nota_max ?? 7.0,
       notaAprob: ev.nota_aprob ?? 4.0,
       exigencia: ev.exigencia ?? 60,
-      pauta: ev.pauta || {}
+      pauta: ev.pauta || {},
+      eximidos: Array.isArray(ev.eximidos) ? ev.eximidos : []
     });
-
-    if (Array.isArray(ev.eximidos)) {
-      setEximidosRuts(ev.eximidos);
-    } else {
-      const localEx = localStorage.getItem(`omr_eximidos_${ev.id}`);
-      setEximidosRuts(localEx ? JSON.parse(localEx) : []);
-    }
-
+    setUltimoResultado(null);
     setSubVistaEval('avance');
     if (cambiarDeVista) setVistaActiva('evaluaciones-creadas');
   };
 
   const iniciarNuevaEvaluacion = () => {
-    const nivelDefecto = niveles.find((n) => n.nombre.includes('6°')) || niveles[0];
     setConfig({
       id: null,
-      cursoId: '',
-      nivelId: nivelDefecto ? nivelDefecto.id : '',
+      cursoId: cursos.length > 0 ? cursos[0].id : '',
       tituloPrueba: '',
       asignatura: profesor.asignatura || 'Matemática',
       numPreguntas: 30,
@@ -317,29 +180,25 @@ export default function App() {
       notaMax: 7.0,
       notaAprob: 4.0,
       exigencia: 60,
-      pauta: {}
+      pauta: {},
+      eximidos: []
     });
     setVistaActiva('crear-evaluacion');
   };
 
   const guardarEvaluacionNube = async () => {
-    if (!supabase) {
-      alert('No hay conexión activa con Supabase.');
-      return;
-    }
+    if (!supabase) return;
     if (!config.tituloPrueba.trim()) {
       alert('Escribe un título para la evaluación.');
       return;
     }
 
     const cursoObj = cursos.find((c) => c.id === config.cursoId);
-    const nivelFinalId = cursoObj ? cursoObj.nivel_id : (config.nivelId || null);
-
     const payload = {
       titulo: config.tituloPrueba.trim(),
       asignatura: config.asignatura,
       curso_id: config.cursoId || null,
-      nivel_id: nivelFinalId,
+      nivel_id: cursoObj ? cursoObj.nivel_id : null,
       num_preguntas: Number(config.numPreguntas),
       alternativas: config.alternativas,
       nota_min: Number(config.notaMin),
@@ -347,7 +206,7 @@ export default function App() {
       nota_aprob: Number(config.notaAprob),
       exigencia: Number(config.exigencia),
       pauta: config.pauta,
-      eximidos: eximidosRuts
+      eximidos: config.eximidos || []
     };
 
     if (config.id) {
@@ -357,10 +216,10 @@ export default function App() {
         .eq('id', config.id);
 
       if (error) {
-        alert('Error al guardar cambios en la nube: ' + error.message);
+        alert('Error al actualizar en nube: ' + error.message);
       } else {
-        alert('✅ Cambios guardados en la nube.');
-        await cargarEvaluacionesNube(config.id);
+        alert('✅ Evaluación actualizada en la nube.');
+        cargarEvaluacionesNube();
       }
     } else {
       const { data, error } = await supabase
@@ -370,58 +229,46 @@ export default function App() {
         .single();
 
       if (error) {
-        alert('Error al crear evaluación en la nube: ' + error.message);
+        alert('Error al crear evaluación: ' + error.message);
       } else if (data) {
+        setConfig((prev) => ({ ...prev, id: data.id }));
         alert('✅ Evaluación creada y guardada en la nube.');
-        await cargarEvaluacionesNube(data.id);
+        await cargarEvaluacionesNube();
         setVistaActiva('evaluaciones-creadas');
         setSubVistaEval('avance');
       }
     }
   };
 
-  // Asignar o cambiar curso o nivel completo en una evaluación existente
-  const actualizarDestinoEvaluacionNube = async (valorSelect) => {
-    manejarCambioDestinoEvaluacion(valorSelect);
-    if (!supabase || !config.id) return;
+  const asignarCursoAEvaluacion = async (nuevoCursoId) => {
+    setConfig((prev) => ({ ...prev, cursoId: nuevoCursoId }));
+    if (config.id && supabase) {
+      const cursoObj = cursos.find((c) => c.id === nuevoCursoId);
+      const { error } = await supabase
+        .from('evaluaciones')
+        .update({
+          curso_id: nuevoCursoId || null,
+          nivel_id: cursoObj ? cursoObj.nivel_id : null
+        })
+        .eq('id', config.id);
 
-    let nuevoCursoId = null;
-    let nuevoNivelId = null;
-
-    if (valorSelect.startsWith('nivel:')) {
-      nuevoNivelId = valorSelect.replace('nivel:', '');
-    } else if (valorSelect) {
-      nuevoCursoId = valorSelect;
-      const cObj = cursos.find((c) => c.id === valorSelect);
-      nuevoNivelId = cObj ? cObj.nivel_id : null;
-    }
-
-    const { error } = await supabase
-      .from('evaluaciones')
-      .update({
-        curso_id: nuevoCursoId,
-        nivel_id: nuevoNivelId
-      })
-      .eq('id', config.id);
-
-    if (error) {
-      alert('Error al asignar curso/nivel: ' + error.message);
-    } else {
-      cargarEvaluacionesNube(config.id);
+      if (error) {
+        alert('Error al asignar curso: ' + error.message);
+      } else {
+        cargarEvaluacionesNube();
+      }
     }
   };
 
-  // Eliminar evaluación completa de Supabase
-  const eliminarEvaluacion = async () => {
-    if (!supabase || !config.id) return;
-    if (!confirm(`¿Eliminar definitivamente la evaluación "${config.tituloPrueba}" y todos sus resultados escaneados?`)) {
-      return;
-    }
+  const eliminarEvaluacionActual = async () => {
+    if (!config.id || !supabase) return;
+    const confirmar = window.confirm(
+      `¿Eliminar la evaluación "${config.tituloPrueba}" y todos sus resultados escaneados? Esta acción no se puede deshacer.`
+    );
+    if (!confirmar) return;
 
-    const { error } = await supabase
-      .from('evaluaciones')
-      .delete()
-      .eq('id', config.id);
+    await supabase.from('resultados').delete().eq('evaluacion_id', config.id);
+    const { error } = await supabase.from('evaluaciones').delete().eq('id', config.id);
 
     if (error) {
       alert('Error al eliminar evaluación: ' + error.message);
@@ -429,52 +276,52 @@ export default function App() {
     }
 
     localStorage.removeItem('omr_ultima_eval_id');
-    setUltimoResultado(null);
-    await cargarEvaluacionesNube();
-  };
-
-  // Eliminar un resultado escaneado individual
-  const eliminarResultadoEscaneo = async (resultadoObj) => {
-    if (!confirm(`¿Eliminar el escaneo de "${resultadoObj.nombre}" (${resultadoObj.rut})?`)) {
-      return;
-    }
-
-    if (supabase && resultadoObj.id) {
-      const { error } = await supabase
-        .from('resultados')
-        .delete()
-        .eq('id', resultadoObj.id);
-
-      if (error) {
-        alert('Error al eliminar resultado en la nube: ' + error.message);
-        return;
-      }
-      await cargarResultadosNube(config.id);
+    const restantes = evaluacionesGuardadas.filter((ev) => ev.id !== config.id);
+    setEvaluacionesGuardadas(restantes);
+    if (restantes.length > 0) {
+      abrirEvaluacion(restantes[0], false);
     } else {
-      setResultadosCurso((prev) => prev.filter((r) => r !== resultadoObj));
+      iniciarNuevaEvaluacion();
     }
   };
 
-  // Agregar estudiante desde la nómina de evaluación
+  const toggleEximirEstudiante = async (rut) => {
+    const rutNorm = rut.trim();
+    const actuales = config.eximidos || [];
+    const yaEximido = actuales.includes(rutNorm);
+    const nuevosEximidos = yaEximido
+      ? actuales.filter((r) => r !== rutNorm)
+      : [...actuales, rutNorm];
+
+    setConfig((prev) => ({ ...prev, eximidos: nuevosEximidos }));
+
+    if (config.id && supabase) {
+      await supabase
+        .from('evaluaciones')
+        .update({ eximidos: nuevosEximidos })
+        .eq('id', config.id);
+    }
+  };
+
   const agregarEstudianteAEvaluacion = async (e) => {
     e.preventDefault();
     if (!rutExtra.trim() || !nombreExtra.trim()) return;
-    const nuevo = { id: 'local-' + Date.now(), rut: rutExtra.trim(), nombre: nombreExtra.trim() };
+    if (!config.cursoId) {
+      alert('Primero asigna un curso a esta evaluación arriba.');
+      return;
+    }
 
-    const cursoDestinoId = config.cursoId || (config.nivelId ? cursos.find((c) => c.nivel_id === config.nivelId)?.id : null);
-
-    if (cursoDestinoId && supabase) {
+    const nuevo = { curso_id: config.cursoId, rut: rutExtra.trim(), nombre: nombreExtra.trim() };
+    if (supabase) {
       const { error } = await supabase
         .from('estudiantes')
-        .upsert([{ curso_id: cursoDestinoId, rut: nuevo.rut, nombre: nuevo.nombre }], { onConflict: 'curso_id,rut' });
+        .upsert([nuevo], { onConflict: 'curso_id,rut' });
+
       if (error) {
         alert('Error al agregar estudiante al curso: ' + error.message);
         return;
       }
-      await cargarEstudiantesParaEval(config.cursoId, config.nivelId);
-    } else {
-      setEstudiantesCursoEval((prev) => [...prev, nuevo]);
-      setSeleccionadosImprimir((prev) => [...prev, nuevo.rut]);
+      await cargarEstudiantesParaEval(config.cursoId);
     }
     setRutExtra('');
     setNombreExtra('');
@@ -485,22 +332,98 @@ export default function App() {
     setSeleccionadosImprimir((prev) => prev.filter((r) => r !== rut));
   };
 
-  // Generar PDF para un subconjunto de estudiantes (respeta el curso individual de cada estudiante si es nivel completo)
+  const eliminarResultadoIndividual = async (resultadoId, rut) => {
+    const confirmar = window.confirm('¿Eliminar este escaneo de la evaluación?');
+    if (!confirmar) return;
+
+    if (supabase && resultadoId) {
+      const { error } = await supabase.from('resultados').delete().eq('id', resultadoId);
+      if (error) {
+        alert('Error al eliminar escaneo: ' + error.message);
+        return;
+      }
+    }
+
+    setResultadosCurso((prev) =>
+      prev.filter((r) => (resultadoId ? r.id !== resultadoId : r.rut !== rut))
+    );
+  };
+
+  // Actualizar respuesta editada manualmente desde el modal del estudiante
+  const actualizarRespuestaEstudiante = async (resultadoId, nuevasRespuestas) => {
+    const totalPreg = Number(config.numPreguntas);
+    let puntosObtenidos = 0;
+    let puntosTotales = 0;
+
+    for (let i = 1; i <= totalPreg; i++) {
+      const item = config.pauta[i];
+      const correcta = typeof item === 'object' ? item?.correcta : item;
+      const puntajeItem = typeof item === 'object' ? Number(item?.puntaje || 1) : 1;
+
+      if (correcta) {
+        puntosTotales += puntajeItem;
+        if (nuevasRespuestas[i] === correcta) {
+          puntosObtenidos += puntajeItem;
+        }
+      }
+    }
+
+    if (puntosTotales === 0) puntosTotales = totalPreg;
+
+    const porcentaje = Math.round((puntosObtenidos / puntosTotales) * 100);
+    const nota = calcularNota(puntosObtenidos, puntosTotales);
+
+    if (supabase && resultadoId) {
+      const { error } = await supabase
+        .from('resultados')
+        .update({
+          respuestas_alumno: nuevasRespuestas,
+          puntaje_obtenido: puntosObtenidos,
+          puntaje_total: puntosTotales,
+          porcentaje,
+          nota
+        })
+        .eq('id', resultadoId);
+
+      if (error) {
+        alert('Error al guardar corrección en la nube: ' + error.message);
+        return null;
+      }
+    }
+
+    setResultadosCurso((prev) =>
+      prev.map((item) =>
+        item.id === resultadoId
+          ? {
+              ...item,
+              respuestas: nuevasRespuestas,
+              puntaje: puntosObtenidos,
+              total: puntosTotales,
+              porcentaje,
+              nota
+            }
+          : item
+      )
+    );
+
+    return { puntaje: puntosObtenidos, total: puntosTotales, porcentaje, nota };
+  };
+
   const imprimirHojasPDF = async (listaEstudiantesAImprimir, sufijoArchivo = '') => {
     if (!listaEstudiantesAImprimir || listaEstudiantesAImprimir.length === 0) {
-      alert('No hay estudiantes seleccionados para imprimir. Asigna un curso o nivel primero.');
+      alert('No hay estudiantes seleccionados para imprimir.');
       return;
     }
 
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
     const opciones = config.alternativas.split('');
     const totalPreg = Number(config.numPreguntas);
-    const cursoGlobalObj = cursos.find((c) => c.id === config.cursoId);
+    const cursoObj = cursos.find((c) => c.id === config.cursoId);
+    const nombreCurso = cursoObj ? cursoObj.nombre : '';
 
     for (let i = 0; i < listaEstudiantesAImprimir.length; i++) {
       if (i > 0) doc.addPage();
       const est = listaEstudiantesAImprimir[i];
-      const nombreCursoEst = est.curso_nombre || (cursoGlobalObj ? cursoGlobalObj.nombre : '');
 
       doc.setFillColor(0, 0, 0);
       doc.rect(12, 12, 8, 8, 'F');
@@ -515,12 +438,12 @@ export default function App() {
       doc.setFont('helvetica', 'normal');
       doc.text(`Asignatura: ${config.asignatura}`, 25, 26);
       doc.text(`Estudiante: ${est.nombre}`, 25, 32);
-      doc.text(`RUT: ${est.rut}   |   Curso: ${nombreCursoEst || '-'}`, 25, 38);
+      doc.text(`RUT: ${est.rut}   |   Curso: ${nombreCurso || '-'}`, 25, 38);
 
       const qrPayload = JSON.stringify({
         r: est.rut,
         n: est.nombre,
-        c: nombreCursoEst,
+        c: nombreCurso,
         e: config.id || ''
       });
       const qrDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 120 });
@@ -552,7 +475,6 @@ export default function App() {
     doc.save(`Hojas_${config.tituloPrueba.replace(/\s+/g, '_')}${sufijoArchivo}.pdf`);
   };
 
-  // Escala de notas
   const calcularNota = (puntaje, total) => {
     if (total <= 0) return config.notaMin;
     const pAprob = (Number(config.exigencia) / 100) * total;
@@ -569,160 +491,150 @@ export default function App() {
     return Number(Math.min(nMax, Math.max(nMin, nota)).toFixed(1));
   };
 
-  // Escaneo de hojas
   const manejarEscaneo = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
-
-    if (!config.id) {
-      alert('Primero debes seleccionar o guardar una evaluación en la nube.');
-      return;
-    }
 
     setProcesando(true);
     setProgresoLote('Preparando archivos...');
 
     try {
-      let colaImagenes = [];
+      let imagenesAProcesar = [];
+
       for (const file of files) {
         if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-          const paginasImg = await convertirPdfAImagenes(file, (actual, total) => {
-            setProgresoLote(`Extrayendo página ${actual} de ${total} del PDF...`);
+          const paginas = await convertirPdfAImagenes(file, (pag, tot) => {
+            setProgresoLote(`Convirtiendo PDF: página ${pag} de ${tot}...`);
           });
-          colaImagenes = colaImagenes.concat(paginasImg);
+          imagenesAProcesar.push(...paginas);
         } else {
-          colaImagenes.push(file);
+          imagenesAProcesar.push(file);
         }
       }
 
-      const nuevosResultados = [];
+      const procesadosNuevos = [];
 
-      for (let idx = 0; idx < colaImagenes.length; idx++) {
-        setProgresoLote(`Corrigiendo hoja ${idx + 1} de ${colaImagenes.length}...`);
-        const imgFile = colaImagenes[idx];
+      for (let idx = 0; idx < imagenesAProcesar.length; idx++) {
+        const imgFile = imagenesAProcesar[idx];
+        setProgresoLote(`Leyendo burbujas (${idx + 1} de ${imagenesAProcesar.length})...`);
 
-        try {
-          const resultadoOMR = await procesarHojaOMR(imgFile, {
-            numPreguntas: Number(config.numPreguntas),
-            alternativas: config.alternativas,
-            pauta: config.pauta
-          });
-
-          const respuestasAlumno = resultadoOMR.respuestas || {};
-          const totalPreg = Number(config.numPreguntas);
-          let puntosObtenidos = 0;
-          let puntosTotales = 0;
-
-          for (let i = 1; i <= totalPreg; i++) {
-            const item = config.pauta[i];
-            const correcta = typeof item === 'object' ? item?.correcta : item;
-            const puntajeItem = typeof item === 'object' ? Number(item?.puntaje || 1) : 1;
-
-            if (correcta) {
-              puntosTotales += puntajeItem;
-              if (respuestasAlumno[i] === correcta) {
-                puntosObtenidos += puntajeItem;
-              }
-            }
-          }
-
-          if (puntosTotales === 0) puntosTotales = totalPreg;
-
-          const porcentaje = Math.round((puntosObtenidos / puntosTotales) * 100);
-          const nota = calcularNota(puntosObtenidos, puntosTotales);
-          const alumnoInfo = imgFile.qrPreDetectado || resultadoOMR.qrData || {
-            r: 'Sin QR',
-            n: `Hoja ${idx + 1} (Sin QR)`,
-            c: ''
-          };
-
-          nuevosResultados.push({
-            rut: alumnoInfo.r || 'Sin QR',
-            nombre: alumnoInfo.n || `Hoja ${idx + 1}`,
-            curso: alumnoInfo.c || '',
-            puntaje: puntosObtenidos,
-            total: puntosTotales,
-            porcentaje,
-            nota,
-            respuestas: respuestasAlumno,
-            imagenProcesada: resultadoOMR.imagenProcesada
-          });
-        } catch (pageErr) {
-          console.warn(`Error en hoja ${idx + 1}:`, pageErr);
-        }
-      }
-
-      if (nuevosResultados.length > 0) {
-        const rutsExistentesMap = new Map();
-        resultadosCurso.forEach((r) => {
-          const clave = r.rut.trim().toLowerCase();
-          if (clave && clave !== 'sin qr' && clave !== 'sin rut') {
-            rutsExistentesMap.set(clave, r);
-          }
+        const resultadoOMR = await procesarHojaOMR(imgFile, {
+          numPreguntas: Number(config.numPreguntas),
+          alternativas: config.alternativas,
+          pauta: config.pauta
         });
 
-        const duplicados = nuevosResultados.filter((n) =>
-          rutsExistentesMap.has(n.rut.trim().toLowerCase())
-        );
+        const respuestasAlumno = resultadoOMR.respuestas || {};
+        const totalPreg = Number(config.numPreguntas);
+        let puntosObtenidos = 0;
+        let puntosTotales = 0;
 
-        let sobreescribir = true;
-        if (duplicados.length > 0) {
-          const nombresDup = duplicados
-            .slice(0, 5)
-            .map((d) => `• ${d.nombre} (${d.rut})`)
-            .join('\n');
-          const extraTxt = duplicados.length > 5 ? `\n...y ${duplicados.length - 5} más.` : '';
-          sobreescribir = confirm(
-            `⚠️ Se detectaron ${duplicados.length} estudiante(s) que ya tienen un escaneo guardado:\n\n${nombresDup}${extraTxt}\n\n¿Deseas SOBREESCRIBIR sus resultados anteriores con este nuevo escaneo?\n(Aceptar = Sobreescribir | Cancelar = Omitir duplicados)`
-          );
+        for (let i = 1; i <= totalPreg; i++) {
+          const item = config.pauta[i];
+          const correcta = typeof item === 'object' ? item?.correcta : item;
+          const puntajeItem = typeof item === 'object' ? Number(item?.puntaje || 1) : 1;
+
+          if (correcta) {
+            puntosTotales += puntajeItem;
+            if (respuestasAlumno[i] === correcta) {
+              puntosObtenidos += puntajeItem;
+            }
+          }
         }
 
-        const resultadosAGuardar = sobreescribir
-          ? nuevosResultados
-          : nuevosResultados.filter((n) => !rutsExistentesMap.has(n.rut.trim().toLowerCase()));
+        if (puntosTotales === 0) puntosTotales = totalPreg;
 
-        if (resultadosAGuardar.length > 0) {
-          setUltimoResultado(resultadosAGuardar[resultadosAGuardar.length - 1]);
+        const porcentaje = Math.round((puntosObtenidos / puntosTotales) * 100);
+        const nota = calcularNota(puntosObtenidos, puntosTotales);
+        const alumnoInfo = imgFile.qrPreDetectado || resultadoOMR.qrData || {
+          r: 'Sin QR',
+          n: `Hoja ${idx + 1} (Sin QR)`,
+          c: ''
+        };
 
-          if (supabase && config.id) {
-            setProgresoLote('Guardando resultados en la nube...');
-            if (sobreescribir && duplicados.length > 0) {
-              const rutsABorrar = duplicados.map((d) => d.rut);
+        procesadosNuevos.push({
+          rut: (alumnoInfo.r || 'Sin QR').trim(),
+          nombre: (alumnoInfo.n || `Hoja ${idx + 1}`).trim(),
+          curso: (alumnoInfo.c || '').trim(),
+          puntaje: puntosObtenidos,
+          total: puntosTotales,
+          porcentaje,
+          nota,
+          respuestas: respuestasAlumno,
+          imagenProcesada: resultadoOMR.imagenProcesada
+        });
+      }
+
+      const rutsExistentes = new Set(resultadosCurso.map((r) => r.rut.toLowerCase()));
+      const duplicados = procesadosNuevos.filter(
+        (p) => p.rut !== 'sin qr' && rutsExistentes.has(p.rut.toLowerCase())
+      );
+
+      let sobrescribirDuplicados = true;
+      if (duplicados.length > 0) {
+        const nombresDup = duplicados.slice(0, 4).map((d) => `${d.nombre} (${d.rut})`).join('\n');
+        const extraTxt = duplicados.length > 4 ? `\n...y ${duplicados.length - 4} más.` : '';
+        sobrescribirDuplicados = window.confirm(
+          `Se detectaron ${duplicados.length} estudiante(s) ya escaneados:\n\n${nombresDup}${extraTxt}\n\n¿Deseas SOBRESCRIBIR sus resultados anteriores?\n(Aceptar = Sobrescribir | Cancelar = Omitir duplicados)`
+        );
+      }
+
+      const listaFinalAGuardar = sobrescribirDuplicados
+        ? procesadosNuevos
+        : procesadosNuevos.filter((p) => !rutsExistentes.has(p.rut.toLowerCase()));
+
+      if (listaFinalAGuardar.length > 0) {
+        setUltimoResultado(listaFinalAGuardar[listaFinalAGuardar.length - 1]);
+
+        if (supabase && config.id) {
+          setProgresoLote('Guardando resultados e imágenes en la nube...');
+
+          if (sobrescribirDuplicados && duplicados.length > 0) {
+            for (const dup of duplicados) {
               await supabase
                 .from('resultados')
                 .delete()
                 .eq('evaluacion_id', config.id)
-                .in('rut_estudiante', rutsABorrar);
-            }
-
-            const filasSupabase = resultadosAGuardar.map((reg) => ({
-              evaluacion_id: config.id,
-              rut_estudiante: reg.rut,
-              nombre_estudiante: reg.nombre,
-              curso: reg.curso,
-              puntaje_obtenido: Number(reg.puntaje),
-              puntaje_total: Number(reg.total),
-              porcentaje: Number(reg.porcentaje),
-              nota: Number(reg.nota),
-              respuestas_alumno: reg.respuestas
-            }));
-
-            const { error: insertError } = await supabase
-              .from('resultados')
-              .insert(filasSupabase)
-              .select();
-
-            if (insertError) {
-              alert('❌ Error al guardar en la nube: ' + insertError.message);
-            } else {
-              await cargarResultadosNube(config.id);
-              alert(`✅ ${resultadosAGuardar.length} resultado(s) guardado(s) correctamente en la nube.`);
+                .eq('rut_estudiante', dup.rut);
             }
           }
+
+          const filasInsertar = listaFinalAGuardar.map((reg) => ({
+            evaluacion_id: config.id,
+            curso_id: config.cursoId || null,
+            rut_estudiante: reg.rut,
+            nombre_estudiante: reg.nombre,
+            curso: reg.curso,
+            puntaje_obtenido: reg.puntaje,
+            puntaje_total: reg.total,
+            porcentaje: reg.porcentaje,
+            nota: reg.nota,
+            respuestas_alumno: reg.respuestas,
+            imagen_url: reg.imagenProcesada || null
+          }));
+
+          const { error: errorInsert } = await supabase.from('resultados').insert(filasInsertar);
+
+          if (errorInsert) {
+            alert(
+              '⚠️ Error al guardar en la nube: ' +
+                errorInsert.message +
+                '\n\nVerifica que ejecutaste el comando SQL para agregar imagen_url.'
+            );
+          }
+
+          await cargarResultadosNube(config.id);
+        } else {
+          setResultadosCurso((prev) => {
+            const filtrados = prev.filter(
+              (r) => !listaFinalAGuardar.some((n) => n.rut.toLowerCase() === r.rut.toLowerCase())
+            );
+            return [...listaFinalAGuardar.reverse(), ...filtrados];
+          });
         }
       }
     } catch (err) {
-      alert('Error al procesar el archivo: ' + err.message);
+      alert('Error al procesar archivo: ' + err.message);
     } finally {
       setProcesando(false);
       setProgresoLote('');
@@ -730,38 +642,34 @@ export default function App() {
     }
   };
 
-  // Cálculo de porcentaje rendido considerando estudiantes EXIMIDOS
+  // Cálculo de cobertura y pendientes descontando eximidos
+  const eximidosSet = new Set((config.eximidos || []).map((r) => r.trim().toLowerCase()));
   const rutsRendidos = new Set(resultadosCurso.map((r) => r.rut.trim().toLowerCase()));
-  const eximidosSet = new Set(eximidosRuts);
 
-  const estudiantesActivos = estudiantesCursoEval.filter(
+  const estudiantesHabilitados = estudiantesCursoEval.filter(
     (e) => !eximidosSet.has(e.rut.trim().toLowerCase())
   );
-  const estudiantesEximidos = estudiantesCursoEval.filter(
-    (e) => eximidosSet.has(e.rut.trim().toLowerCase())
+  const estudiantesEximidos = estudiantesCursoEval.filter((e) =>
+    eximidosSet.has(e.rut.trim().toLowerCase())
   );
-
-  const totalActivos = estudiantesActivos.length;
-  const estudiantesRendidos = estudiantesActivos.filter((e) =>
+  const estudiantesRendidos = estudiantesHabilitados.filter((e) =>
     rutsRendidos.has(e.rut.trim().toLowerCase())
   );
-  const estudiantesPendientes = estudiantesActivos.filter(
+  const estudiantesPendientes = estudiantesHabilitados.filter(
     (e) => !rutsRendidos.has(e.rut.trim().toLowerCase())
   );
 
   const porcentajeAvance =
-    totalActivos > 0 ? Math.round((estudiantesRendidos.length / totalActivos) * 100) : 0;
+    estudiantesHabilitados.length > 0
+      ? Math.round((estudiantesRendidos.length / estudiantesHabilitados.length) * 100)
+      : 0;
 
   const radio = 46;
   const circunferencia = 2 * Math.PI * radio;
   const trazoCompletado = circunferencia - (porcentajeAvance / 100) * circunferencia;
 
-  const nivelActivoNombre = obtenerNombreNivelActivo();
-  const tieneDestinoAsignado = Boolean(config.cursoId || config.nivelId);
-
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#1e293b' }}>
-      {/* MENÚ LATERAL DESPLEGABLE */}
       <Sidebar
         vistaActiva={vistaActiva}
         setVistaActiva={(v) => {
@@ -775,8 +683,7 @@ export default function App() {
         profesor={profesor}
       />
 
-      {/* ÁREA DE CONTENIDO PRINCIPAL */}
-      <main style={{ flex: 1, padding: '24px', maxWidth: '1100px', margin: '0 auto', boxSizing: 'border-box' }}>
+      <main style={{ flex: 1, padding: '24px', maxWidth: '1150px', margin: '0 auto', boxSizing: 'border-box' }}>
         {/* VISTA 1: MI PERFIL */}
         {vistaActiva === 'perfil' && (
           <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', maxWidth: '600px' }}>
@@ -784,10 +691,6 @@ export default function App() {
               <User size={24} color="#2563eb" />
               Mi Perfil Docente
             </h2>
-            <p style={{ color: '#64748b', fontSize: '14px', marginBottom: '20px' }}>
-              Configura tus datos institucionales. Más adelante podrás vincular tu cuenta con perfiles de otros docentes del establecimiento.
-            </p>
-
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Nombre del Profesor(a)</label>
@@ -798,7 +701,6 @@ export default function App() {
                   style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
                 />
               </div>
-
               <div>
                 <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Asignatura Principal</label>
                 <input
@@ -808,7 +710,6 @@ export default function App() {
                   style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
                 />
               </div>
-
               <div>
                 <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Establecimiento Educacional</label>
                 <input
@@ -818,11 +719,10 @@ export default function App() {
                   style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
                 />
               </div>
-
               <button
                 onClick={() => {
                   localStorage.setItem('omr_perfil_docente', JSON.stringify(profesor));
-                  alert('Perfil guardado.');
+                  alert('✅ Perfil guardado.');
                 }}
                 style={{
                   marginTop: '8px', background: '#2563eb', color: 'white', border: 'none',
@@ -852,7 +752,6 @@ export default function App() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
               <h2 style={{ margin: '0 0 16px 0', fontSize: '20px' }}>Crear Nueva Evaluación</h2>
-
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Título de la Evaluación</label>
@@ -864,38 +763,24 @@ export default function App() {
                     style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
                   />
                 </div>
-
                 <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Nivel completo o Curso</label>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Curso al que se aplica</label>
                   <select
-                    value={valorSelectDestino}
-                    onChange={(e) => manejarCambioDestinoEvaluacion(e.target.value)}
-                    style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box', fontWeight: '600' }}
+                    value={config.cursoId}
+                    onChange={(e) => setConfig({ ...config, cursoId: e.target.value })}
+                    style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
                   >
-                    <option value="">-- Seleccionar nivel o curso --</option>
-                    <optgroup label="Aplicar a Nivel Completo (todos sus cursos)">
-                      {niveles.map((n) => {
-                        const cantCursos = cursos.filter((c) => c.nivel_id === n.id).length;
-                        return (
-                          <option key={`niv-${n.id}`} value={`nivel:${n.id}`}>
-                            📚 Nivel Completo: {n.nombre} ({cantCursos} curso{cantCursos === 1 ? '' : 's'})
-                          </option>
-                        );
-                      })}
-                    </optgroup>
-                    <optgroup label="Aplicar a un Curso Específico">
-                      {cursos.map((c) => {
-                        const niv = niveles.find((n) => n.id === c.nivel_id);
-                        return (
-                          <option key={c.id} value={c.id}>
-                            {niv ? `${niv.nombre} — ` : ''}{c.nombre}
-                          </option>
-                        );
-                      })}
-                    </optgroup>
+                    <option value="">-- Seleccionar curso --</option>
+                    {cursos.map((c) => {
+                      const niv = niveles.find((n) => n.id === c.nivel_id);
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {niv ? `${niv.nombre} — ` : ''}{c.nombre}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
-
                 <div>
                   <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Asignatura</label>
                   <input
@@ -905,7 +790,6 @@ export default function App() {
                     style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
                   />
                 </div>
-
                 <div>
                   <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>N° Preguntas (1 a 50)</label>
                   <input
@@ -917,7 +801,6 @@ export default function App() {
                     style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
                   />
                 </div>
-
                 <div>
                   <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Alternativas</label>
                   <select
@@ -933,11 +816,7 @@ export default function App() {
               </div>
             </div>
 
-            <PautaEditor
-              config={config}
-              setConfig={setConfig}
-              nivelNombre={nivelActivoNombre}
-            />
+            <PautaEditor config={config} setConfig={setConfig} />
 
             <button
               onClick={guardarEvaluacionNube}
@@ -956,100 +835,85 @@ export default function App() {
         {/* VISTA 4: EVALUACIONES CREADAS */}
         {vistaActiva === 'evaluaciones-creadas' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Barra superior de selección, asignación de nivel/curso, impresión y eliminación */}
-            <div style={{ background: '#ffffff', padding: '18px 20px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px', alignItems: 'end' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#64748b', marginBottom: '4px' }}>
-                    EVALUACIÓN SELECCIONADA
+            <div style={{ background: '#ffffff', padding: '16px 20px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: '12px' }}>
+              <div style={{ flex: '2 1 280px' }}>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: '700', color: '#64748b', marginBottom: '4px' }}>
+                  EVALUACIÓN SELECCIONADA
+                </label>
+                <select
+                  value={config.id || ''}
+                  onChange={(e) => {
+                    const ev = evaluacionesGuardadas.find((x) => String(x.id) === e.target.value);
+                    if (ev) abrirEvaluacion(ev, false);
+                  }}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #94a3b8', fontSize: '15px', fontWeight: '700' }}
+                >
+                  {evaluacionesGuardadas.length === 0 && <option value="">Aún no tienes evaluaciones creadas</option>}
+                  {evaluacionesGuardadas.map((ev) => {
+                    const c = cursos.find((cur) => cur.id === ev.curso_id);
+                    return (
+                      <option key={ev.id} value={ev.id}>
+                        {ev.titulo} — {ev.asignatura} {c ? `(${c.nombre})` : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              {config.id && (
+                <div style={{ flex: '1 1 200px' }}>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: '700', color: '#64748b', marginBottom: '4px' }}>
+                    CURSO ASIGNADO
                   </label>
                   <select
-                    value={config.id || ''}
-                    onChange={(e) => {
-                      const ev = evaluacionesGuardadas.find((x) => String(x.id) === e.target.value);
-                      if (ev) abrirEvaluacion(ev, false);
-                    }}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #94a3b8', fontSize: '14px', fontWeight: '700' }}
+                    value={config.cursoId || ''}
+                    onChange={(e) => asignarCursoAEvaluacion(e.target.value)}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #94a3b8', fontSize: '14px', fontWeight: '600', background: '#f8fafc' }}
                   >
-                    {evaluacionesGuardadas.length === 0 && <option value="">Aún no tienes evaluaciones creadas</option>}
-                    {evaluacionesGuardadas.map((ev) => (
-                      <option key={ev.id} value={ev.id}>
-                        {ev.titulo} ({ev.asignatura})
-                      </option>
-                    ))}
+                    <option value="">-- Sin curso asignado --</option>
+                    {cursos.map((c) => {
+                      const niv = niveles.find((n) => n.id === c.nivel_id);
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {niv ? `${niv.nombre} — ` : ''}{c.nombre}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
+              )}
 
-                {config.id && (
-                  <div>
-                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#2563eb', marginBottom: '4px' }}>
-                      NIVEL O CURSO ASIGNADO
-                    </label>
-                    <select
-                      value={valorSelectDestino}
-                      onChange={(e) => actualizarDestinoEvaluacionNube(e.target.value)}
-                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #3b82f6', background: '#eff6ff', fontSize: '14px', fontWeight: '600' }}
-                    >
-                      <option value="">-- Sin asignar --</option>
-                      <optgroup label="Nivel Completo (todos sus cursos)">
-                        {niveles.map((n) => {
-                          const cantCursos = cursos.filter((c) => c.nivel_id === n.id).length;
-                          return (
-                            <option key={`niv-${n.id}`} value={`nivel:${n.id}`}>
-                              📚 Nivel Completo: {n.nombre} ({cantCursos} curso{cantCursos === 1 ? '' : 's'})
-                            </option>
-                          );
-                        })}
-                      </optgroup>
-                      <optgroup label="Curso Individual">
-                        {cursos.map((c) => {
-                          const niv = niveles.find((n) => n.id === c.nivel_id);
-                          return (
-                            <option key={c.id} value={c.id}>
-                              {niv ? `${niv.nombre} — ` : ''}{c.nombre}
-                            </option>
-                          );
-                        })}
-                      </optgroup>
-                    </select>
-                  </div>
-                )}
+              {config.id && (
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <button
+                    onClick={() => imprimirHojasPDF(estudiantesHabilitados)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px',
+                      borderRadius: '8px', border: '1px solid #2563eb', background: '#eff6ff',
+                      color: '#1d4ed8', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
+                    }}
+                  >
+                    <Printer size={17} />
+                    Imprimir Curso ({estudiantesHabilitados.length})
+                  </button>
 
-                {config.id && (
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    <button
-                      onClick={() => imprimirHojasPDF(estudiantesActivos)}
-                      style={{
-                        flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                        padding: '10px 14px', borderRadius: '8px', border: '1px solid #2563eb',
-                        background: '#eff6ff', color: '#1d4ed8', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
-                      }}
-                      title="Imprimir hojas de estudiantes no eximidos"
-                    >
-                      <Printer size={17} />
-                      Imprimir ({estudiantesActivos.length})
-                    </button>
-
-                    <button
-                      onClick={eliminarEvaluacion}
-                      style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                        padding: '10px 14px', borderRadius: '8px', border: '1px solid #fecaca',
-                        background: '#fef2f2', color: '#dc2626', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
-                      }}
-                      title="Eliminar esta evaluación"
-                    >
-                      <Trash2 size={17} />
-                      Eliminar
-                    </button>
-                  </div>
-                )}
-              </div>
+                  <button
+                    onClick={eliminarEvaluacionActual}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 14px',
+                      borderRadius: '8px', border: '1px solid #fecaca', background: '#fef2f2',
+                      color: '#dc2626', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
+                    }}
+                  >
+                    <Trash2 size={17} />
+                    Eliminar
+                  </button>
+                </div>
+              )}
             </div>
 
             {config.id && (
               <>
-                {/* Submenú de gestión de la evaluación */}
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   {[
                     { id: 'avance', label: 'Avance y Pendientes', icon: Clock },
@@ -1078,124 +942,129 @@ export default function App() {
                   })}
                 </div>
 
-                {/* SUBVISTA A: AVANCE, PENDIENTES Y EXIMIR / DESEXIMIR */}
+                {/* SUBVISTA A: AVANCE, PENDIENTES Y EXIMIDOS */}
                 {subVistaEval === 'avance' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    {!tieneDestinoAsignado ? (
-                      <div style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', padding: '16px', borderRadius: '12px', fontSize: '14px' }}>
-                        <strong>Esta evaluación aún no tiene un curso o nivel asignado.</strong> Selecciónalo arriba en <em>"Nivel o Curso Asignado"</em> para ver el gráfico de cobertura y controlar los estudiantes eximidos o pendientes.
-                      </div>
-                    ) : (
-                      <>
-                        <div
-                          onClick={() => setMostrarPendientesDetalle(!mostrarPendientesDetalle)}
-                          style={{
-                            background: '#ffffff', padding: '24px', borderRadius: '14px',
-                            border: '2px solid #cbd5e1', cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            flexWrap: 'wrap', gap: '20px', boxShadow: '0 2px 6px rgba(0,0,0,0.04)'
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
-                            <div style={{ position: 'relative', width: '112px', height: '112px' }}>
-                              <svg width="112" height="112" style={{ transform: 'rotate(-90deg)' }}>
-                                <circle cx="56" cy="56" r={radio} stroke="#e2e8f0" strokeWidth="12" fill="transparent" />
-                                <circle
-                                  cx="56"
-                                  cy="56"
-                                  r={radio}
-                                  stroke={porcentajeAvance === 100 ? '#16a34a' : '#2563eb'}
-                                  strokeWidth="12"
-                                  strokeDasharray={circunferencia}
-                                  strokeDashoffset={trazoCompletado}
-                                  strokeLinecap="round"
-                                  fill="transparent"
-                                />
-                              </svg>
-                              <div
-                                style={{
-                                  position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
-                                  justifyContent: 'center', fontWeight: '800', fontSize: '20px', color: '#0f172a'
-                                }}
-                              >
-                                {porcentajeAvance}%
-                              </div>
-                            </div>
-
-                            <div>
-                              <div style={{ fontSize: '12px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase' }}>
-                                Cobertura de Aplicación {config.nivelId && !config.cursoId ? `(Nivel ${nivelActivoNombre})` : ''}
-                              </div>
-                              <h3 style={{ margin: '4px 0', fontSize: '20px', color: '#0f172a' }}>
-                                {estudiantesRendidos.length} de {totalActivos} estudiantes ya rindieron
-                              </h3>
-                              <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>
-                                {estudiantesPendientes.length === 0
-                                  ? '¡Completo! Todos los estudiantes activos tienen su hoja escaneada.'
-                                  : `Faltan ${estudiantesPendientes.length} estudiante(s) por rendir.`}
-                                {estudiantesEximidos.length > 0 && ` (${estudiantesEximidos.length} eximido(s) excluidos del cálculo).`}
-                              </p>
-                            </div>
+                    <div
+                      onClick={() => setMostrarPendientesDetalle(!mostrarPendientesDetalle)}
+                      style={{
+                        background: '#ffffff', padding: '24px', borderRadius: '14px',
+                        border: '2px solid #cbd5e1', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        flexWrap: 'wrap', gap: '20px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
+                        <div style={{ position: 'relative', width: '112px', height: '112px' }}>
+                          <svg width="112" height="112" style={{ transform: 'rotate(-90deg)' }}>
+                            <circle cx="56" cy="56" r={radio} stroke="#e2e8f0" strokeWidth="12" fill="transparent" />
+                            <circle
+                              cx="56"
+                              cy="56"
+                              r={radio}
+                              stroke={porcentajeAvance === 100 ? '#16a34a' : '#2563eb'}
+                              strokeWidth="12"
+                              strokeDasharray={circunferencia}
+                              strokeDashoffset={trazoCompletado}
+                              strokeLinecap="round"
+                              fill="transparent"
+                            />
+                          </svg>
+                          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', fontSize: '20px', color: '#0f172a' }}>
+                            {porcentajeAvance}%
                           </div>
-
-                          {estudiantesPendientes.length > 0 && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                imprimirHojasPDF(estudiantesPendientes, '_Pendientes');
-                              }}
-                              style={{
-                                background: '#ea580c', color: 'white', border: 'none', borderRadius: '10px',
-                                padding: '12px 18px', fontWeight: '700', cursor: 'pointer',
-                                display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px'
-                              }}
-                            >
-                              <Printer size={18} />
-                              Imprimir Hojas de Pendientes ({estudiantesPendientes.length})
-                            </button>
-                          )}
                         </div>
 
-                        {mostrarPendientesDetalle && (
-                          <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                            <div>
-                              <h4 style={{ margin: '0 0 12px 0', fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: '#c2410c' }}>
-                                <AlertCircle size={18} />
-                                Estudiantes Pendientes / Ausentes ({estudiantesPendientes.length})
-                              </h4>
+                        <div>
+                          <div style={{ fontSize: '12px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase' }}>
+                            Cobertura de Aplicación
+                          </div>
+                          <h3 style={{ margin: '4px 0', fontSize: '20px', color: '#0f172a' }}>
+                            {estudiantesRendidos.length} de {estudiantesHabilitados.length} estudiantes ya rindieron
+                          </h3>
+                          <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>
+                            {estudiantesPendientes.length === 0
+                              ? '¡Curso completo! Todos los estudiantes habilitados tienen su hoja escaneada.'
+                              : `Faltan ${estudiantesPendientes.length} estudiante(s) por rendir.`}
+                            {estudiantesEximidos.length > 0 && ` (${estudiantesEximidos.length} eximido/s)`}
+                          </p>
+                        </div>
+                      </div>
 
-                              {estudiantesPendientes.length === 0 ? (
-                                <div style={{ padding: '14px', background: '#f0fdf4', color: '#166534', borderRadius: '8px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                  <CheckCircle2 size={18} />
-                                  No hay estudiantes pendientes.
-                                </div>
-                              ) : (
-                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                                  <thead style={{ background: '#fff7ed' }}>
-                                    <tr>
-                                      <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>RUT</th>
-                                      <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>Nombre Estudiante</th>
-                                      <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>Curso</th>
-                                      <th style={{ padding: '10px', textAlign: 'right', borderBottom: '1px solid #fed7aa' }}>Acciones</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {estudiantesPendientes.map((est) => (
-                                      <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                        <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{est.rut}</td>
-                                        <td style={{ padding: '9px 10px', fontWeight: '600' }}>{est.nombre}</td>
-                                        <td style={{ padding: '9px 10px', color: '#64748b' }}>{est.curso_nombre || '-'}</td>
-                                        <td style={{ padding: '9px 10px', textAlign: 'right', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                                          <button
-                                            onClick={() => toggleEximirEstudiante(est.rut)}
-                                            style={{
-                                              background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1',
-                                              borderRadius: '6px', padding: '5px 10px', cursor: 'pointer',
-                                              fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px'
-                                            }}
-                                          >
-                                            <UserX size={14} /> Eximir
-                                          </button>
+                      {estudiantesPendientes.length > 0 && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            imprimirHojasPDF(estudiantesPendientes, '_Pendientes');
+                          }}
+                          style={{
+                            background: '#ea580c', color: 'white', border: 'none', borderRadius: '10px',
+                            padding: '12px 18px', fontWeight: '700', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px'
+                          }}
+                        >
+                          <Printer size={18} />
+                          Imprimir Hojas de Pendientes ({estudiantesPendientes.length})
+                        </button>
+                      )}
+                    </div>
+
+                    {mostrarPendientesDetalle && (
+                      <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                        <h4 style={{ margin: '0 0 12px 0', fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: '#c2410c' }}>
+                          <AlertCircle size={18} />
+                          Control de Estudiantes Pendientes y Eximidos ({estudiantesPendientes.length + estudiantesEximidos.length})
+                        </h4>
+
+                        {estudiantesPendientes.length === 0 && estudiantesEximidos.length === 0 ? (
+                          <div style={{ padding: '14px', background: '#f0fdf4', color: '#166534', borderRadius: '8px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <CheckCircle2 size={18} />
+                            No hay estudiantes pendientes ni eximidos en este curso.
+                          </div>
+                        ) : (
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                            <thead style={{ background: '#fff7ed' }}>
+                              <tr>
+                                <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>RUT</th>
+                                <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>Nombre Estudiante</th>
+                                <th style={{ padding: '10px', textAlign: 'center', borderBottom: '1px solid #fed7aa' }}>Estado</th>
+                                <th style={{ padding: '10px', textAlign: 'right', borderBottom: '1px solid #fed7aa' }}>Acciones</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {[...estudiantesPendientes, ...estudiantesEximidos].map((est) => {
+                                const esEximido = eximidosSet.has(est.rut.trim().toLowerCase());
+                                return (
+                                  <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9', opacity: esEximido ? 0.7 : 1 }}>
+                                    <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{est.rut}</td>
+                                    <td style={{ padding: '9px 10px', fontWeight: '600' }}>{est.nombre}</td>
+                                    <td style={{ padding: '9px 10px', textAlign: 'center' }}>
+                                      <span
+                                        style={{
+                                          padding: '3px 9px', borderRadius: '999px', fontSize: '12px', fontWeight: '600',
+                                          background: esEximido ? '#e2e8f0' : '#ffedd5',
+                                          color: esEximido ? '#475569' : '#9a3412'
+                                        }}
+                                      >
+                                        {esEximido ? 'Eximido' : 'Pendiente'}
+                                      </span>
+                                    </td>
+                                    <td style={{ padding: '9px 10px', textAlign: 'right' }}>
+                                      <div style={{ display: 'inline-flex', gap: '6px' }}>
+                                        <button
+                                          onClick={() => toggleEximirEstudiante(est.rut)}
+                                          style={{
+                                            background: esEximido ? '#dcfce7' : '#f1f5f9',
+                                            color: esEximido ? '#166534' : '#334155',
+                                            border: '1px solid #cbd5e1',
+                                            borderRadius: '6px', padding: '5px 10px', cursor: 'pointer',
+                                            fontSize: '12px', fontWeight: '600'
+                                          }}
+                                        >
+                                          {esEximido ? 'Deseximir' : 'Eximir'}
+                                        </button>
+
+                                        {!esEximido && (
                                           <button
                                             onClick={() => imprimirHojasPDF([est], `_${est.rut}`)}
                                             style={{
@@ -1206,66 +1075,28 @@ export default function App() {
                                           >
                                             <FileDown size={14} /> Imprimir Hoja
                                           </button>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              )}
-                            </div>
-
-                            {estudiantesEximidos.length > 0 && (
-                              <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
-                                <h4 style={{ margin: '0 0 10px 0', fontSize: '15px', display: 'flex', alignItems: 'center', gap: '8px', color: '#475569' }}>
-                                  <UserX size={17} />
-                                  Estudiantes Eximidos ({estudiantesEximidos.length})
-                                </h4>
-                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                                  <thead style={{ background: '#f8fafc' }}>
-                                    <tr>
-                                      <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>RUT</th>
-                                      <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Nombre Estudiante</th>
-                                      <th style={{ padding: '8px 10px', textAlign: 'right', borderBottom: '1px solid #e2e8f0' }}>Restaurar</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {estudiantesEximidos.map((est) => (
-                                      <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9', background: '#f8fafc' }}>
-                                        <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: '#64748b' }}>{est.rut}</td>
-                                        <td style={{ padding: '8px 10px', color: '#64748b', textDecoration: 'line-through' }}>{est.nombre}</td>
-                                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>
-                                          <button
-                                            onClick={() => toggleEximirEstudiante(est.rut)}
-                                            style={{
-                                              background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0',
-                                              borderRadius: '6px', padding: '5px 10px', cursor: 'pointer',
-                                              fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px'
-                                            }}
-                                          >
-                                            <UserCheck size={14} /> Deseximir
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
-                          </div>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
                         )}
-                      </>
+                      </div>
                     )}
                   </div>
                 )}
 
-                {/* SUBVISTA B: IMPRIMIR SELECTIVO Y AGREGAR ESTUDIANTES */}
+                {/* SUBVISTA B: IMPRIMIR / NÓMINA ALUMNOS */}
                 {subVistaEval === 'imprimir' && (
                   <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
                       <div>
                         <h3 style={{ margin: 0, fontSize: '17px' }}>Nómina de Impresión de Hojas de Respuestas</h3>
                         <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#64748b' }}>
-                          Marca o desmarca estudiantes antes de descargar el PDF.
+                          Selecciona los estudiantes para descargar sus hojas personalizadas con código QR.
                         </p>
                       </div>
 
@@ -1285,17 +1116,11 @@ export default function App() {
                       </button>
                     </div>
 
-                    <div
-                      style={{
-                        background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af',
-                        padding: '12px 14px', borderRadius: '8px', fontSize: '13px',
-                        display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px'
-                      }}
-                    >
-                      <Info size={18} style={{ flexShrink: 0 }} />
-                      <div>
-                        <strong>Nota:</strong> Para mantener la lista unificada, los estudiantes nuevos deberían crearse en <strong>Mis Cursos</strong>. Si agregas un estudiante desde aquí, <strong>se incorporará automáticamente a la nómina oficial del curso</strong>.
-                      </div>
+                    <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af', padding: '10px 14px', borderRadius: '8px', marginBottom: '14px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Info size={18} />
+                      <span>
+                        <strong>Importante:</strong> Lo ideal es gestionar los estudiantes desde la ventana <strong>"Mis Cursos"</strong>. Si agregas un alumno desde aquí, <strong>también quedará guardado automáticamente en la nómina oficial de este curso</strong>.
+                      </span>
                     </div>
 
                     <form onSubmit={agregarEstudianteAEvaluacion} style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
@@ -1341,9 +1166,7 @@ export default function App() {
                           </th>
                           <th style={{ padding: '10px', textAlign: 'left' }}>RUT</th>
                           <th style={{ padding: '10px', textAlign: 'left' }}>Estudiante</th>
-                          <th style={{ padding: '10px', textAlign: 'left' }}>Curso</th>
                           <th style={{ padding: '10px', textAlign: 'center' }}>Estado</th>
-                          <th style={{ padding: '10px', textAlign: 'center' }}>Eximir</th>
                           <th style={{ padding: '10px', textAlign: 'center' }}>Quitar</th>
                         </tr>
                       </thead>
@@ -1353,7 +1176,7 @@ export default function App() {
                           const yaRindio = rutsRendidos.has(est.rut.trim().toLowerCase());
                           const esEximido = eximidosSet.has(est.rut.trim().toLowerCase());
                           return (
-                            <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9', opacity: esEximido ? 0.65 : 1 }}>
+                            <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9' }}>
                               <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                                 <button
                                   onClick={() =>
@@ -1368,7 +1191,6 @@ export default function App() {
                               </td>
                               <td style={{ padding: '8px 10px', fontFamily: 'monospace' }}>{est.rut}</td>
                               <td style={{ padding: '8px 10px', fontWeight: '500' }}>{est.nombre}</td>
-                              <td style={{ padding: '8px 10px', color: '#64748b' }}>{est.curso_nombre || '-'}</td>
                               <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                                 <span
                                   style={{
@@ -1379,18 +1201,6 @@ export default function App() {
                                 >
                                   {esEximido ? 'Eximido' : yaRindio ? 'Rindió' : 'Pendiente'}
                                 </span>
-                              </td>
-                              <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                                <button
-                                  onClick={() => toggleEximirEstudiante(est.rut)}
-                                  style={{
-                                    background: 'transparent', border: '1px solid #cbd5e1', borderRadius: '6px',
-                                    padding: '3px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer',
-                                    color: esEximido ? '#047857' : '#475569'
-                                  }}
-                                >
-                                  {esEximido ? 'Deseximir' : 'Eximir'}
-                                </button>
                               </td>
                               <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                                 <button
@@ -1408,69 +1218,113 @@ export default function App() {
                   </div>
                 )}
 
-                {/* SUBVISTA C: ESCANEAR */}
+                {/* SUBVISTA C: ESCANEAR + GESTIÓN DE ESCANEOS */}
                 {subVistaEval === 'escanear' && (
-                  <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                    <h3 style={{ margin: '0 0 12px 0', fontSize: '18px' }}>Escanear Hoja de Respuestas o Subir PDF</h3>
-                    <p style={{ color: '#64748b', fontSize: '14px', marginBottom: '16px' }}>
-                      Puedes subir una foto individual, seleccionar varias imágenes o cargar un <strong>PDF multipágina</strong>. Los resultados quedan guardados automáticamente en la nube.
-                    </p>
-                    <label
-                      style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '10px',
-                        background: procesando ? '#94a3b8' : '#2563eb',
-                        color: 'white', padding: '12px 20px', borderRadius: '10px',
-                        cursor: procesando ? 'wait' : 'pointer', fontWeight: '700', fontSize: '15px'
-                      }}
-                    >
-                      <Camera size={20} />
-                      {procesando ? (progresoLote || 'Procesando...') : 'Subir Foto o PDF Escaneado'}
-                      <input
-                        type="file"
-                        accept="image/*,application/pdf"
-                        multiple
-                        onChange={manejarEscaneo}
-                        disabled={procesando}
-                        style={{ display: 'none' }}
-                      />
-                    </label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                      <h3 style={{ margin: '0 0 12px 0', fontSize: '18px' }}>Escanear Hojas de Respuestas (Fotos o PDF Multipágina)</h3>
+                      <p style={{ color: '#64748b', fontSize: '14px', marginBottom: '16px' }}>
+                        Puedes subir una foto individual, varias fotos a la vez o un <strong>archivo PDF escaneado con todo el curso</strong>.
+                      </p>
 
-                    {ultimoResultado && (
-                      <div style={{ marginTop: '20px', padding: '16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #cbd5e1' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                          <div>
-                            <strong style={{ fontSize: '16px' }}>{ultimoResultado.nombre}</strong>
-                            <div style={{ fontSize: '13px', color: '#64748b' }}>RUT: {ultimoResultado.rut}</div>
-                          </div>
-                          <div style={{ textAlign: 'right' }}>
-                            <span style={{ fontSize: '24px', fontWeight: '800', color: ultimoResultado.nota >= 4.0 ? '#16a34a' : '#dc2626' }}>
-                              Nota: {Number(ultimoResultado.nota).toFixed(1)}
-                            </span>
-                            <div style={{ fontSize: '13px', color: '#475569' }}>
-                              {ultimoResultado.puntaje} / {ultimoResultado.total} pts ({ultimoResultado.porcentaje}%)
+                      <label
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: '10px',
+                          background: procesando ? '#94a3b8' : '#2563eb',
+                          color: 'white', padding: '12px 20px', borderRadius: '10px',
+                          cursor: procesando ? 'wait' : 'pointer', fontWeight: '700', fontSize: '15px'
+                        }}
+                      >
+                        <Camera size={20} />
+                        {procesando ? (progresoLote || 'Procesando...') : 'Subir Foto o PDF Escaneado'}
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          multiple
+                          onChange={manejarEscaneo}
+                          disabled={procesando}
+                          style={{ display: 'none' }}
+                        />
+                      </label>
+
+                      {ultimoResultado && (
+                        <div style={{ marginTop: '20px', padding: '16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #cbd5e1' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                            <div>
+                              <strong style={{ fontSize: '16px' }}>{ultimoResultado.nombre}</strong>
+                              <div style={{ fontSize: '13px', color: '#64748b' }}>RUT: {ultimoResultado.rut}</div>
+                            </div>
+                            <div style={{ textAlign: 'right' }}>
+                              <span style={{ fontSize: '24px', fontWeight: '800', color: ultimoResultado.nota >= 4.0 ? '#16a34a' : '#dc2626' }}>
+                                Nota: {ultimoResultado.nota.toFixed(1)}
+                              </span>
+                              <div style={{ fontSize: '13px', color: '#475569' }}>
+                                {ultimoResultado.puntaje} / {ultimoResultado.total} pts ({ultimoResultado.porcentaje}%)
+                              </div>
                             </div>
                           </div>
+                          {ultimoResultado.imagenProcesada && (
+                            <img
+                              src={ultimoResultado.imagenProcesada}
+                              alt="Hoja procesada"
+                              style={{ maxWidth: '100%', maxHeight: '420px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                            />
+                          )}
                         </div>
-                        {ultimoResultado.imagenProcesada && (
-                          <img
-                            src={ultimoResultado.imagenProcesada}
-                            alt="Hoja procesada"
-                            style={{ maxWidth: '100%', maxHeight: '420px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                          />
-                        )}
+                      )}
+                    </div>
+
+                    {resultadosCurso.length > 0 && (
+                      <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                        <h4 style={{ margin: '0 0 12px 0', fontSize: '16px' }}>
+                          Hojas Escaneadas en esta Evaluación ({resultadosCurso.length})
+                        </h4>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                          <thead style={{ background: '#f1f5f9' }}>
+                            <tr>
+                              <th style={{ padding: '10px', textAlign: 'left' }}>RUT</th>
+                              <th style={{ padding: '10px', textAlign: 'left' }}>Estudiante</th>
+                              <th style={{ padding: '10px', textAlign: 'center' }}>Puntaje</th>
+                              <th style={{ padding: '10px', textAlign: 'center' }}>Nota</th>
+                              <th style={{ padding: '10px', textAlign: 'right' }}>Eliminar Escaneo</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {resultadosCurso.map((r, idx) => (
+                              <tr key={r.id || `${r.rut}-${idx}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{r.rut}</td>
+                                <td style={{ padding: '9px 10px', fontWeight: '600' }}>{r.nombre}</td>
+                                <td style={{ padding: '9px 10px', textAlign: 'center' }}>
+                                  {r.puntaje} / {r.total} ({r.porcentaje}%)
+                                </td>
+                                <td style={{ padding: '9px 10px', textAlign: 'center', fontWeight: '700', color: r.nota >= 4.0 ? '#16a34a' : '#dc2626' }}>
+                                  {Number(r.nota).toFixed(1)}
+                                </td>
+                                <td style={{ padding: '9px 10px', textAlign: 'right' }}>
+                                  <button
+                                    onClick={() => eliminarResultadoIndividual(r.id, r.rut)}
+                                    style={{
+                                      background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca',
+                                      borderRadius: '6px', padding: '4px 10px', cursor: 'pointer',
+                                      fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px'
+                                    }}
+                                  >
+                                    <Trash2 size={13} /> Eliminar
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     )}
                   </div>
                 )}
 
-                {/* SUBVISTA D: EDITAR PAUTA CON DESPLEGABLE DE OAs DEL NIVEL */}
+                {/* SUBVISTA D: EDITAR PAUTA */}
                 {subVistaEval === 'pauta' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                    <PautaEditor
-                      config={config}
-                      setConfig={setConfig}
-                      nivelNombre={nivelActivoNombre}
-                    />
+                    <PautaEditor config={config} setConfig={setConfig} />
                     <button
                       onClick={guardarEvaluacionNube}
                       style={{
@@ -1483,76 +1337,15 @@ export default function App() {
                   </div>
                 )}
 
-                {/* SUBVISTA E: ANÁLISIS, REPORTES Y GESTIÓN DE ESCANEOS INDIVIDUALES */}
+                {/* SUBVISTA E: ANÁLISIS Y REPORTES */}
                 {subVistaEval === 'analisis' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                    <AnalisisPanel resultados={resultadosCurso} config={config} />
-
-                    <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                      <h3 style={{ margin: '0 0 12px 0', fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <Trash2 size={18} color="#dc2626" />
-                        Administrar Hojas Escaneadas ({resultadosCurso.length})
-                      </h3>
-                      <p style={{ margin: '0 0 14px 0', fontSize: '13px', color: '#64748b' }}>
-                        Si algún escaneo quedó duplicado, sin QR o con error de lectura, elimínalo aquí para que el estudiante vuelva a estado pendiente.
-                      </p>
-
-                      {resultadosCurso.length === 0 ? (
-                        <div style={{ padding: '14px', background: '#f8fafc', borderRadius: '8px', color: '#64748b', fontSize: '14px' }}>
-                          No hay hojas escaneadas registradas en esta evaluación.
-                        </div>
-                      ) : (
-                        <div style={{ overflowX: 'auto' }}>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                            <thead style={{ background: '#f1f5f9' }}>
-                              <tr>
-                                <th style={{ padding: '10px', textAlign: 'left' }}>Estudiante</th>
-                                <th style={{ padding: '10px', textAlign: 'left' }}>RUT</th>
-                                <th style={{ padding: '10px', textAlign: 'center' }}>Puntaje</th>
-                                <th style={{ padding: '10px', textAlign: 'center' }}>Logro</th>
-                                <th style={{ padding: '10px', textAlign: 'center' }}>Nota</th>
-                                <th style={{ padding: '10px', textAlign: 'right' }}>Eliminar Escaneo</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {resultadosCurso.map((res, idx) => (
-                                <tr key={res.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                  <td style={{ padding: '9px 10px', fontWeight: '600' }}>{res.nombre}</td>
-                                  <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{res.rut}</td>
-                                  <td style={{ padding: '9px 10px', textAlign: 'center' }}>
-                                    {res.puntaje} / {res.total}
-                                  </td>
-                                  <td style={{ padding: '9px 10px', textAlign: 'center' }}>{res.porcentaje}%</td>
-                                  <td
-                                    style={{
-                                      padding: '9px 10px',
-                                      textAlign: 'center',
-                                      fontWeight: '800',
-                                      color: Number(res.nota) >= 4.0 ? '#16a34a' : '#dc2626'
-                                    }}
-                                  >
-                                    {Number(res.nota).toFixed(1)}
-                                  </td>
-                                  <td style={{ padding: '9px 10px', textAlign: 'right' }}>
-                                    <button
-                                      onClick={() => eliminarResultadoEscaneo(res)}
-                                      style={{
-                                        background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca',
-                                        borderRadius: '6px', padding: '5px 10px', cursor: 'pointer',
-                                        fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px'
-                                      }}
-                                    >
-                                      <Trash2 size={14} /> Eliminar
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <AnalisisPanel
+                    resultados={resultadosCurso}
+                    config={config}
+                    estudiantesCurso={estudiantesCursoEval}
+                    eximidos={config.eximidos}
+                    onActualizarRespuesta={actualizarRespuestaEstudiante}
+                  />
                 )}
               </>
             )}
