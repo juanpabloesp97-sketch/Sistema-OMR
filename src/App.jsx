@@ -102,19 +102,36 @@ export default function App() {
   }, []);
 
   const cargarPerfilUsuario = async (user) => {
-    const { data: perfilDB } = await supabase
+    // Buscar perfil por ID o por correo electrónico
+    let { data: perfilDB } = await supabase
       .from('perfiles')
       .select('*')
-      .eq('id', user.id)
-      .single();
+      .or(`id.eq.${user.id},email.eq.${user.email}`)
+      .maybeSingle();
+
+    const esAdminPrincipal = user.email?.toLowerCase().trim() === 'juan.pabloesp97@gmail.com';
+
+    // Si aún no existe la fila en perfiles, crearla automáticamente
+    if (!perfilDB) {
+      const nuevoPerfil = {
+        id: user.id,
+        email: user.email,
+        nombre: esAdminPrincipal ? 'Juan Pablo Esparza' : (user.user_metadata?.nombre || user.email.split('@')[0]),
+        asignatura: user.user_metadata?.asignatura || 'Matemática',
+        rol: esAdminPrincipal ? 'admin' : 'docente',
+        activo: true
+      };
+      await supabase.from('perfiles').upsert([nuevoPerfil]);
+      perfilDB = nuevoPerfil;
+    }
 
     const perfilFinal = {
       id: user.id,
       email: user.email,
-      nombre: perfilDB?.nombre || user.user_metadata?.nombre || user.email.split('@')[0],
-      asignatura: perfilDB?.asignatura || user.user_metadata?.asignatura || 'Matemática',
+      nombre: perfilDB?.nombre || (esAdminPrincipal ? 'Juan Pablo Esparza' : user.email.split('@')[0]),
+      asignatura: perfilDB?.asignatura || 'Matemática',
       establecimiento: localStorage.getItem('omr_establecimiento') || 'Colegio / Liceo',
-      rol: perfilDB?.rol || 'docente',
+      rol: esAdminPrincipal ? 'admin' : (perfilDB?.rol || 'docente'),
       activo: perfilDB?.activo !== false
     };
 
@@ -194,8 +211,8 @@ export default function App() {
   const valorSelectDestino = config.cursoId
     ? config.cursoId
     : config.nivelId
-    ? `nivel:${config.nivelId}`
-    : '';
+      ? `nivel:${config.nivelId}`
+      : '';
 
   const toggleEximirEstudiante = async (rut) => {
     const rutNorm = rut.trim().toLowerCase();
