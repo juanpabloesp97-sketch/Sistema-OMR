@@ -4,7 +4,7 @@ import QRCode from 'qrcode';
 import {
   FileDown, User, CheckCircle2, Camera, CheckSquare, Square,
   Cloud, BarChart3, Printer, Clock, AlertCircle, Save, Trash2, UserPlus,
-  UserX, UserCheck, Info, Share2, Copy
+  UserX, UserCheck, Share2, Copy, GraduationCap, Users, FolderOpen, ArrowLeft, FilePlus2
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import VisorCurso from './VisorCurso';
@@ -17,7 +17,6 @@ import { convertirPdfAImagenes } from './pdfToImages';
 import { supabase } from './supabaseClient';
 
 export default function App() {
-  // Autenticación y Perfil
   const [sesion, setSesion] = useState(null);
   const [cargandoSesion, setCargandoSesion] = useState(true);
   const [profesor, setProfesor] = useState({
@@ -30,15 +29,20 @@ export default function App() {
     activo: true
   });
 
-  const [vistaActiva, setVistaActiva] = useState('evaluaciones-creadas');
+  // Vistas: 'panel-nivel' | 'panel-curso' | 'visor-curso' | 'detalle-evaluacion' | 'crear-evaluacion' | 'perfil' | 'usuarios'
+  const [vistaActiva, setVistaActiva] = useState('crear-evaluacion');
+  const [nivelActivoId, setNivelActivoId] = useState('');
+  const [cursoActivoId, setCursoActivoId] = useState('');
+  const [modoResultadosNivel, setModoResultadosNivel] = useState(false);
 
-  // Estructura escolar (Niveles y Cursos)
+  // Estructura escolar
   const [niveles, setNiveles] = useState([]);
   const [cursos, setCursos] = useState([]);
-  const [cursoActivoId, setCursoActivoId] = useState('');
 
-  // Evaluaciones y Resultados
-  const [evaluacionesGuardadas, setEvaluacionesGuardadas] = useState([]);
+  // Evaluaciones propias y compartidas
+  const [evaluacionesPropias, setEvaluacionesPropias] = useState([]);
+  const [evaluacionesCompartidas, setEvaluacionesCompartidas] = useState([]);
+
   const [config, setConfig] = useState({
     id: null,
     docenteId: null,
@@ -46,7 +50,7 @@ export default function App() {
     compartida: false,
     cursoId: '',
     nivelId: '',
-    tituloPrueba: 'Evaluación Sumativa N° 1',
+    tituloPrueba: '',
     asignatura: 'Matemática',
     numPreguntas: 30,
     alternativas: 'ABCD',
@@ -57,7 +61,6 @@ export default function App() {
     pauta: {}
   });
 
-  // Sub-pestaña dentro de una evaluación creada
   const [subVistaEval, setSubVistaEval] = useState('avance');
   const [estudiantesCursoEval, setEstudiantesCursoEval] = useState([]);
   const [resultadosCurso, setResultadosCurso] = useState([]);
@@ -69,11 +72,9 @@ export default function App() {
   const [procesando, setProcesando] = useState(false);
   const [progresoLote, setProgresoLote] = useState('');
 
-  // Campos para agregar alumno puntual
   const [rutExtra, setRutExtra] = useState('');
   const [nombreExtra, setNombreExtra] = useState('');
 
-  // Escuchar sesión de Supabase Auth
   useEffect(() => {
     if (!supabase) {
       setCargandoSesion(false);
@@ -102,7 +103,6 @@ export default function App() {
   }, []);
 
   const cargarPerfilUsuario = async (user) => {
-    // Buscar perfil por ID o por correo electrónico
     let { data: perfilDB } = await supabase
       .from('perfiles')
       .select('*')
@@ -111,7 +111,6 @@ export default function App() {
 
     const esAdminPrincipal = user.email?.toLowerCase().trim() === 'juan.pabloesp97@gmail.com';
 
-    // Si aún no existe la fila en perfiles, crearla automáticamente
     if (!perfilDB) {
       const nuevoPerfil = {
         id: user.id,
@@ -143,17 +142,27 @@ export default function App() {
     }
 
     setProfesor(perfilFinal);
+    setConfig((prev) => ({
+      ...prev,
+      docenteId: perfilFinal.id,
+      docenteNombre: perfilFinal.nombre,
+      asignatura: perfilFinal.asignatura || 'Matemática'
+    }));
     setCargandoSesion(false);
 
-    const ultimaEvalId = localStorage.getItem(`omr_ultima_eval_${user.id}`);
-    cargarEstructuraEscolar(perfilFinal);
-    cargarEvaluacionesNube(perfilFinal, ultimaEvalId);
+    const { nivelesVisibles } = await cargarEstructuraEscolar(perfilFinal);
+    if (nivelesVisibles && nivelesVisibles.length > 0) {
+      setNivelActivoId(nivelesVisibles[0].id);
+      setVistaActiva('panel-nivel');
+    } else {
+      setVistaActiva('crear-evaluacion');
+    }
+    await cargarEvaluacionesNube(perfilFinal);
   };
 
   useEffect(() => {
-    if (!sesion?.user) return;
+    if (!sesion?.user || vistaActiva !== 'detalle-evaluacion') return;
     if (config.id) {
-      localStorage.setItem(`omr_ultima_eval_${sesion.user.id}`, String(config.id));
       cargarResultadosNube(config.id);
     } else {
       setResultadosCurso([]);
@@ -168,7 +177,7 @@ export default function App() {
       setEstudiantesCursoEval([]);
       setSeleccionadosImprimir([]);
     }
-  }, [config.id, config.cursoId, config.nivelId, cursos]);
+  }, [config.id, config.cursoId, config.nivelId, vistaActiva, cursos]);
 
   const cerrarSesion = async () => {
     if (supabase) await supabase.auth.signOut();
@@ -211,13 +220,15 @@ export default function App() {
   const valorSelectDestino = config.cursoId
     ? config.cursoId
     : config.nivelId
-      ? `nivel:${config.nivelId}`
-      : '';
+    ? `nivel:${config.nivelId}`
+    : '';
 
   const toggleEximirEstudiante = async (rut) => {
     const rutNorm = rut.trim().toLowerCase();
     const existe = eximidosRuts.includes(rutNorm);
-    const actualizada = existe ? eximidosRuts.filter((r) => r !== rutNorm) : [...(Array.isArray(eximidosRuts) ? eximidosRuts : []), rutNorm];
+    const actualizada = existe
+      ? eximidosRuts.filter((r) => r !== rutNorm)
+      : [...(Array.isArray(eximidosRuts) ? eximidosRuts : []), rutNorm];
     setEximidosRuts(actualizada);
 
     if (config.id && supabase) {
@@ -229,7 +240,7 @@ export default function App() {
   };
 
   const cargarEstructuraEscolar = async (perfilUsuario = profesor) => {
-    if (!supabase) return;
+    if (!supabase) return { nivelesVisibles: [], cursosVisibles: [] };
     const [{ data: niv }, { data: cur }] = await Promise.all([
       supabase.from('niveles').select('*').order('orden', { ascending: true }).order('nombre'),
       supabase.from('cursos').select('*').order('nombre')
@@ -253,45 +264,29 @@ export default function App() {
 
     setNiveles(nivelesVisibles);
     setCursos(cursosVisibles);
+    return { nivelesVisibles, cursosVisibles };
   };
 
-  // Cargar evaluaciones según rol (Admin ve todas; Docente ve las suyas + compartidas)
-  const cargarEvaluacionesNube = async (perfilUsuario = profesor, seleccionarId = null) => {
+  // Cada docente carga únicamente SUS evaluaciones propias (y aparte las compartidas para importar)
+  const cargarEvaluacionesNube = async (perfilUsuario = profesor) => {
     if (!supabase || !perfilUsuario?.id) return;
 
-    let query = supabase
-      .from('evaluaciones')
-      .select('*')
-      .order('created_at', { ascending: false });
+    const [{ data: propias }, { data: compartidas }] = await Promise.all([
+      supabase
+        .from('evaluaciones')
+        .select('*')
+        .eq('docente_id', perfilUsuario.id)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('evaluaciones')
+        .select('*')
+        .eq('compartida', true)
+        .neq('docente_id', perfilUsuario.id)
+        .order('created_at', { ascending: false })
+    ]);
 
-    if (perfilUsuario.rol !== 'admin') {
-      query = query.or(`docente_id.eq.${perfilUsuario.id},compartida.eq.true`);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      console.error('Error cargando evaluaciones:', error);
-      return;
-    }
-
-    if (data) {
-      setEvaluacionesGuardadas(data);
-      if (data.length === 0) {
-        setConfig((prev) => ({ ...prev, id: null, cursoId: '', nivelId: '' }));
-        return;
-      }
-      if (seleccionarId) {
-        const encontrada = data.find((item) => String(item.id) === String(seleccionarId));
-        if (encontrada) {
-          abrirEvaluacion(encontrada, false);
-          return;
-        }
-      }
-      if (!config.id || !data.some((item) => String(item.id) === String(config.id))) {
-        abrirEvaluacion(data[0], false);
-      }
-    }
+    setEvaluacionesPropias(propias || []);
+    setEvaluacionesCompartidas(compartidas || []);
   };
 
   const cargarEstudiantesParaEval = async (cursoId, nivelId) => {
@@ -367,7 +362,7 @@ export default function App() {
     }
   };
 
-  const abrirEvaluacion = (ev, cambiarDeVista = true) => {
+  const abrirEvaluacion = (ev, cursoFiltradoId = '') => {
     setConfig({
       id: ev.id,
       docenteId: ev.docente_id || null,
@@ -386,20 +381,21 @@ export default function App() {
       pauta: ev.pauta || {}
     });
 
+    if (cursoFiltradoId) setCursoActivoId(cursoFiltradoId);
     setEximidosRuts(Array.isArray(ev.eximidos) ? ev.eximidos : []);
     setSubVistaEval('avance');
-    if (cambiarDeVista) setVistaActiva('evaluaciones-creadas');
+    setVistaActiva('detalle-evaluacion');
   };
 
-  const iniciarNuevaEvaluacion = () => {
-    const nivelDefecto = niveles.find((n) => n.nombre.includes('6°')) || niveles[0];
+  const iniciarNuevaEvaluacion = (cursoPreseleccionado = '', nivelPreseleccionado = '') => {
+    const cObj = cursos.find((c) => c.id === cursoPreseleccionado);
     setConfig({
       id: null,
       docenteId: profesor.id,
       docenteNombre: profesor.nombre,
       compartida: false,
-      cursoId: '',
-      nivelId: nivelDefecto ? nivelDefecto.id : '',
+      cursoId: cursoPreseleccionado || '',
+      nivelId: cObj ? cObj.nivel_id : (nivelPreseleccionado || ''),
       tituloPrueba: '',
       asignatura: profesor.asignatura || 'Matemática',
       numPreguntas: 30,
@@ -449,7 +445,7 @@ export default function App() {
         alert('Error al guardar cambios: ' + error.message);
       } else {
         alert('✅ Cambios guardados en la nube.');
-        await cargarEvaluacionesNube(profesor, config.id);
+        await cargarEvaluacionesNube(profesor);
       }
     } else {
       const { data, error } = await supabase
@@ -467,15 +463,13 @@ export default function App() {
       if (error) {
         alert('Error al crear evaluación: ' + error.message);
       } else if (data) {
-        alert('✅ Evaluación creada y guardada en tu cuenta.');
-        await cargarEvaluacionesNube(profesor, data.id);
-        setVistaActiva('evaluaciones-creadas');
-        setSubVistaEval('avance');
+        alert('✅ Evaluación creada correctamente.');
+        await cargarEvaluacionesNube(profesor);
+        abrirEvaluacion(data);
       }
     }
   };
 
-  // Compartir o dejar de compartir evaluación con otros profesores
   const toggleCompartirEvaluacion = async () => {
     if (!supabase || !config.id) return;
     const nuevoEstado = !config.compartida;
@@ -486,45 +480,29 @@ export default function App() {
 
     if (!error) {
       setConfig((prev) => ({ ...prev, compartida: nuevoEstado }));
-      cargarEvaluacionesNube(profesor, config.id);
+      cargarEvaluacionesNube(profesor);
     }
   };
 
-  // Duplicar una evaluación (ideal para usar una prueba compartida en tus propios cursos)
-  const duplicarEvaluacionEnMiCuenta = async () => {
-    if (!supabase || !config.id) return;
-    const nuevoTitulo = prompt('Título para tu copia de esta evaluación:', `${config.tituloPrueba} (Copia)`);
-    if (!nuevoTitulo || !nuevoTitulo.trim()) return;
-
-    const { data, error } = await supabase
-      .from('evaluaciones')
-      .insert([
-        {
-          titulo: nuevoTitulo.trim(),
-          asignatura: config.asignatura,
-          curso_id: null,
-          nivel_id: config.nivelId || null,
-          num_preguntas: Number(config.numPreguntas),
-          alternativas: config.alternativas,
-          nota_min: Number(config.notaMin),
-          nota_max: Number(config.notaMax),
-          nota_aprob: Number(config.notaAprob),
-          exigencia: Number(config.exigencia),
-          pauta: config.pauta,
-          docente_id: profesor.id,
-          docente_nombre: profesor.nombre,
-          compartida: false
-        }
-      ])
-      .select()
-      .single();
-
-    if (error) {
-      alert('Error al duplicar evaluación: ' + error.message);
-    } else if (data) {
-      alert('✅ Evaluación duplicada en tu cuenta. Ahora asígnale tu curso o nivel.');
-      await cargarEvaluacionesNube(profesor, data.id);
-    }
+  const importarPautaCompartida = (evCompartida) => {
+    setConfig({
+      id: null,
+      docenteId: profesor.id,
+      docenteNombre: profesor.nombre,
+      compartida: false,
+      cursoId: '',
+      nivelId: evCompartida.nivel_id || '',
+      tituloPrueba: `${evCompartida.titulo} (Copia)`,
+      asignatura: evCompartida.asignatura || profesor.asignatura,
+      numPreguntas: evCompartida.num_preguntas || 30,
+      alternativas: evCompartida.alternativas || 'ABCD',
+      notaMin: evCompartida.nota_min ?? 1.0,
+      notaMax: evCompartida.nota_max ?? 7.0,
+      notaAprob: evCompartida.nota_aprob ?? 4.0,
+      exigencia: evCompartida.exigencia ?? 60,
+      pauta: evCompartida.pauta || {}
+    });
+    alert(`✅ Pauta "${evCompartida.titulo}" cargada. Elige tu curso o nivel y presiona Guardar Evaluación.`);
   };
 
   const actualizarDestinoEvaluacionNube = async (valorSelect) => {
@@ -551,7 +529,7 @@ export default function App() {
       .eq('id', config.id);
 
     if (!error) {
-      cargarEvaluacionesNube(profesor, config.id);
+      cargarEvaluacionesNube(profesor);
     }
   };
 
@@ -571,9 +549,11 @@ export default function App() {
       return;
     }
 
-    localStorage.removeItem(`omr_ultima_eval_${profesor.id}`);
     setUltimoResultado(null);
     await cargarEvaluacionesNube(profesor);
+    if (cursoActivoId) setVistaActiva('panel-curso');
+    else if (nivelActivoId) setVistaActiva('panel-nivel');
+    else setVistaActiva('crear-evaluacion');
   };
 
   const eliminarResultadoEscaneo = async (resultadoObj) => {
@@ -839,6 +819,7 @@ export default function App() {
     return <Login />;
   }
 
+  // Cálculos de cobertura para detalle-evaluacion
   const rutsRendidos = new Set(resultadosCurso.map((r) => r.rut.trim().toLowerCase()));
   const eximidosSet = new Set(eximidosRuts);
   const estudiantesActivos = estudiantesCursoEval.filter((e) => !eximidosSet.has(e.rut.trim().toLowerCase()));
@@ -854,25 +835,301 @@ export default function App() {
 
   const nivelActivoNombre = obtenerNombreNivelActivo();
   const tieneDestinoAsignado = Boolean(config.cursoId || config.nivelId);
-  const esPropietarioOAdmin = profesor.rol === 'admin' || !config.docenteId || config.docenteId === profesor.id;
+  const nivelActualObj = niveles.find((n) => n.id === nivelActivoId);
+  const cursoActualObj = cursos.find((c) => c.id === cursoActivoId);
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#1e293b' }}>
       <Sidebar
         vistaActiva={vistaActiva}
         setVistaActiva={(v) => {
+          setModoResultadosNivel(false);
           if (v === 'crear-evaluacion') iniciarNuevaEvaluacion();
           else setVistaActiva(v);
         }}
         niveles={niveles}
         cursos={cursos}
+        evaluaciones={evaluacionesPropias}
+        nivelActivoId={nivelActivoId}
+        setNivelActivoId={(id) => {
+          setNivelActivoId(id);
+          setModoResultadosNivel(false);
+        }}
         cursoActivoId={cursoActivoId}
-        setCursoActivoId={setCursoActivoId}
+        setCursoActivoId={(id) => {
+          setCursoActivoId(id);
+          setModoResultadosNivel(false);
+        }}
+        onAbrirEvaluacion={(ev, cId) => abrirEvaluacion(ev, cId)}
         profesor={profesor}
         onCerrarSesion={cerrarSesion}
       />
 
       <main style={{ flex: 1, padding: '24px', maxWidth: '1100px', margin: '0 auto', boxSizing: 'border-box' }}>
+        {/* VISTA NUEVA A: PANEL DE NIVEL (Tarjetas de cada curso + tarjeta Resultados del Nivel) */}
+        {vistaActiva === 'panel-nivel' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+              <div>
+                <div style={{ fontSize: '12px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase' }}>Nivel Escolar</div>
+                <h1 style={{ margin: '2px 0 0 0', fontSize: '24px', color: '#0f172a' }}>
+                  {nivelActualObj ? nivelActualObj.nombre : 'Selecciona un Nivel'}
+                </h1>
+              </div>
+
+              <button
+                onClick={() => iniciarNuevaEvaluacion('', nivelActivoId)}
+                style={{
+                  background: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '9px',
+                  padding: '10px 16px', fontWeight: '700', fontSize: '13.5px', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: '7px'
+                }}
+              >
+                <FilePlus2 size={17} /> Nueva Evaluación en {nivelActualObj?.nombre}
+              </button>
+            </div>
+
+            {/* Cuadros de Cursos + Cuadro Resultados del Nivel */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '16px' }}>
+              {cursos
+                .filter((c) => c.nivel_id === nivelActivoId)
+                .map((curso) => {
+                  const cantEvals = evaluacionesPropias.filter(
+                    (ev) => ev.curso_id === curso.id || (!ev.curso_id && ev.nivel_id === nivelActivoId)
+                  ).length;
+
+                  return (
+                    <div
+                      key={curso.id}
+                      onClick={() => {
+                        setCursoActivoId(curso.id);
+                        setModoResultadosNivel(false);
+                        setVistaActiva('panel-curso');
+                      }}
+                      style={{
+                        background: '#ffffff',
+                        padding: '22px',
+                        borderRadius: '14px',
+                        border: '1px solid #cbd5e1',
+                        cursor: 'pointer',
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between',
+                        gap: '12px',
+                        transition: 'transform 0.15s'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div style={{ width: '42px', height: '42px', borderRadius: '10px', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <GraduationCap size={22} color="#2563eb" />
+                        </div>
+                        <span style={{ fontSize: '12px', fontWeight: '700', background: '#f1f5f9', color: '#475569', padding: '4px 10px', borderRadius: '999px' }}>
+                          {cantEvals} eval.
+                        </span>
+                      </div>
+                      <div>
+                        <h3 style={{ margin: '0 0 4px 0', fontSize: '18px', color: '#0f172a' }}>{curso.nombre}</h3>
+                        <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>
+                          Ver evaluaciones y lista de curso
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+
+              {/* Tarjeta Especial: Resultados del Nivel */}
+              <div
+                onClick={() => setModoResultadosNivel(!modoResultadosNivel)}
+                style={{
+                  background: modoResultadosNivel ? '#1e3a8a' : 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+                  color: modoResultadosNivel ? '#ffffff' : '#0f172a',
+                  padding: '22px',
+                  borderRadius: '14px',
+                  border: '2px solid #3b82f6',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  gap: '12px'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ width: '42px', height: '42px', borderRadius: '10px', background: modoResultadosNivel ? 'rgba(255,255,255,0.15)' : '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <BarChart3 size={22} color="#ffffff" />
+                  </div>
+                  <span style={{ fontSize: '11.5px', fontWeight: '700', background: modoResultadosNivel ? 'rgba(255,255,255,0.2)' : '#bfdbfe', color: modoResultadosNivel ? '#ffffff' : '#1e40af', padding: '4px 10px', borderRadius: '999px' }}>
+                    Consolidado
+                  </span>
+                </div>
+                <div>
+                  <h3 style={{ margin: '0 0 4px 0', fontSize: '18px' }}>Resultados del Nivel</h3>
+                  <p style={{ margin: 0, fontSize: '13px', opacity: 0.85 }}>
+                    Evaluaciones y reportes de todo {nivelActualObj?.nombre}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Si hizo clic en "Resultados del Nivel", muestra sus evaluaciones de nivel */}
+            {modoResultadosNivel && (
+              <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #cbd5e1', marginTop: '6px' }}>
+                <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', color: '#0f172a' }}>
+                  Evaluaciones de {nivelActualObj?.nombre}
+                </h3>
+                {(() => {
+                  const idsCursosNivel = new Set(cursos.filter((c) => c.nivel_id === nivelActivoId).map((c) => c.id));
+                  const evalsNivel = evaluacionesPropias.filter(
+                    (ev) => ev.nivel_id === nivelActivoId || idsCursosNivel.has(ev.curso_id)
+                  );
+                  if (evalsNivel.length === 0) {
+                    return <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Aún no tienes evaluaciones creadas en este nivel.</p>;
+                  }
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {evalsNivel.map((ev) => (
+                        <div
+                          key={ev.id}
+                          onClick={() => abrirEvaluacion(ev)}
+                          style={{
+                            padding: '12px 16px', borderRadius: '9px', border: '1px solid #e2e8f0',
+                            background: '#f8fafc', cursor: 'pointer', display: 'flex',
+                            justifyContent: 'space-between', alignItems: 'center'
+                          }}
+                        >
+                          <div>
+                            <strong style={{ fontSize: '15px', color: '#0f172a' }}>{ev.titulo}</strong>
+                            <div style={{ fontSize: '12.5px', color: '#64748b' }}>
+                              {ev.asignatura} • {ev.num_preguntas} preguntas
+                            </div>
+                          </div>
+                          <span style={{ color: '#2563eb', fontWeight: '700', fontSize: '13px' }}>
+                            Abrir Resultados →
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* VISTA NUEVA B: PANEL DE CURSO (2 cuadros: Evaluaciones y Lista de Curso) */}
+        {vistaActiva === 'panel-curso' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <button
+                onClick={() => setVistaActiva('panel-nivel')}
+                style={{
+                  background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '8px',
+                  padding: '8px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
+                  fontWeight: '600', fontSize: '13px', color: '#334155'
+                }}
+              >
+                <ArrowLeft size={16} /> Volver a {nivelActualObj?.nombre || 'Nivel'}
+              </button>
+              <div>
+                <div style={{ fontSize: '12px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase' }}>
+                  {nivelActualObj?.nombre}
+                </div>
+                <h1 style={{ margin: 0, fontSize: '24px', color: '#0f172a' }}>
+                  {cursoActualObj ? cursoActualObj.nombre : 'Curso'}
+                </h1>
+              </div>
+            </div>
+
+            {/* Los 2 Cuadros del Curso */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
+              {/* Cuadro 1: Evaluaciones del Curso */}
+              <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #cbd5e1', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ width: '46px', height: '46px', borderRadius: '12px', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <FolderOpen size={24} color="#2563eb" />
+                    </div>
+                    <div>
+                      <h2 style={{ margin: 0, fontSize: '19px', color: '#0f172a' }}>Evaluaciones</h2>
+                      <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#64748b' }}>Pruebas asignadas a este curso</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => iniciarNuevaEvaluacion(cursoActivoId, nivelActivoId)}
+                    style={{
+                      background: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px',
+                      padding: '8px 12px', fontSize: '12.5px', fontWeight: '700', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', gap: '5px'
+                    }}
+                  >
+                    <FilePlus2 size={15} /> Crear
+                  </button>
+                </div>
+
+                {(() => {
+                  const evalsCurso = evaluacionesPropias.filter(
+                    (ev) => ev.curso_id === cursoActivoId || (!ev.curso_id && ev.nivel_id === nivelActivoId)
+                  );
+                  if (evalsCurso.length === 0) {
+                    return (
+                      <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '8px', fontSize: '13.5px', color: '#64748b' }}>
+                        Aún no has creado evaluaciones para {cursoActualObj?.nombre}.
+                      </div>
+                    );
+                  }
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {evalsCurso.map((ev) => (
+                        <div
+                          key={ev.id}
+                          onClick={() => abrirEvaluacion(ev, cursoActivoId)}
+                          style={{
+                            padding: '12px 14px', borderRadius: '9px', border: '1px solid #e2e8f0',
+                            background: '#f8fafc', cursor: 'pointer', display: 'flex',
+                            justifyContent: 'space-between', alignItems: 'center'
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: '700', fontSize: '14.5px', color: '#0f172a' }}>{ev.titulo}</div>
+                            <div style={{ fontSize: '12px', color: '#64748b' }}>{ev.asignatura} • {ev.num_preguntas} preg.</div>
+                          </div>
+                          <span style={{ color: '#2563eb', fontWeight: '700', fontSize: '13px' }}>Entrar →</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Cuadro 2: Lista de Curso */}
+              <div
+                onClick={() => setVistaActiva('visor-curso')}
+                style={{
+                  background: '#ffffff', padding: '24px', borderRadius: '14px',
+                  border: '1px solid #cbd5e1', cursor: 'pointer',
+                  display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '16px'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ width: '46px', height: '46px', borderRadius: '12px', background: '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Users size={24} color="#16a34a" />
+                  </div>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: '19px', color: '#0f172a' }}>Lista de Curso</h2>
+                    <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#64748b' }}>
+                      Ver nómina de estudiantes, subir Excel o agregar alumnos
+                    </p>
+                  </div>
+                </div>
+
+                <div style={{ padding: '12px 14px', background: '#f0fdf4', borderRadius: '9px', color: '#166534', fontWeight: '700', fontSize: '13.5px', textAlign: 'right' }}>
+                  Abrir Nómina de {cursoActualObj?.nombre} →
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* VISTA 1: MI PERFIL DOCENTE */}
         {vistaActiva === 'perfil' && (
           <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', maxWidth: '600px' }}>
@@ -884,32 +1141,17 @@ export default function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Correo Institucional</label>
-                <input
-                  type="text"
-                  disabled
-                  value={profesor.email}
-                  style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#64748b', boxSizing: 'border-box' }}
-                />
+                <input type="text" disabled value={profesor.email} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#64748b', boxSizing: 'border-box' }} />
               </div>
 
               <div>
                 <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Nombre del Profesor(a)</label>
-                <input
-                  type="text"
-                  value={profesor.nombre}
-                  onChange={(e) => setProfesor({ ...profesor, nombre: e.target.value })}
-                  style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
-                />
+                <input type="text" value={profesor.nombre} onChange={(e) => setProfesor({ ...profesor, nombre: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
               </div>
 
               <div>
                 <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Asignatura Principal</label>
-                <input
-                  type="text"
-                  value={profesor.asignatura}
-                  onChange={(e) => setProfesor({ ...profesor, asignatura: e.target.value })}
-                  style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
-                />
+                <input type="text" value={profesor.asignatura} onChange={(e) => setProfesor({ ...profesor, asignatura: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
               </div>
 
               <button
@@ -934,27 +1176,65 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA 1B: GESTIÓN DE USUARIOS (SOLO ADMIN / UTP) */}
+        {/* VISTA 1B: GESTIÓN DE USUARIOS */}
         {vistaActiva === 'usuarios' && profesor.rol === 'admin' && (
           <GestionUsuarios perfilActual={profesor} />
         )}
 
-        {/* VISTA 2: VISOR DE CURSOS */}
+        {/* VISTA 2: LISTA DE CURSO / CONFIGURAR NIVELES */}
         {vistaActiva === 'visor-curso' && (
-          <VisorCurso
-            niveles={niveles}
-            cursos={cursos}
-            cursoActivoId={cursoActivoId}
-            setCursoActivoId={setCursoActivoId}
-            onRecargarEstructura={cargarEstructuraEscolar}
-          />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {cursoActivoId && (
+              <div>
+                <button
+                  onClick={() => setVistaActiva('panel-curso')}
+                  style={{
+                    background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '8px',
+                    padding: '8px 12px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px',
+                    fontWeight: '600', fontSize: '13px', color: '#334155'
+                  }}
+                >
+                  <ArrowLeft size={16} /> Volver a {cursoActualObj?.nombre || 'Curso'}
+                </button>
+              </div>
+            )}
+            <VisorCurso
+              niveles={niveles}
+              cursos={cursos}
+              cursoActivoId={cursoActivoId}
+              setCursoActivoId={setCursoActivoId}
+              onRecargarEstructura={() => cargarEstructuraEscolar(profesor)}
+            />
+          </div>
         )}
 
-        {/* VISTA 3: CREAR EVALUACIÓN */}
+        {/* VISTA 3: CREAR EVALUACIÓN (Siempre parte en blanco para el docente actual) */}
         {vistaActiva === 'crear-evaluacion' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-              <h2 style={{ margin: '0 0 16px 0', fontSize: '20px' }}>Crear Nueva Evaluación</h2>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+                <h2 style={{ margin: 0, fontSize: '20px' }}>Crear Nueva Evaluación</h2>
+
+                {evaluacionesCompartidas.length > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <select
+                      defaultValue=""
+                      onChange={(e) => {
+                        const ev = evaluacionesCompartidas.find((x) => String(x.id) === e.target.value);
+                        if (ev) importarPautaCompartida(ev);
+                      }}
+                      style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #93c5fd', background: '#eff6ff', fontSize: '13px', fontWeight: '600', color: '#1e40af' }}
+                    >
+                      <option value="">📥 Importar pauta compartida por un colega...</option>
+                      {evaluacionesCompartidas.map((ev) => (
+                        <option key={ev.id} value={ev.id}>
+                          {ev.titulo} (Prof. {ev.docente_nombre || 'Colega'})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
                 <div>
@@ -1068,496 +1348,458 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA 4: EVALUACIONES CREADAS */}
-        {vistaActiva === 'evaluaciones-creadas' && (
+        {/* VISTA 4: DETALLE DE EVALUACIÓN SELECCIONADA */}
+        {vistaActiva === 'detalle-evaluacion' && config.id && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ background: '#ffffff', padding: '18px 20px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px', alignItems: 'end' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#64748b', marginBottom: '4px' }}>
-                    EVALUACIÓN SELECCIONADA
-                  </label>
-                  <select
-                    value={config.id || ''}
-                    onChange={(e) => {
-                      const ev = evaluacionesGuardadas.find((x) => String(x.id) === e.target.value);
-                      if (ev) abrirEvaluacion(ev, false);
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <button
+                    onClick={() => {
+                      if (cursoActivoId) setVistaActiva('panel-curso');
+                      else if (nivelActivoId) setVistaActiva('panel-nivel');
+                      else setVistaActiva('crear-evaluacion');
                     }}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #94a3b8', fontSize: '14px', fontWeight: '700' }}
+                    style={{
+                      background: '#f1f5f9', border: 'none', borderRadius: '8px',
+                      padding: '8px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px',
+                      fontWeight: '600', fontSize: '13px', color: '#334155'
+                    }}
                   >
-                    {evaluacionesGuardadas.length === 0 && <option value="">Aún no tienes evaluaciones creadas</option>}
-                    {evaluacionesGuardadas.map((ev) => {
-                      const esMia = ev.docente_id === profesor.id;
-                      const etiquetaAutor = esMia ? '' : ` [Compartida por ${ev.docente_nombre || 'Colega'}]`;
-                      return (
-                        <option key={ev.id} value={ev.id}>
-                          {ev.titulo} ({ev.asignatura}){etiquetaAutor}
-                        </option>
-                      );
-                    })}
-                  </select>
+                    <ArrowLeft size={15} /> Volver
+                  </button>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: '19px', color: '#0f172a' }}>{config.tituloPrueba}</h2>
+                    <div style={{ fontSize: '12.5px', color: '#64748b' }}>
+                      {config.asignatura} • {config.numPreguntas} preguntas
+                    </div>
+                  </div>
                 </div>
 
-                {config.id && (
-                  <div>
-                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#2563eb', marginBottom: '4px' }}>
-                      NIVEL O CURSO ASIGNADO
-                    </label>
-                    <select
-                      value={valorSelectDestino}
-                      onChange={(e) => actualizarDestinoEvaluacionNube(e.target.value)}
-                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #3b82f6', background: '#eff6ff', fontSize: '14px', fontWeight: '600' }}
-                    >
-                      <option value="">-- Sin asignar --</option>
-                      <optgroup label="Nivel Completo (todos sus cursos)">
-                        {niveles.map((n) => {
-                          const cantCursos = cursos.filter((c) => c.nivel_id === n.id).length;
-                          return (
-                            <option key={`niv-${n.id}`} value={`nivel:${n.id}`}>
-                              📚 Nivel Completo: {n.nombre} ({cantCursos} curso{cantCursos === 1 ? '' : 's'})
-                            </option>
-                          );
-                        })}
-                      </optgroup>
-                      <optgroup label="Curso Individual">
-                        {cursos.map((c) => {
-                          const niv = niveles.find((n) => n.id === c.nivel_id);
-                          return (
-                            <option key={c.id} value={c.id}>
-                              {niv ? `${niv.nombre} — ` : ''}{c.nombre}
-                            </option>
-                          );
-                        })}
-                      </optgroup>
-                    </select>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <select
+                    value={valorSelectDestino}
+                    onChange={(e) => actualizarDestinoEvaluacionNube(e.target.value)}
+                    style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #3b82f6', background: '#eff6ff', fontSize: '13px', fontWeight: '600' }}
+                  >
+                    <option value="">-- Sin asignar --</option>
+                    <optgroup label="Nivel Completo">
+                      {niveles.map((n) => (
+                        <option key={`niv-${n.id}`} value={`nivel:${n.id}`}>
+                          📚 Nivel: {n.nombre}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Curso Individual">
+                      {cursos.map((c) => {
+                        const niv = niveles.find((n) => n.id === c.nivel_id);
+                        return (
+                          <option key={c.id} value={c.id}>
+                            {niv ? `${niv.nombre} — ` : ''}{c.nombre}
+                          </option>
+                        );
+                      })}
+                    </optgroup>
+                  </select>
+
+                  <button
+                    onClick={() => imprimirHojasPDF(estudiantesActivos)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '6px',
+                      padding: '8px 12px', borderRadius: '8px', border: '1px solid #2563eb',
+                      background: '#eff6ff', color: '#1d4ed8', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
+                    }}
+                  >
+                    <Printer size={15} />
+                    Imprimir ({estudiantesActivos.length})
+                  </button>
+
+                  <button
+                    onClick={toggleCompartirEvaluacion}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '6px',
+                      padding: '8px 12px', borderRadius: '8px',
+                      border: `1px solid ${config.compartida ? '#86efac' : '#cbd5e1'}`,
+                      background: config.compartida ? '#dcfce7' : '#ffffff',
+                      color: config.compartida ? '#166534' : '#475569',
+                      fontWeight: '700', cursor: 'pointer', fontSize: '13px'
+                    }}
+                  >
+                    <Share2 size={15} />
+                    {config.compartida ? 'Compartida' : 'Compartir'}
+                  </button>
+
+                  <button
+                    onClick={eliminarEvaluacion}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '6px',
+                      padding: '8px 10px', borderRadius: '8px', border: '1px solid #fecaca',
+                      background: '#fef2f2', color: '#dc2626', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
+                    }}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {[
+                { id: 'avance', label: 'Avance y Pendientes', icon: Clock },
+                { id: 'imprimir', label: 'Imprimir / Nómina Alumnos', icon: Printer },
+                { id: 'escanear', label: `Escanear Hojas (${resultadosCurso.length})`, icon: Camera },
+                { id: 'pauta', label: 'Editar Pauta y Escala', icon: CheckSquare },
+                { id: 'analisis', label: 'Análisis y Reportes', icon: BarChart3 }
+              ].map((tab) => {
+                const Icono = tab.icon;
+                const activo = subVistaEval === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setSubVistaEval(tab.id)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 14px',
+                      borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: '600', fontSize: '13px',
+                      background: activo ? '#0f172a' : '#e2e8f0',
+                      color: activo ? '#ffffff' : '#334155'
+                    }}
+                  >
+                    <Icono size={16} />
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* SUBVISTA A: AVANCE Y PENDIENTES */}
+            {subVistaEval === 'avance' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {!tieneDestinoAsignado ? (
+                  <div style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', padding: '16px', borderRadius: '12px', fontSize: '14px' }}>
+                    <strong>Esta evaluación aún no tiene un curso o nivel asignado.</strong> Selecciónalo arriba.
                   </div>
+                ) : (
+                  <>
+                    <div
+                      onClick={() => setMostrarPendientesDetalle(!mostrarPendientesDetalle)}
+                      style={{
+                        background: '#ffffff', padding: '24px', borderRadius: '14px',
+                        border: '2px solid #cbd5e1', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        flexWrap: 'wrap', gap: '20px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
+                        <div style={{ position: 'relative', width: '112px', height: '112px' }}>
+                          <svg width="112" height="112" style={{ transform: 'rotate(-90deg)' }}>
+                            <circle cx="56" cy="56" r={radio} stroke="#e2e8f0" strokeWidth="12" fill="transparent" />
+                            <circle
+                              cx="56"
+                              cy="56"
+                              r={radio}
+                              stroke={porcentajeAvance === 100 ? '#16a34a' : '#2563eb'}
+                              strokeWidth="12"
+                              strokeDasharray={circunferencia}
+                              strokeDashoffset={trazoCompletado}
+                              strokeLinecap="round"
+                              fill="transparent"
+                            />
+                          </svg>
+                          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', fontSize: '20px', color: '#0f172a' }}>
+                            {porcentajeAvance}%
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: '12px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase' }}>
+                            Cobertura de Aplicación {config.nivelId && !config.cursoId ? `(Nivel ${nivelActivoNombre})` : ''}
+                          </div>
+                          <h3 style={{ margin: '4px 0', fontSize: '20px', color: '#0f172a' }}>
+                            {estudiantesRendidos.length} de {totalActivos} estudiantes ya rindieron
+                          </h3>
+                          <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>
+                            {estudiantesPendientes.length === 0
+                              ? '¡Completo! Todos los estudiantes activos tienen su hoja escaneada.'
+                              : `Faltan ${estudiantesPendientes.length} estudiante(s) por rendir.`}
+                            {estudiantesEximidos.length > 0 && ` (${estudiantesEximidos.length} eximido(s)).`}
+                          </p>
+                        </div>
+                      </div>
+
+                      {estudiantesPendientes.length > 0 && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            imprimirHojasPDF(estudiantesPendientes, '_Pendientes');
+                          }}
+                          style={{
+                            background: '#ea580c', color: 'white', border: 'none', borderRadius: '10px',
+                            padding: '12px 18px', fontWeight: '700', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px'
+                          }}
+                        >
+                          <Printer size={18} />
+                          Imprimir Pendientes ({estudiantesPendientes.length})
+                        </button>
+                      )}
+                    </div>
+
+                    {mostrarPendientesDetalle && (
+                      <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                        <div>
+                          <h4 style={{ margin: '0 0 12px 0', fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: '#c2410c' }}>
+                            <AlertCircle size={18} />
+                            Estudiantes Pendientes / Ausentes ({estudiantesPendientes.length})
+                          </h4>
+
+                          {estudiantesPendientes.length === 0 ? (
+                            <div style={{ padding: '14px', background: '#f0fdf4', color: '#166534', borderRadius: '8px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <CheckCircle2 size={18} /> No hay estudiantes pendientes.
+                            </div>
+                          ) : (
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                              <thead style={{ background: '#fff7ed' }}>
+                                <tr>
+                                  <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>RUT</th>
+                                  <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>Nombre Estudiante</th>
+                                  <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>Curso</th>
+                                  <th style={{ padding: '10px', textAlign: 'right', borderBottom: '1px solid #fed7aa' }}>Acciones</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {estudiantesPendientes.map((est) => (
+                                  <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                    <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{est.rut}</td>
+                                    <td style={{ padding: '9px 10px', fontWeight: '600' }}>{est.nombre}</td>
+                                    <td style={{ padding: '9px 10px', color: '#64748b' }}>{est.curso_nombre || '-'}</td>
+                                    <td style={{ padding: '9px 10px', textAlign: 'right', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                                      <button
+                                        onClick={() => toggleEximirEstudiante(est.rut)}
+                                        style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                      >
+                                        <UserX size={14} /> Eximir
+                                      </button>
+                                      <button
+                                        onClick={() => imprimirHojasPDF([est], `_${est.rut}`)}
+                                        style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                      >
+                                        <FileDown size={14} /> Hoja
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+
+                        {estudiantesEximidos.length > 0 && (
+                          <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
+                            <h4 style={{ margin: '0 0 10px 0', fontSize: '15px', display: 'flex', alignItems: 'center', gap: '8px', color: '#475569' }}>
+                              <UserX size={17} /> Estudiantes Eximidos ({estudiantesEximidos.length})
+                            </h4>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                              <tbody>
+                                {estudiantesEximidos.map((est) => (
+                                  <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9', background: '#f8fafc' }}>
+                                    <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: '#64748b' }}>{est.rut}</td>
+                                    <td style={{ padding: '8px 10px', color: '#64748b', textDecoration: 'line-through' }}>{est.nombre}</td>
+                                    <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                                      <button
+                                        onClick={() => toggleEximirEstudiante(est.rut)}
+                                        style={{ background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                      >
+                                        <UserCheck size={14} /> Deseximir
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
                 )}
+              </div>
+            )}
 
-                {config.id && (
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    <button
-                      onClick={() => imprimirHojasPDF(estudiantesActivos)}
-                      style={{
-                        flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                        padding: '10px 12px', borderRadius: '8px', border: '1px solid #2563eb',
-                        background: '#eff6ff', color: '#1d4ed8', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
-                      }}
-                    >
-                      <Printer size={16} />
-                      Imprimir ({estudiantesActivos.length})
-                    </button>
+            {/* SUBVISTA B: IMPRIMIR SELECTIVO */}
+            {subVistaEval === 'imprimir' && (
+              <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+                  <h3 style={{ margin: 0, fontSize: '17px' }}>Nómina de Impresión de Hojas de Respuestas</h3>
+                  <button
+                    onClick={() => {
+                      const lista = estudiantesCursoEval.filter((e) => seleccionadosImprimir.includes(e.rut));
+                      imprimirHojasPDF(lista);
+                    }}
+                    style={{ background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px', padding: '10px 18px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                  >
+                    <FileDown size={18} /> Descargar PDF ({seleccionadosImprimir.length})
+                  </button>
+                </div>
 
-                    <button
-                      onClick={duplicarEvaluacionEnMiCuenta}
-                      style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                        padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1',
-                        background: '#f8fafc', color: '#334155', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
-                      }}
-                      title="Crear una copia independiente de esta prueba en tu cuenta"
-                    >
-                      <Copy size={16} />
-                      Duplicar
-                    </button>
+                <form onSubmit={agregarEstudianteAEvaluacion} style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
+                  <input type="text" placeholder="RUT alumno nuevo" value={rutExtra} onChange={(e) => setRutExtra(e.target.value)} style={{ width: '170px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
+                  <input type="text" placeholder="Nombre completo" value={nombreExtra} onChange={(e) => setNombreExtra(e.target.value)} style={{ flex: 1, minWidth: '200px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
+                  <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 14px', cursor: 'pointer', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <UserPlus size={16} /> Agregar al Curso
+                  </button>
+                </form>
 
-                    {esPropietarioOAdmin && (
-                      <>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                  <thead style={{ background: '#f1f5f9' }}>
+                    <tr>
+                      <th style={{ padding: '10px', width: '40px', textAlign: 'center' }}>
                         <button
-                          onClick={toggleCompartirEvaluacion}
-                          style={{
-                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                            padding: '10px 12px', borderRadius: '8px',
-                            border: `1px solid ${config.compartida ? '#86efac' : '#cbd5e1'}`,
-                            background: config.compartida ? '#dcfce7' : '#ffffff',
-                            color: config.compartida ? '#166534' : '#475569',
-                            fontWeight: '700', cursor: 'pointer', fontSize: '13px'
+                          onClick={() => {
+                            if (seleccionadosImprimir.length === estudiantesCursoEval.length) setSeleccionadosImprimir([]);
+                            else setSeleccionadosImprimir(estudiantesCursoEval.map((e) => e.rut));
                           }}
-                          title="Permitir que otros docentes vean y dupliquen esta pauta"
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
                         >
-                          <Share2 size={16} />
-                          {config.compartida ? 'Compartida' : 'Compartir'}
+                          {seleccionadosImprimir.length === estudiantesCursoEval.length && estudiantesCursoEval.length > 0 ? <CheckSquare size={18} color="#2563eb" /> : <Square size={18} color="#64748b" />}
                         </button>
+                      </th>
+                      <th style={{ padding: '10px', textAlign: 'left' }}>RUT</th>
+                      <th style={{ padding: '10px', textAlign: 'left' }}>Estudiante</th>
+                      <th style={{ padding: '10px', textAlign: 'left' }}>Curso</th>
+                      <th style={{ padding: '10px', textAlign: 'center' }}>Estado</th>
+                      <th style={{ padding: '10px', textAlign: 'center' }}>Eximir</th>
+                      <th style={{ padding: '10px', textAlign: 'center' }}>Quitar</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {estudiantesCursoEval.map((est) => {
+                      const marcado = seleccionadosImprimir.includes(est.rut);
+                      const yaRindio = rutsRendidos.has(est.rut.trim().toLowerCase());
+                      const esEximido = eximidosSet.has(est.rut.trim().toLowerCase());
+                      return (
+                        <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9', opacity: esEximido ? 0.65 : 1 }}>
+                          <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                            <button onClick={() => setSeleccionadosImprimir((prev) => prev.includes(est.rut) ? prev.filter((r) => r !== est.rut) : [...prev, est.rut])} style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}>
+                              {marcado ? <CheckSquare size={17} color="#2563eb" /> : <Square size={17} color="#94a3b8" />}
+                            </button>
+                          </td>
+                          <td style={{ padding: '8px 10px', fontFamily: 'monospace' }}>{est.rut}</td>
+                          <td style={{ padding: '8px 10px', fontWeight: '500' }}>{est.nombre}</td>
+                          <td style={{ padding: '8px 10px', color: '#64748b' }}>{est.curso_nombre || '-'}</td>
+                          <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                            <span style={{ padding: '3px 8px', borderRadius: '999px', fontSize: '12px', fontWeight: '600', background: esEximido ? '#e2e8f0' : yaRindio ? '#dcfce7' : '#ffedd5', color: esEximido ? '#475569' : yaRindio ? '#166534' : '#9a3412' }}>
+                              {esEximido ? 'Eximido' : yaRindio ? 'Rindió' : 'Pendiente'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                            <button onClick={() => toggleEximirEstudiante(est.rut)} style={{ background: 'transparent', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '3px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>
+                              {esEximido ? 'Deseximir' : 'Eximir'}
+                            </button>
+                          </td>
+                          <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                            <button onClick={() => quitarEstudianteDeEvaluacion(est.rut)} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
+                              <Trash2 size={15} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
-                        <button
-                          onClick={eliminarEvaluacion}
-                          style={{
-                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                            padding: '10px 12px', borderRadius: '8px', border: '1px solid #fecaca',
-                            background: '#fef2f2', color: '#dc2626', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
-                          }}
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </>
+            {/* SUBVISTA C: ESCANEAR */}
+            {subVistaEval === 'escanear' && (
+              <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                <h3 style={{ margin: '0 0 12px 0', fontSize: '18px' }}>Escanear Hoja de Respuestas o Subir PDF</h3>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', background: procesando ? '#94a3b8' : '#2563eb', color: 'white', padding: '12px 20px', borderRadius: '10px', cursor: procesando ? 'wait' : 'pointer', fontWeight: '700', fontSize: '15px' }}>
+                  <Camera size={20} />
+                  {procesando ? (progresoLote || 'Procesando...') : 'Subir Foto o PDF Escaneado'}
+                  <input type="file" accept="image/*,application/pdf" multiple onChange={manejarEscaneo} disabled={procesando} style={{ display: 'none' }} />
+                </label>
+
+                {ultimoResultado && (
+                  <div style={{ marginTop: '20px', padding: '16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #cbd5e1' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <div>
+                        <strong style={{ fontSize: '16px' }}>{ultimoResultado.nombre}</strong>
+                        <div style={{ fontSize: '13px', color: '#64748b' }}>RUT: {ultimoResultado.rut}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <span style={{ fontSize: '24px', fontWeight: '800', color: ultimoResultado.nota >= 4.0 ? '#16a34a' : '#dc2626' }}>
+                          Nota: {Number(ultimoResultado.nota).toFixed(1)}
+                        </span>
+                        <div style={{ fontSize: '13px', color: '#475569' }}>{ultimoResultado.puntaje} / {ultimoResultado.total} pts ({ultimoResultado.porcentaje}%)</div>
+                      </div>
+                    </div>
+                    {ultimoResultado.imagenProcesada && (
+                      <img src={ultimoResultado.imagenProcesada} alt="Hoja procesada" style={{ maxWidth: '100%', maxHeight: '420px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
                     )}
                   </div>
                 )}
               </div>
-            </div>
+            )}
 
-            {config.id && (
-              <>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  {[
-                    { id: 'avance', label: 'Avance y Pendientes', icon: Clock },
-                    { id: 'imprimir', label: 'Imprimir / Nómina Alumnos', icon: Printer },
-                    { id: 'escanear', label: `Escanear Hojas (${resultadosCurso.length})`, icon: Camera },
-                    { id: 'pauta', label: 'Editar Pauta y Escala', icon: CheckSquare },
-                    { id: 'analisis', label: 'Análisis y Reportes', icon: BarChart3 }
-                  ].map((tab) => {
-                    const Icono = tab.icon;
-                    const activo = subVistaEval === tab.id;
-                    return (
-                      <button
-                        key={tab.id}
-                        onClick={() => setSubVistaEval(tab.id)}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 14px',
-                          borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: '600', fontSize: '13px',
-                          background: activo ? '#0f172a' : '#e2e8f0',
-                          color: activo ? '#ffffff' : '#334155'
-                        }}
-                      >
-                        <Icono size={16} />
-                        {tab.label}
-                      </button>
-                    );
-                  })}
-                </div>
+            {/* SUBVISTA D: EDITAR PAUTA */}
+            {subVistaEval === 'pauta' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <PautaEditor config={config} setConfig={setConfig} nivelNombre={nivelActivoNombre} />
+                <button
+                  onClick={guardarEvaluacionNube}
+                  style={{ background: '#0284c7', color: 'white', border: 'none', borderRadius: '8px', padding: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                >
+                  <Save size={18} /> Guardar Cambios en Pauta
+                </button>
+              </div>
+            )}
 
-                {/* SUBVISTA A: AVANCE Y PENDIENTES */}
-                {subVistaEval === 'avance' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    {!tieneDestinoAsignado ? (
-                      <div style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', padding: '16px', borderRadius: '12px', fontSize: '14px' }}>
-                        <strong>Esta evaluación aún no tiene un curso o nivel asignado.</strong> Selecciónalo arriba en <em>"Nivel o Curso Asignado"</em>.
-                      </div>
-                    ) : (
-                      <>
-                        <div
-                          onClick={() => setMostrarPendientesDetalle(!mostrarPendientesDetalle)}
-                          style={{
-                            background: '#ffffff', padding: '24px', borderRadius: '14px',
-                            border: '2px solid #cbd5e1', cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            flexWrap: 'wrap', gap: '20px'
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
-                            <div style={{ position: 'relative', width: '112px', height: '112px' }}>
-                              <svg width="112" height="112" style={{ transform: 'rotate(-90deg)' }}>
-                                <circle cx="56" cy="56" r={radio} stroke="#e2e8f0" strokeWidth="12" fill="transparent" />
-                                <circle
-                                  cx="56"
-                                  cy="56"
-                                  r={radio}
-                                  stroke={porcentajeAvance === 100 ? '#16a34a' : '#2563eb'}
-                                  strokeWidth="12"
-                                  strokeDasharray={circunferencia}
-                                  strokeDashoffset={trazoCompletado}
-                                  strokeLinecap="round"
-                                  fill="transparent"
-                                />
-                              </svg>
-                              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', fontSize: '20px', color: '#0f172a' }}>
-                                {porcentajeAvance}%
-                              </div>
-                            </div>
+            {/* SUBVISTA E: ANÁLISIS Y REPORTES */}
+            {subVistaEval === 'analisis' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <AnalisisPanel resultados={resultadosCurso} config={config} />
 
-                            <div>
-                              <div style={{ fontSize: '12px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase' }}>
-                                Cobertura de Aplicación {config.nivelId && !config.cursoId ? `(Nivel ${nivelActivoNombre})` : ''}
-                              </div>
-                              <h3 style={{ margin: '4px 0', fontSize: '20px', color: '#0f172a' }}>
-                                {estudiantesRendidos.length} de {totalActivos} estudiantes ya rindieron
-                              </h3>
-                              <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>
-                                {estudiantesPendientes.length === 0
-                                  ? '¡Completo! Todos los estudiantes activos tienen su hoja escaneada.'
-                                  : `Faltan ${estudiantesPendientes.length} estudiante(s) por rendir.`}
-                                {estudiantesEximidos.length > 0 && ` (${estudiantesEximidos.length} eximido(s)).`}
-                              </p>
-                            </div>
-                          </div>
-
-                          {estudiantesPendientes.length > 0 && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                imprimirHojasPDF(estudiantesPendientes, '_Pendientes');
-                              }}
-                              style={{
-                                background: '#ea580c', color: 'white', border: 'none', borderRadius: '10px',
-                                padding: '12px 18px', fontWeight: '700', cursor: 'pointer',
-                                display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px'
-                              }}
-                            >
-                              <Printer size={18} />
-                              Imprimir Pendientes ({estudiantesPendientes.length})
-                            </button>
-                          )}
-                        </div>
-
-                        {mostrarPendientesDetalle && (
-                          <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                            <div>
-                              <h4 style={{ margin: '0 0 12px 0', fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: '#c2410c' }}>
-                                <AlertCircle size={18} />
-                                Estudiantes Pendientes / Ausentes ({estudiantesPendientes.length})
-                              </h4>
-
-                              {estudiantesPendientes.length === 0 ? (
-                                <div style={{ padding: '14px', background: '#f0fdf4', color: '#166534', borderRadius: '8px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                  <CheckCircle2 size={18} /> No hay estudiantes pendientes.
-                                </div>
-                              ) : (
-                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                                  <thead style={{ background: '#fff7ed' }}>
-                                    <tr>
-                                      <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>RUT</th>
-                                      <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>Nombre Estudiante</th>
-                                      <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #fed7aa' }}>Curso</th>
-                                      <th style={{ padding: '10px', textAlign: 'right', borderBottom: '1px solid #fed7aa' }}>Acciones</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {estudiantesPendientes.map((est) => (
-                                      <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                        <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{est.rut}</td>
-                                        <td style={{ padding: '9px 10px', fontWeight: '600' }}>{est.nombre}</td>
-                                        <td style={{ padding: '9px 10px', color: '#64748b' }}>{est.curso_nombre || '-'}</td>
-                                        <td style={{ padding: '9px 10px', textAlign: 'right', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                                          <button
-                                            onClick={() => toggleEximirEstudiante(est.rut)}
-                                            style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                                          >
-                                            <UserX size={14} /> Eximir
-                                          </button>
-                                          <button
-                                            onClick={() => imprimirHojasPDF([est], `_${est.rut}`)}
-                                            style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                                          >
-                                            <FileDown size={14} /> Hoja
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              )}
-                            </div>
-
-                            {estudiantesEximidos.length > 0 && (
-                              <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
-                                <h4 style={{ margin: '0 0 10px 0', fontSize: '15px', display: 'flex', alignItems: 'center', gap: '8px', color: '#475569' }}>
-                                  <UserX size={17} /> Estudiantes Eximidos ({estudiantesEximidos.length})
-                                </h4>
-                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                                  <tbody>
-                                    {estudiantesEximidos.map((est) => (
-                                      <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9', background: '#f8fafc' }}>
-                                        <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: '#64748b' }}>{est.rut}</td>
-                                        <td style={{ padding: '8px 10px', color: '#64748b', textDecoration: 'line-through' }}>{est.nombre}</td>
-                                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>
-                                          <button
-                                            onClick={() => toggleEximirEstudiante(est.rut)}
-                                            style={{ background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                                          >
-                                            <UserCheck size={14} /> Deseximir
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                )}
-
-                {/* SUBVISTA B: IMPRIMIR SELECTIVO */}
-                {subVistaEval === 'imprimir' && (
-                  <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
-                      <h3 style={{ margin: 0, fontSize: '17px' }}>Nómina de Impresión de Hojas de Respuestas</h3>
-                      <button
-                        onClick={() => {
-                          const lista = estudiantesCursoEval.filter((e) => seleccionadosImprimir.includes(e.rut));
-                          imprimirHojasPDF(lista);
-                        }}
-                        style={{ background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px', padding: '10px 18px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
-                      >
-                        <FileDown size={18} /> Descargar PDF ({seleccionadosImprimir.length})
-                      </button>
-                    </div>
-
-                    <form onSubmit={agregarEstudianteAEvaluacion} style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
-                      <input type="text" placeholder="RUT alumno nuevo" value={rutExtra} onChange={(e) => setRutExtra(e.target.value)} style={{ width: '170px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
-                      <input type="text" placeholder="Nombre completo" value={nombreExtra} onChange={(e) => setNombreExtra(e.target.value)} style={{ flex: 1, minWidth: '200px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
-                      <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 14px', cursor: 'pointer', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <UserPlus size={16} /> Agregar al Curso
-                      </button>
-                    </form>
-
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                      <thead style={{ background: '#f1f5f9' }}>
-                        <tr>
-                          <th style={{ padding: '10px', width: '40px', textAlign: 'center' }}>
-                            <button
-                              onClick={() => {
-                                if (seleccionadosImprimir.length === estudiantesCursoEval.length) setSeleccionadosImprimir([]);
-                                else setSeleccionadosImprimir(estudiantesCursoEval.map((e) => e.rut));
-                              }}
-                              style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
-                            >
-                              {seleccionadosImprimir.length === estudiantesCursoEval.length && estudiantesCursoEval.length > 0 ? <CheckSquare size={18} color="#2563eb" /> : <Square size={18} color="#64748b" />}
-                            </button>
-                          </th>
-                          <th style={{ padding: '10px', textAlign: 'left' }}>RUT</th>
-                          <th style={{ padding: '10px', textAlign: 'left' }}>Estudiante</th>
-                          <th style={{ padding: '10px', textAlign: 'left' }}>Curso</th>
-                          <th style={{ padding: '10px', textAlign: 'center' }}>Estado</th>
-                          <th style={{ padding: '10px', textAlign: 'center' }}>Eximir</th>
-                          <th style={{ padding: '10px', textAlign: 'center' }}>Quitar</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {estudiantesCursoEval.map((est) => {
-                          const marcado = seleccionadosImprimir.includes(est.rut);
-                          const yaRindio = rutsRendidos.has(est.rut.trim().toLowerCase());
-                          const esEximido = eximidosSet.has(est.rut.trim().toLowerCase());
-                          return (
-                            <tr key={est.rut} style={{ borderBottom: '1px solid #f1f5f9', opacity: esEximido ? 0.65 : 1 }}>
-                              <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                                <button onClick={() => setSeleccionadosImprimir((prev) => prev.includes(est.rut) ? prev.filter((r) => r !== est.rut) : [...prev, est.rut])} style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}>
-                                  {marcado ? <CheckSquare size={17} color="#2563eb" /> : <Square size={17} color="#94a3b8" />}
-                                </button>
-                              </td>
-                              <td style={{ padding: '8px 10px', fontFamily: 'monospace' }}>{est.rut}</td>
-                              <td style={{ padding: '8px 10px', fontWeight: '500' }}>{est.nombre}</td>
-                              <td style={{ padding: '8px 10px', color: '#64748b' }}>{est.curso_nombre || '-'}</td>
-                              <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                                <span style={{ padding: '3px 8px', borderRadius: '999px', fontSize: '12px', fontWeight: '600', background: esEximido ? '#e2e8f0' : yaRindio ? '#dcfce7' : '#ffedd5', color: esEximido ? '#475569' : yaRindio ? '#166534' : '#9a3412' }}>
-                                  {esEximido ? 'Eximido' : yaRindio ? 'Rindió' : 'Pendiente'}
-                                </span>
-                              </td>
-                              <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                                <button onClick={() => toggleEximirEstudiante(est.rut)} style={{ background: 'transparent', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '3px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>
-                                  {esEximido ? 'Deseximir' : 'Eximir'}
-                                </button>
-                              </td>
-                              <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                                <button onClick={() => quitarEstudianteDeEvaluacion(est.rut)} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
-                                  <Trash2 size={15} />
+                <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                  <h3 style={{ margin: '0 0 12px 0', fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Trash2 size={18} color="#dc2626" />
+                    Administrar Hojas Escaneadas ({resultadosCurso.length})
+                  </h3>
+                  {resultadosCurso.length === 0 ? (
+                    <div style={{ padding: '14px', background: '#f8fafc', borderRadius: '8px', color: '#64748b', fontSize: '14px' }}>No hay hojas escaneadas registradas.</div>
+                  ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                        <thead style={{ background: '#f1f5f9' }}>
+                          <tr>
+                            <th style={{ padding: '10px', textAlign: 'left' }}>Estudiante</th>
+                            <th style={{ padding: '10px', textAlign: 'left' }}>RUT</th>
+                            <th style={{ padding: '10px', textAlign: 'center' }}>Puntaje</th>
+                            <th style={{ padding: '10px', textAlign: 'center' }}>Logro</th>
+                            <th style={{ padding: '10px', textAlign: 'center' }}>Nota</th>
+                            <th style={{ padding: '10px', textAlign: 'right' }}>Eliminar</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {resultadosCurso.map((res, idx) => (
+                            <tr key={res.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                              <td style={{ padding: '9px 10px', fontWeight: '600' }}>{res.nombre}</td>
+                              <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{res.rut}</td>
+                              <td style={{ padding: '9px 10px', textAlign: 'center' }}>{res.puntaje} / {res.total}</td>
+                              <td style={{ padding: '9px 10px', textAlign: 'center' }}>{res.porcentaje}%</td>
+                              <td style={{ padding: '9px 10px', textAlign: 'center', fontWeight: '800', color: Number(res.nota) >= 4.0 ? '#16a34a' : '#dc2626' }}>{Number(res.nota).toFixed(1)}</td>
+                              <td style={{ padding: '9px 10px', textAlign: 'right' }}>
+                                <button onClick={() => eliminarResultadoEscaneo(res)} style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                  <Trash2 size={14} /> Eliminar
                                 </button>
                               </td>
                             </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                {/* SUBVISTA C: ESCANEAR */}
-                {subVistaEval === 'escanear' && (
-                  <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                    <h3 style={{ margin: '0 0 12px 0', fontSize: '18px' }}>Escanear Hoja de Respuestas o Subir PDF</h3>
-                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', background: procesando ? '#94a3b8' : '#2563eb', color: 'white', padding: '12px 20px', borderRadius: '10px', cursor: procesando ? 'wait' : 'pointer', fontWeight: '700', fontSize: '15px' }}>
-                      <Camera size={20} />
-                      {procesando ? (progresoLote || 'Procesando...') : 'Subir Foto o PDF Escaneado'}
-                      <input type="file" accept="image/*,application/pdf" multiple onChange={manejarEscaneo} disabled={procesando} style={{ display: 'none' }} />
-                    </label>
-
-                    {ultimoResultado && (
-                      <div style={{ marginTop: '20px', padding: '16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #cbd5e1' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                          <div>
-                            <strong style={{ fontSize: '16px' }}>{ultimoResultado.nombre}</strong>
-                            <div style={{ fontSize: '13px', color: '#64748b' }}>RUT: {ultimoResultado.rut}</div>
-                          </div>
-                          <div style={{ textAlign: 'right' }}>
-                            <span style={{ fontSize: '24px', fontWeight: '800', color: ultimoResultado.nota >= 4.0 ? '#16a34a' : '#dc2626' }}>
-                              Nota: {Number(ultimoResultado.nota).toFixed(1)}
-                            </span>
-                            <div style={{ fontSize: '13px', color: '#475569' }}>{ultimoResultado.puntaje} / {ultimoResultado.total} pts ({ultimoResultado.porcentaje}%)</div>
-                          </div>
-                        </div>
-                        {ultimoResultado.imagenProcesada && (
-                          <img src={ultimoResultado.imagenProcesada} alt="Hoja procesada" style={{ maxWidth: '100%', maxHeight: '420px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* SUBVISTA D: EDITAR PAUTA */}
-                {subVistaEval === 'pauta' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                    <PautaEditor config={config} setConfig={setConfig} nivelNombre={nivelActivoNombre} />
-                    {esPropietarioOAdmin && (
-                      <button
-                        onClick={guardarEvaluacionNube}
-                        style={{ background: '#0284c7', color: 'white', border: 'none', borderRadius: '8px', padding: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-                      >
-                        <Save size={18} /> Guardar Cambios en Pauta
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {/* SUBVISTA E: ANÁLISIS Y REPORTES */}
-                {subVistaEval === 'analisis' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                    <AnalisisPanel resultados={resultadosCurso} config={config} />
-
-                    <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                      <h3 style={{ margin: '0 0 12px 0', fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <Trash2 size={18} color="#dc2626" />
-                        Administrar Hojas Escaneadas ({resultadosCurso.length})
-                      </h3>
-                      {resultadosCurso.length === 0 ? (
-                        <div style={{ padding: '14px', background: '#f8fafc', borderRadius: '8px', color: '#64748b', fontSize: '14px' }}>No hay hojas escaneadas registradas.</div>
-                      ) : (
-                        <div style={{ overflowX: 'auto' }}>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                            <thead style={{ background: '#f1f5f9' }}>
-                              <tr>
-                                <th style={{ padding: '10px', textAlign: 'left' }}>Estudiante</th>
-                                <th style={{ padding: '10px', textAlign: 'left' }}>RUT</th>
-                                <th style={{ padding: '10px', textAlign: 'center' }}>Puntaje</th>
-                                <th style={{ padding: '10px', textAlign: 'center' }}>Logro</th>
-                                <th style={{ padding: '10px', textAlign: 'center' }}>Nota</th>
-                                <th style={{ padding: '10px', textAlign: 'right' }}>Eliminar</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {resultadosCurso.map((res, idx) => (
-                                <tr key={res.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                  <td style={{ padding: '9px 10px', fontWeight: '600' }}>{res.nombre}</td>
-                                  <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{res.rut}</td>
-                                  <td style={{ padding: '9px 10px', textAlign: 'center' }}>{res.puntaje} / {res.total}</td>
-                                  <td style={{ padding: '9px 10px', textAlign: 'center' }}>{res.porcentaje}%</td>
-                                  <td style={{ padding: '9px 10px', textAlign: 'center', fontWeight: '800', color: Number(res.nota) >= 4.0 ? '#16a34a' : '#dc2626' }}>{Number(res.nota).toFixed(1)}</td>
-                                  <td style={{ padding: '9px 10px', textAlign: 'right' }}>
-                                    <button onClick={() => eliminarResultadoEscaneo(res)} style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                      <Trash2 size={14} /> Eliminar
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
-                  </div>
-                )}
-              </>
+                  )}
+                </div>
+              </div>
             )}
           </div>
         )}

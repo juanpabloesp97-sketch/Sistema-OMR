@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
-  User, GraduationCap, FilePlus2, FolderOpen,
-  ChevronDown, ChevronRight, Menu, X, CheckSquare, Users, LogOut
+  User, GraduationCap, FilePlus2,
+  ChevronDown, ChevronRight, Menu, X, CheckSquare, Users, LogOut, BarChart3
 } from 'lucide-react';
 
 export default function Sidebar({
@@ -9,20 +9,34 @@ export default function Sidebar({
   setVistaActiva,
   niveles,
   cursos,
+  evaluaciones,
+  nivelActivoId,
+  setNivelActivoId,
   cursoActivoId,
   setCursoActivoId,
+  onAbrirEvaluacion,
   profesor,
   onCerrarSesion
 }) {
   const [colapsado, setColapsado] = useState(false);
-  const [menuCursosAbierto, setMenuCursosAbierto] = useState(true);
-  const [menuEvalAbierto, setMenuEvalAbierto] = useState(true);
+  // Todos los menús parten cerrados por defecto
+  const [menuCursosAbierto, setMenuCursosAbierto] = useState(false);
   const [nivelesAbiertos, setNivelesAbiertos] = useState({});
+  const [cursosAbiertos, setCursosAbiertos] = useState({});
 
-  const toggleNivel = (nivelId) => {
+  const toggleNivel = (e, nivelId) => {
+    e.stopPropagation();
     setNivelesAbiertos((prev) => ({
       ...prev,
-      [nivelId]: prev[nivelId] === undefined ? false : !prev[nivelId]
+      [nivelId]: !prev[nivelId]
+    }));
+  };
+
+  const toggleCurso = (e, cursoId) => {
+    e.stopPropagation();
+    setCursosAbiertos((prev) => ({
+      ...prev,
+      [cursoId]: !prev[cursoId]
     }));
   };
 
@@ -49,7 +63,7 @@ export default function Sidebar({
   return (
     <aside
       style={{
-        width: colapsado ? '68px' : '265px',
+        width: colapsado ? '68px' : '270px',
         minHeight: '100vh',
         background: '#ffffff',
         borderRight: '1px solid #e2e8f0',
@@ -113,7 +127,7 @@ export default function Sidebar({
           </span>
         </button>
 
-        {/* 1B. Gestión de Cuentas (Solo visible para Admin / UTP) */}
+        {/* 2. Cuentas Docentes (Solo Admin / UTP) */}
         {esAdmin && (
           <button
             onClick={() => setVistaActiva('usuarios')}
@@ -127,7 +141,7 @@ export default function Sidebar({
           </button>
         )}
 
-        {/* 2. Mis Cursos */}
+        {/* 3. Mis Cursos (Desplegable, cerrado al inicio) */}
         <div style={{ marginTop: '4px' }}>
           <button
             onClick={() => {
@@ -138,7 +152,12 @@ export default function Sidebar({
                 setMenuCursosAbierto(!menuCursosAbierto);
               }
             }}
-            style={estiloBotonMenu(vistaActiva === 'visor-curso')}
+            style={estiloBotonMenu(
+              vistaActiva === 'visor-curso' ||
+              vistaActiva === 'panel-nivel' ||
+              vistaActiva === 'panel-curso' ||
+              vistaActiva === 'detalle-evaluacion'
+            )}
             title="Mis Cursos"
           >
             <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -149,7 +168,7 @@ export default function Sidebar({
           </button>
 
           {!colapsado && menuCursosAbierto && (
-            <div style={{ paddingLeft: '14px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            <div style={{ paddingLeft: '10px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
               <button
                 onClick={() => {
                   setCursoActivoId('');
@@ -157,62 +176,162 @@ export default function Sidebar({
                 }}
                 style={{
                   ...estiloBotonMenu(vistaActiva === 'visor-curso' && !cursoActivoId),
-                  fontSize: '13px',
-                  padding: '7px 10px'
+                  fontSize: '12.5px',
+                  padding: '7px 10px',
+                  color: '#475569'
                 }}
               >
-                <span>⚙️ Niveles y Cursos</span>
+                <span>⚙️ Configurar Niveles y Cursos</span>
               </button>
 
               {niveles.map((nivel) => {
                 const cursosDelNivel = cursos.filter((c) => c.nivel_id === nivel.id);
-                const abierto = nivelesAbiertos[nivel.id] !== false;
+                const nivelAbierto = Boolean(nivelesAbiertos[nivel.id]);
+                const esNivelSeleccionado = vistaActiva === 'panel-nivel' && nivelActivoId === nivel.id;
+
                 return (
                   <div key={nivel.id} style={{ marginTop: '2px' }}>
-                    <button
-                      onClick={() => toggleNivel(nivel.id)}
+                    {/* Fila del Nivel: clic en texto abre tarjetas del nivel; clic en flecha despliega cursos */}
+                    <div
                       style={{
-                        width: '100%',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        padding: '6px 10px',
-                        border: 'none',
-                        background: 'transparent',
-                        color: '#475569',
-                        fontSize: '12px',
-                        fontWeight: '700',
-                        cursor: 'pointer',
-                        textTransform: 'uppercase'
+                        borderRadius: '6px',
+                        background: esNivelSeleccionado ? '#eff6ff' : 'transparent'
                       }}
                     >
-                      <span>{nivel.nombre}</span>
-                      {abierto ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                    </button>
+                      <button
+                        onClick={() => {
+                          setNivelActivoId(nivel.id);
+                          setCursoActivoId('');
+                          setVistaActiva('panel-nivel');
+                        }}
+                        style={{
+                          flex: 1,
+                          padding: '6px 8px',
+                          border: 'none',
+                          background: 'transparent',
+                          color: esNivelSeleccionado ? '#1d4ed8' : '#334155',
+                          fontSize: '12.5px',
+                          fontWeight: '700',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          textTransform: 'uppercase'
+                        }}
+                      >
+                        {nivel.nombre}
+                      </button>
+                      <button
+                        onClick={(e) => toggleNivel(e, nivel.id)}
+                        style={{
+                          padding: '6px 8px',
+                          border: 'none',
+                          background: 'transparent',
+                          color: '#64748b',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center'
+                        }}
+                      >
+                        {nivelAbierto ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      </button>
+                    </div>
 
-                    {abierto && (
-                      <div style={{ paddingLeft: '10px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    {/* Subnivel: Cursos del Nivel */}
+                    {nivelAbierto && (
+                      <div style={{ paddingLeft: '10px', display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '2px' }}>
                         {cursosDelNivel.length === 0 ? (
                           <span style={{ fontSize: '11.5px', color: '#94a3b8', padding: '4px 8px' }}>
                             Sin cursos
                           </span>
                         ) : (
-                          cursosDelNivel.map((curso) => (
-                            <button
-                              key={curso.id}
-                              onClick={() => {
-                                setCursoActivoId(curso.id);
-                                setVistaActiva('visor-curso');
-                              }}
-                              style={{
-                                ...estiloBotonMenu(vistaActiva === 'visor-curso' && cursoActivoId === curso.id),
-                                fontSize: '13px',
-                                padding: '6px 10px'
-                              }}
-                            >
-                              <span>{curso.nombre}</span>
-                            </button>
-                          ))
+                          cursosDelNivel.map((curso) => {
+                            const evalsDelCurso = evaluaciones.filter(
+                              (ev) => ev.curso_id === curso.id || (!ev.curso_id && ev.nivel_id === nivel.id)
+                            );
+                            const cursoAbierto = Boolean(cursosAbiertos[curso.id]);
+                            const esCursoSeleccionado = vistaActiva === 'panel-curso' && cursoActivoId === curso.id;
+
+                            return (
+                              <div key={curso.id}>
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    borderRadius: '6px',
+                                    background: esCursoSeleccionado ? '#eff6ff' : 'transparent'
+                                  }}
+                                >
+                                  <button
+                                    onClick={() => {
+                                      setNivelActivoId(nivel.id);
+                                      setCursoActivoId(curso.id);
+                                      setVistaActiva('panel-curso');
+                                    }}
+                                    style={{
+                                      flex: 1,
+                                      padding: '6px 8px',
+                                      border: 'none',
+                                      background: 'transparent',
+                                      color: esCursoSeleccionado ? '#1d4ed8' : '#334155',
+                                      fontSize: '13px',
+                                      fontWeight: esCursoSeleccionado ? '700' : '500',
+                                      cursor: 'pointer',
+                                      textAlign: 'left'
+                                    }}
+                                  >
+                                    {curso.nombre}
+                                  </button>
+                                  {evalsDelCurso.length > 0 && (
+                                    <button
+                                      onClick={(e) => toggleCurso(e, curso.id)}
+                                      style={{
+                                        padding: '5px 8px',
+                                        border: 'none',
+                                        background: 'transparent',
+                                        color: '#64748b',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center'
+                                      }}
+                                    >
+                                      {cursoAbierto ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                                    </button>
+                                  )}
+                                </div>
+
+                                {/* Subnivel: Evaluaciones dentro de cada curso */}
+                                {cursoAbierto && evalsDelCurso.length > 0 && (
+                                  <div style={{ paddingLeft: '12px', display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '2px', borderLeft: '1px solid #e2e8f0', marginLeft: '8px' }}>
+                                    {evalsDelCurso.map((ev) => (
+                                      <button
+                                        key={`${curso.id}-${ev.id}`}
+                                        onClick={() => onAbrirEvaluacion(ev, curso.id)}
+                                        style={{
+                                          padding: '5px 8px',
+                                          border: 'none',
+                                          borderRadius: '5px',
+                                          background: 'transparent',
+                                          color: '#475569',
+                                          fontSize: '12px',
+                                          cursor: 'pointer',
+                                          textAlign: 'left',
+                                          whiteSpace: 'nowrap',
+                                          overflow: 'hidden',
+                                          textOverflow: 'ellipsis'
+                                        }}
+                                        title={ev.titulo}
+                                      >
+                                        • {ev.titulo}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
                         )}
                       </div>
                     )}
@@ -223,62 +342,26 @@ export default function Sidebar({
           )}
         </div>
 
-        {/* 3. Evaluaciones */}
-        <div style={{ marginTop: '4px' }}>
-          <button
-            onClick={() => {
-              if (colapsado) {
-                setColapsado(false);
-                setMenuEvalAbierto(true);
-              } else {
-                setMenuEvalAbierto(!menuEvalAbierto);
-              }
-            }}
-            style={estiloBotonMenu(vistaActiva === 'evaluaciones-creadas' || vistaActiva === 'crear-evaluacion')}
-            title="Evaluaciones"
-          >
-            <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <FolderOpen size={18} />
-              {!colapsado && <span>Evaluaciones</span>}
-            </span>
-            {!colapsado && (menuEvalAbierto ? <ChevronDown size={16} /> : <ChevronRight size={16} />)}
-          </button>
-
-          {!colapsado && menuEvalAbierto && (
-            <div style={{ paddingLeft: '14px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              <button
-                onClick={() => setVistaActiva('evaluaciones-creadas')}
-                style={{
-                  ...estiloBotonMenu(vistaActiva === 'evaluaciones-creadas'),
-                  fontSize: '13px',
-                  padding: '8px 10px'
-                }}
-              >
-                <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <FolderOpen size={15} />
-                  <span>Evaluaciones Creadas</span>
-                </span>
-              </button>
-
-              <button
-                onClick={() => setVistaActiva('crear-evaluacion')}
-                style={{
-                  ...estiloBotonMenu(vistaActiva === 'crear-evaluacion'),
-                  fontSize: '13px',
-                  padding: '8px 10px'
-                }}
-              >
-                <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <FilePlus2 size={15} />
-                  <span>Crear Evaluación</span>
-                </span>
-              </button>
-            </div>
-          )}
-        </div>
+        {/* 4. Botón único: Crear Evaluación */}
+        <button
+          onClick={() => setVistaActiva('crear-evaluacion')}
+          style={{
+            ...estiloBotonMenu(vistaActiva === 'crear-evaluacion'),
+            marginTop: '6px',
+            background: vistaActiva === 'crear-evaluacion' ? '#2563eb' : '#f1f5f9',
+            color: vistaActiva === 'crear-evaluacion' ? '#ffffff' : '#0f172a',
+            fontWeight: '700'
+          }}
+          title="Crear Nueva Evaluación"
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <FilePlus2 size={18} />
+            {!colapsado && <span>Crear Evaluación</span>}
+          </span>
+        </button>
       </nav>
 
-      {/* Pie de barra lateral con perfil activo y botón cerrar sesión */}
+      {/* Pie de barra lateral */}
       {!colapsado && (
         <div style={{ padding: '12px 14px', borderTop: '1px solid #e2e8f0', background: '#f8fafc', display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
