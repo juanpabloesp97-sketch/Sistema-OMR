@@ -220,8 +220,8 @@ export default function App() {
   const valorSelectDestino = config.cursoId
     ? config.cursoId
     : config.nivelId
-    ? `nivel:${config.nivelId}`
-    : '';
+      ? `nivel:${config.nivelId}`
+      : '';
 
   const toggleEximirEstudiante = async (rut) => {
     const rutNorm = rut.trim().toLowerCase();
@@ -595,14 +595,24 @@ export default function App() {
       return;
     }
 
+    const cursoGlobalObj = cursos.find((c) => c.id === (cursoActivoId || config.cursoId));
+
+    // Ordenar primero por curso (6° A, 6° B, 6° C) y luego alfabéticamente por Apellido Apellido Nombres
+    const listaOrdenada = [...listaEstudiantesAImprimir].sort((a, b) => {
+      const cursoA = (a.curso_nombre || (cursoGlobalObj ? cursoGlobalObj.nombre : '')).trim();
+      const cursoB = (b.curso_nombre || (cursoGlobalObj ? cursoGlobalObj.nombre : '')).trim();
+      const cmpCurso = cursoA.localeCompare(cursoB, 'es', { numeric: true, sensitivity: 'base' });
+      if (cmpCurso !== 0) return cmpCurso;
+      return (a.nombre || '').trim().localeCompare((b.nombre || '').trim(), 'es', { sensitivity: 'base' });
+    });
+
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
     const opciones = config.alternativas.split('');
     const totalPreg = Number(config.numPreguntas);
-    const cursoGlobalObj = cursos.find((c) => c.id === config.cursoId);
 
-    for (let i = 0; i < listaEstudiantesAImprimir.length; i++) {
+    for (let i = 0; i < listaOrdenada.length; i++) {
       if (i > 0) doc.addPage();
-      const est = listaEstudiantesAImprimir[i];
+      const est = listaOrdenada[i];
       const nombreCursoEst = est.curso_nombre || (cursoGlobalObj ? cursoGlobalObj.nombre : '');
 
       doc.setFillColor(0, 0, 0);
