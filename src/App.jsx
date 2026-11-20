@@ -75,7 +75,7 @@ export default function App() {
   const [rutExtra, setRutExtra] = useState('');
   const [nombreExtra, setNombreExtra] = useState('');
 
-  // Guardar ubicación actual en localStorage para no perderla al recargar o volver a entrar
+  // Guardar ubicación actual para no perderla al cambiar de pestaña o recargar
   useEffect(() => {
     if (!profesor?.id) return;
     const estadoNav = {
@@ -107,7 +107,6 @@ export default function App() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSesion(session);
-      // Evitar que al cambiar de pestaña en Chrome (TOKEN_REFRESHED) se reinicie la vista
       if (event === 'TOKEN_REFRESHED') return;
 
       if (session?.user) {
@@ -171,7 +170,6 @@ export default function App() {
     const { nivelesVisibles, cursosVisibles } = await cargarEstructuraEscolar(perfilFinal);
     const { propias } = await cargarEvaluacionesNube(perfilFinal);
 
-    // Restaurar la última ubicación exacta del docente
     let restaurado = false;
     try {
       const guardadoRaw = localStorage.getItem(`omr_nav_estado_${user.id}`);
@@ -200,8 +198,8 @@ export default function App() {
           restaurado = true;
         }
       }
-    } catch (e) {
-      console.warn('No se pudo restaurar navegación:', e);
+    } catch (err) {
+      console.warn('No se pudo restaurar navegación:', err);
     }
 
     if (!restaurado) {
@@ -213,6 +211,33 @@ export default function App() {
       }
     }
   };
+
+  useEffect(() => {
+    if (!sesion?.user || vistaActiva !== 'detalle-evaluacion') return;
+    if (config.id) {
+      cargarResultadosNube(config.id);
+    } else {
+      setResultadosCurso([]);
+      setEximidosRuts([]);
+    }
+
+    if (contextoAperturaEval === 'curso' && cursoActivoId) {
+      cargarEstudiantesParaEval(cursoActivoId, null);
+    } else if (config.cursoId) {
+      cargarEstudiantesParaEval(config.cursoId, null);
+    } else if (config.nivelId) {
+      cargarEstudiantesParaEval(null, config.nivelId);
+    } else {
+      setEstudiantesCursoEval([]);
+      setSeleccionadosImprimir([]);
+    }
+  }, [config.id, config.cursoId, config.nivelId, vistaActiva, contextoAperturaEval, cursoActivoId, cursos]);
+
+  const cerrarSesion = async () => {
+    if (supabase) await supabase.auth.signOut();
+    setSesion(null);
+  };
+
   const obtenerNombreNivelActivo = () => {
     if (config.cursoId) {
       const c = cursos.find((cur) => cur.id === config.cursoId);
@@ -249,8 +274,8 @@ export default function App() {
   const valorSelectDestino = config.cursoId
     ? config.cursoId
     : config.nivelId
-      ? `nivel:${config.nivelId}`
-      : '';
+    ? `nivel:${config.nivelId}`
+    : '';
 
   const toggleEximirEstudiante = async (rut) => {
     const rutNorm = rut.trim().toLowerCase();
@@ -297,7 +322,7 @@ export default function App() {
   };
 
   const cargarEvaluacionesNube = async (perfilUsuario = profesor) => {
-    if (!supabase || !perfilUsuario?.id) return;
+    if (!supabase || !perfilUsuario?.id) return { propias: [], compartidas: [] };
 
     const [{ data: propias }, { data: compartidas }] = await Promise.all([
       supabase
@@ -315,6 +340,7 @@ export default function App() {
 
     setEvaluacionesPropias(propias || []);
     setEvaluacionesCompartidas(compartidas || []);
+    return { propias: propias || [], compartidas: compartidas || [] };
   };
 
   const cargarEstudiantesParaEval = async (cursoId, nivelId) => {
@@ -605,7 +631,6 @@ export default function App() {
     setSeleccionadosImprimir((prev) => prev.filter((r) => r !== rut));
   };
 
-  // PDF en blanco agrupado por curso y ordenado por Apellido Apellido Nombres
   const imprimirHojasPDF = async (listaEstudiantesAImprimir, sufijoArchivo = '') => {
     if (!listaEstudiantesAImprimir || listaEstudiantesAImprimir.length === 0) {
       alert('No hay estudiantes seleccionados para imprimir.');
@@ -681,7 +706,6 @@ export default function App() {
     doc.save(`Hojas_${config.tituloPrueba.replace(/\s+/g, '_')}${sufijoArchivo}.pdf`);
   };
 
-  // PDF DE DEVOLUCIÓN CORREGIDA (individual o masivo ordenado por curso y apellido)
   const descargarHojasCorregidasPDF = (listaResultadosAExportar, sufijoArchivo = '') => {
     if (!listaResultadosAExportar || listaResultadosAExportar.length === 0) {
       alert('No hay resultados corregidos para descargar.');
@@ -705,7 +729,6 @@ export default function App() {
       const res = listaOrdenada[i];
       const respuestasAl = res.respuestas || {};
 
-      // Encabezado limpio de retroalimentación
       doc.setDrawColor(200, 210, 225);
       doc.setFillColor(248, 250, 252);
       doc.roundedRect(14, 12, 188, 32, 3, 3, 'FD');
@@ -721,7 +744,6 @@ export default function App() {
       doc.text(`RUT: ${res.rut}   |   Curso: ${res.curso || '-'}   |   Asignatura: ${config.asignatura}`, 18, 33);
       doc.text(`Puntaje: ${res.puntaje} / ${res.total} pts (${res.porcentaje}%)   |   Exigencia: ${config.exigencia}%`, 18, 39);
 
-      // Recuadro de Nota Final a la derecha
       const aprobado = Number(res.nota) >= Number(config.notaAprob || 4.0);
       doc.setFillColor(aprobado ? 22 : 220, aprobado ? 163 : 38, aprobado ? 74 : 38);
       doc.roundedRect(166, 15, 32, 26, 2.5, 2.5, 'F');
@@ -732,13 +754,11 @@ export default function App() {
       doc.setFontSize(16);
       doc.text(Number(res.nota).toFixed(1), 182, 34, { align: 'center' });
 
-      // Leyenda superior
       doc.setTextColor(71, 85, 105);
       doc.setFontSize(8);
       doc.setFont('helvetica', 'normal');
       doc.text('Leyenda:   [Verde] Correcta    |    [Rojo] Incorrecta    |    [Azul] Respuesta Correcta    |    BLANCO / DOBLE', 18, 49);
 
-      // Grilla de burbujas corregidas (2 columnas de hasta 25 preguntas)
       for (let p = 1; p <= totalPreg; p++) {
         const col = p <= 25 ? 0 : 1;
         const fila = p <= 25 ? p - 1 : p - 26;
@@ -759,12 +779,10 @@ export default function App() {
           const cx = baseX + idx * 10;
 
           if (respMarcada === letra) {
-            // Burbuja pintada por el estudiante (Verde si acertó, Roja si falló)
             doc.setFillColor(esCorrecta ? 22 : 220, esCorrecta ? 163 : 38, esCorrecta ? 74 : 38);
             doc.circle(cx, baseY, 2.7, 'F');
             doc.setTextColor(255, 255, 255);
           } else if (correcta === letra && !esCorrecta) {
-            // Anillo azul indicando cuál era la correcta
             doc.setDrawColor(37, 99, 235);
             doc.setLineWidth(0.6);
             doc.circle(cx, baseY, 2.7, 'S');
@@ -781,7 +799,6 @@ export default function App() {
           doc.text(letra, cx - 1.2, baseY + 0.9);
         });
 
-        // Indicador a la derecha de la fila: Ticket, Cruz, BLANCO o DOBLE
         const estadoX = baseX + opciones.length * 10 + 1;
         doc.setFontSize(7.5);
         doc.setFont('helvetica', 'bold');
@@ -986,8 +1003,8 @@ export default function App() {
     contextoAperturaEval === 'curso' && cursoActivoId
       ? cursoActivoId
       : filtroCursoEnNivel !== 'TODOS'
-        ? filtroCursoEnNivel
-        : '';
+      ? filtroCursoEnNivel
+      : '';
 
   const cursoFiltroObj = cursos.find((c) => c.id === cursoFiltroEfectivo);
 
@@ -999,10 +1016,10 @@ export default function App() {
 
   const resultadosVisiblesEval = cursoFiltroEfectivo
     ? resultadosCurso.filter(
-      (r) =>
-        (cursoFiltroObj && r.curso === cursoFiltroObj.nombre) ||
-        rutsPermitidosFiltro.has(r.rut.trim().toLowerCase())
-    )
+        (r) =>
+          (cursoFiltroObj && r.curso === cursoFiltroObj.nombre) ||
+          rutsPermitidosFiltro.has(r.rut.trim().toLowerCase())
+      )
     : resultadosCurso;
 
   const rutsRendidos = new Set(resultadosVisiblesEval.map((r) => r.rut.trim().toLowerCase()));
@@ -1960,7 +1977,7 @@ export default function App() {
               </div>
             )}
 
-            {/* SUBVISTA E: ANÁLISIS Y REPORTES (Con descarga PDF individual y masiva de devolución) */}
+            {/* SUBVISTA E: ANÁLISIS Y REPORTES */}
             {subVistaEval === 'analisis' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <AnalisisPanel resultados={resultadosVisiblesEval} config={config} />
