@@ -4,7 +4,7 @@ import QRCode from 'qrcode';
 import {
   FileDown, User, CheckCircle2, Camera, CheckSquare, Square,
   Cloud, BarChart3, Printer, Clock, AlertCircle, Save, Trash2, UserPlus,
-  UserX, UserCheck, Share2, GraduationCap, Users, FolderOpen, ArrowLeft, FilePlus2, Filter
+  UserX, UserCheck, Share2, GraduationCap, Users, FolderOpen, ArrowLeft, FilePlus2, Filter, Eye
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import VisorCurso from './VisorCurso';
@@ -34,7 +34,6 @@ export default function App() {
   const [cursoActivoId, setCursoActivoId] = useState('');
   const [modoResultadosNivel, setModoResultadosNivel] = useState(false);
 
-  // 'curso' (cuando entras desde un curso específico) | 'nivel' (cuando entras desde Evaluaciones del Nivel)
   const [contextoAperturaEval, setContextoAperturaEval] = useState('curso');
   const [filtroCursoEnNivel, setFiltroCursoEnNivel] = useState('TODOS');
 
@@ -579,7 +578,7 @@ export default function App() {
     setSeleccionadosImprimir((prev) => prev.filter((r) => r !== rut));
   };
 
-  // PDF agrupado por curso (6° A, 6° B, 6° C) y ordenado alfabéticamente por Apellido Apellido Nombres
+  // PDF en blanco agrupado por curso y ordenado por Apellido Apellido Nombres
   const imprimirHojasPDF = async (listaEstudiantesAImprimir, sufijoArchivo = '') => {
     if (!listaEstudiantesAImprimir || listaEstudiantesAImprimir.length === 0) {
       alert('No hay estudiantes seleccionados para imprimir.');
@@ -655,20 +654,153 @@ export default function App() {
     doc.save(`Hojas_${config.tituloPrueba.replace(/\s+/g, '_')}${sufijoArchivo}.pdf`);
   };
 
+  // PDF DE DEVOLUCIÓN CORREGIDA (individual o masivo ordenado por curso y apellido)
+  const descargarHojasCorregidasPDF = (listaResultadosAExportar, sufijoArchivo = '') => {
+    if (!listaResultadosAExportar || listaResultadosAExportar.length === 0) {
+      alert('No hay resultados corregidos para descargar.');
+      return;
+    }
+
+    const listaOrdenada = [...listaResultadosAExportar].sort((a, b) => {
+      const cursoA = (a.curso || '').trim();
+      const cursoB = (b.curso || '').trim();
+      const cmpCurso = cursoA.localeCompare(cursoB, 'es', { numeric: true, sensitivity: 'base' });
+      if (cmpCurso !== 0) return cmpCurso;
+      return (a.nombre || '').trim().localeCompare((b.nombre || '').trim(), 'es', { sensitivity: 'base' });
+    });
+
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+    const opciones = config.alternativas.split('');
+    const totalPreg = Number(config.numPreguntas);
+
+    for (let i = 0; i < listaOrdenada.length; i++) {
+      if (i > 0) doc.addPage();
+      const res = listaOrdenada[i];
+      const respuestasAl = res.respuestas || {};
+
+      // Encabezado limpio de retroalimentación
+      doc.setDrawColor(200, 210, 225);
+      doc.setFillColor(248, 250, 252);
+      doc.roundedRect(14, 12, 188, 32, 3, 3, 'FD');
+
+      doc.setTextColor(15, 23, 42);
+      doc.setFontSize(13);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`${config.tituloPrueba} — Hoja Corregida`, 18, 20);
+
+      doc.setFontSize(9.5);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Estudiante: ${res.nombre}`, 18, 27);
+      doc.text(`RUT: ${res.rut}   |   Curso: ${res.curso || '-'}   |   Asignatura: ${config.asignatura}`, 18, 33);
+      doc.text(`Puntaje: ${res.puntaje} / ${res.total} pts (${res.porcentaje}%)   |   Exigencia: ${config.exigencia}%`, 18, 39);
+
+      // Recuadro de Nota Final a la derecha
+      const aprobado = Number(res.nota) >= Number(config.notaAprob || 4.0);
+      doc.setFillColor(aprobado ? 22 : 220, aprobado ? 163 : 38, aprobado ? 74 : 38);
+      doc.roundedRect(166, 15, 32, 26, 2.5, 2.5, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(8.5);
+      doc.setFont('helvetica', 'bold');
+      doc.text('NOTA FINAL', 182, 22, { align: 'center' });
+      doc.setFontSize(16);
+      doc.text(Number(res.nota).toFixed(1), 182, 34, { align: 'center' });
+
+      // Leyenda superior
+      doc.setTextColor(71, 85, 105);
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      doc.text('Leyenda:   [Verde] Correcta    |    [Rojo] Incorrecta    |    [Azul] Respuesta Correcta    |    BLANCO / DOBLE', 18, 49);
+
+      // Grilla de burbujas corregidas (2 columnas de hasta 25 preguntas)
+      for (let p = 1; p <= totalPreg; p++) {
+        const col = p <= 25 ? 0 : 1;
+        const fila = p <= 25 ? p - 1 : p - 26;
+        const baseX = col === 0 ? 24 : 116;
+        const baseY = 56 + fila * 7.8;
+
+        const respMarcada = respuestasAl[p] || '';
+        const itemPauta = config.pauta[p];
+        const correcta = typeof itemPauta === 'object' ? itemPauta?.correcta : itemPauta;
+        const esCorrecta = Boolean(correcta) && respMarcada === correcta;
+
+        doc.setTextColor(15, 23, 42);
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`${p}.`, baseX - 7, baseY + 1.2);
+
+        opciones.forEach((letra, idx) => {
+          const cx = baseX + idx * 10;
+
+          if (respMarcada === letra) {
+            // Burbuja pintada por el estudiante (Verde si acertó, Roja si falló)
+            doc.setFillColor(esCorrecta ? 22 : 220, esCorrecta ? 163 : 38, esCorrecta ? 74 : 38);
+            doc.circle(cx, baseY, 2.7, 'F');
+            doc.setTextColor(255, 255, 255);
+          } else if (correcta === letra && !esCorrecta) {
+            // Anillo azul indicando cuál era la correcta
+            doc.setDrawColor(37, 99, 235);
+            doc.setLineWidth(0.6);
+            doc.circle(cx, baseY, 2.7, 'S');
+            doc.setTextColor(37, 99, 235);
+          } else {
+            doc.setDrawColor(160, 170, 185);
+            doc.setLineWidth(0.25);
+            doc.circle(cx, baseY, 2.7, 'S');
+            doc.setTextColor(100, 116, 139);
+          }
+
+          doc.setFontSize(7.5);
+          doc.setFont('helvetica', 'bold');
+          doc.text(letra, cx - 1.2, baseY + 0.9);
+        });
+
+        // Indicador a la derecha de la fila: Ticket, Cruz, BLANCO o DOBLE
+        const estadoX = baseX + opciones.length * 10 + 1;
+        doc.setFontSize(7.5);
+        doc.setFont('helvetica', 'bold');
+
+        if (respMarcada === '') {
+          doc.setTextColor(100, 116, 139);
+          doc.text('X  BLANCO', estadoX, baseY + 1);
+        } else if (respMarcada === 'DOBLE') {
+          doc.setTextColor(217, 119, 6);
+          doc.text('X  DOBLE', estadoX, baseY + 1);
+        } else if (esCorrecta) {
+          doc.setTextColor(22, 163, 74);
+          doc.text('OK', estadoX, baseY + 1);
+        } else if (correcta) {
+          doc.setTextColor(220, 38, 38);
+          doc.text(`X (${correcta})`, estadoX, baseY + 1);
+        }
+      }
+    }
+
+    doc.save(`Corregidas_${config.tituloPrueba.replace(/\s+/g, '_')}${sufijoArchivo}.pdf`);
+  };
+
+  // Fórmula oficial compatible con escaladenotas.cl
   const calcularNota = (puntaje, total) => {
-    if (total <= 0) return config.notaMin;
-    const pAprob = (Number(config.exigencia) / 100) * total;
-    const nMin = Number(config.notaMin);
-    const nMax = Number(config.notaMax);
-    const nAprob = Number(config.notaAprob);
+    const nMin = Number(config.notaMin ?? 1.0);
+    const nMax = Number(config.notaMax ?? 7.0);
+    const nAprob = Number(config.notaAprob ?? 4.0);
+    const exig = Number(config.exigencia ?? 60);
+
+    if (total <= 0) return nMin;
+    const p = Math.max(0, Math.min(Number(puntaje), Number(total)));
+    const pAprob = Number(total) * (exig / 100);
 
     let nota = nMin;
-    if (puntaje < pAprob) {
-      nota = nMin + ((nAprob - nMin) * puntaje) / (pAprob || 1);
+    if (p < pAprob) {
+      nota = pAprob > 0 ? nMin + ((nAprob - nMin) * p) / pAprob : nMin;
     } else {
-      nota = nAprob + ((nMax - nAprob) * (puntaje - pAprob)) / (total - pAprob || 1);
+      const tramoSuperior = Number(total) - pAprob;
+      nota = tramoSuperior > 0
+        ? nAprob + ((nMax - nAprob) * (p - pAprob)) / tramoSuperior
+        : nMax;
     }
-    return Number(Math.min(nMax, Math.max(nMin, nota)).toFixed(1));
+
+    const redondeada = Math.round((nota + Number.EPSILON) * 10) / 10;
+    return Math.min(nMax, Math.max(nMin, redondeada));
   };
 
   const manejarEscaneo = async (e) => {
@@ -823,7 +955,6 @@ export default function App() {
   const cursoActualObj = cursos.find((c) => c.id === cursoActivoId);
   const cursosDelNivelActivo = cursos.filter((c) => c.nivel_id === (config.nivelId || nivelActivoId));
 
-  // Filtrado estricto: si entras desde un Curso, muestra SOLO ese curso; si entras desde Evaluaciones del Nivel, permite filtrar
   const cursoFiltroEfectivo =
     contextoAperturaEval === 'curso' && cursoActivoId
       ? cursoActivoId
@@ -1038,7 +1169,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA B: PANEL DE CURSO (2 cuadros: Lista de Curso + Evaluaciones solo de este curso) */}
+        {/* VISTA B: PANEL DE CURSO */}
         {vistaActiva === 'panel-curso' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -1063,7 +1194,6 @@ export default function App() {
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
-              {/* Cuadro 1: Lista de Curso */}
               <div
                 onClick={() => setVistaActiva('visor-curso')}
                 style={{
@@ -1089,7 +1219,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Cuadro 2: Evaluaciones (solo de este curso) */}
               <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #cbd5e1', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -1371,7 +1500,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA 4: DETALLE DE EVALUACIÓN (Vista Curso estricta o Vista Nivel con filtro) */}
+        {/* VISTA 4: DETALLE DE EVALUACIÓN */}
         {vistaActiva === 'detalle-evaluacion' && config.id && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ background: '#ffffff', padding: '18px 20px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -1734,7 +1863,23 @@ export default function App() {
             {/* SUBVISTA C: ESCANEAR */}
             {subVistaEval === 'escanear' && (
               <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                <h3 style={{ margin: '0 0 12px 0', fontSize: '18px' }}>Escanear Hoja de Respuestas o Subir PDF</h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>
+                  <h3 style={{ margin: 0, fontSize: '18px' }}>Escanear Hoja de Respuestas o Subir PDF</h3>
+
+                  {resultadosVisiblesEval.length > 0 && (
+                    <button
+                      onClick={() => descargarHojasCorregidasPDF(resultadosVisiblesEval, cursoFiltroObj ? `_${cursoFiltroObj.nombre.replace(/\s+/g, '_')}` : '')}
+                      style={{
+                        background: '#0f172a', color: '#ffffff', border: 'none', borderRadius: '8px',
+                        padding: '9px 14px', fontSize: '13px', fontWeight: '700', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', gap: '6px'
+                      }}
+                    >
+                      <FileDown size={16} /> Descargar Todas las Corregidas ({resultadosVisiblesEval.length})
+                    </button>
+                  )}
+                </div>
+
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', background: procesando ? '#94a3b8' : '#2563eb', color: 'white', padding: '12px 20px', borderRadius: '10px', cursor: procesando ? 'wait' : 'pointer', fontWeight: '700', fontSize: '15px' }}>
                   <Camera size={20} />
                   {procesando ? (progresoLote || 'Procesando...') : 'Subir Foto o PDF Escaneado'}
@@ -1743,20 +1888,32 @@ export default function App() {
 
                 {ultimoResultado && (
                   <div style={{ marginTop: '20px', padding: '16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #cbd5e1' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>
                       <div>
                         <strong style={{ fontSize: '16px' }}>{ultimoResultado.nombre}</strong>
                         <div style={{ fontSize: '13px', color: '#64748b' }}>RUT: {ultimoResultado.rut}</div>
                       </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <span style={{ fontSize: '24px', fontWeight: '800', color: ultimoResultado.nota >= 4.0 ? '#16a34a' : '#dc2626' }}>
-                          Nota: {Number(ultimoResultado.nota).toFixed(1)}
-                        </span>
-                        <div style={{ fontSize: '13px', color: '#475569' }}>{ultimoResultado.puntaje} / {ultimoResultado.total} pts ({ultimoResultado.porcentaje}%)</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                        <button
+                          onClick={() => descargarHojasCorregidasPDF([ultimoResultado], `_${ultimoResultado.rut}`)}
+                          style={{
+                            background: '#16a34a', color: '#ffffff', border: 'none', borderRadius: '8px',
+                            padding: '8px 12px', fontSize: '13px', fontWeight: '700', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: '6px'
+                          }}
+                        >
+                          <FileDown size={16} /> Descargar Esta Hoja en PDF
+                        </button>
+                        <div style={{ textAlign: 'right' }}>
+                          <span style={{ fontSize: '24px', fontWeight: '800', color: Number(ultimoResultado.nota) >= Number(config.notaAprob || 4.0) ? '#16a34a' : '#dc2626' }}>
+                            Nota: {Number(ultimoResultado.nota).toFixed(1)}
+                          </span>
+                          <div style={{ fontSize: '13px', color: '#475569' }}>{ultimoResultado.puntaje} / {ultimoResultado.total} pts ({ultimoResultado.porcentaje}%)</div>
+                        </div>
                       </div>
                     </div>
                     {ultimoResultado.imagenProcesada && (
-                      <img src={ultimoResultado.imagenProcesada} alt="Hoja procesada" style={{ maxWidth: '100%', maxHeight: '420px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
+                      <img src={ultimoResultado.imagenProcesada} alt="Hoja procesada" style={{ maxWidth: '100%', maxHeight: '520px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
                     )}
                   </div>
                 )}
@@ -1776,16 +1933,32 @@ export default function App() {
               </div>
             )}
 
-            {/* SUBVISTA E: ANÁLISIS Y REPORTES */}
+            {/* SUBVISTA E: ANÁLISIS Y REPORTES (Con descarga PDF individual y masiva de devolución) */}
             {subVistaEval === 'analisis' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <AnalisisPanel resultados={resultadosVisiblesEval} config={config} />
 
                 <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                  <h3 style={{ margin: '0 0 12px 0', fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Trash2 size={18} color="#dc2626" />
-                    Administrar Hojas Escaneadas ({resultadosVisiblesEval.length})
-                  </h3>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>
+                    <h3 style={{ margin: 0, fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Eye size={18} color="#2563eb" />
+                      Hojas Corregidas para Devolución a Estudiantes ({resultadosVisiblesEval.length})
+                    </h3>
+
+                    {resultadosVisiblesEval.length > 0 && (
+                      <button
+                        onClick={() => descargarHojasCorregidasPDF(resultadosVisiblesEval, cursoFiltroObj ? `_${cursoFiltroObj.nombre.replace(/\s+/g, '_')}` : '')}
+                        style={{
+                          background: '#16a34a', color: '#ffffff', border: 'none', borderRadius: '8px',
+                          padding: '9px 14px', fontSize: '13px', fontWeight: '700', cursor: 'pointer',
+                          display: 'flex', alignItems: 'center', gap: '6px'
+                        }}
+                      >
+                        <FileDown size={16} /> Descargar PDF Todas ({resultadosVisiblesEval.length})
+                      </button>
+                    )}
+                  </div>
+
                   {resultadosVisiblesEval.length === 0 ? (
                     <div style={{ padding: '14px', background: '#f8fafc', borderRadius: '8px', color: '#64748b', fontSize: '14px' }}>No hay hojas escaneadas registradas en esta vista.</div>
                   ) : (
@@ -1799,7 +1972,7 @@ export default function App() {
                             <th style={{ padding: '10px', textAlign: 'center' }}>Puntaje</th>
                             <th style={{ padding: '10px', textAlign: 'center' }}>Logro</th>
                             <th style={{ padding: '10px', textAlign: 'center' }}>Nota</th>
-                            <th style={{ padding: '10px', textAlign: 'right' }}>Eliminar</th>
+                            <th style={{ padding: '10px', textAlign: 'right' }}>Acciones</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1810,10 +1983,16 @@ export default function App() {
                               <td style={{ padding: '9px 10px', color: '#64748b' }}>{res.curso || '-'}</td>
                               <td style={{ padding: '9px 10px', textAlign: 'center' }}>{res.puntaje} / {res.total}</td>
                               <td style={{ padding: '9px 10px', textAlign: 'center' }}>{res.porcentaje}%</td>
-                              <td style={{ padding: '9px 10px', textAlign: 'center', fontWeight: '800', color: Number(res.nota) >= 4.0 ? '#16a34a' : '#dc2626' }}>{Number(res.nota).toFixed(1)}</td>
-                              <td style={{ padding: '9px 10px', textAlign: 'right' }}>
+                              <td style={{ padding: '9px 10px', textAlign: 'center', fontWeight: '800', color: Number(res.nota) >= Number(config.notaAprob || 4.0) ? '#16a34a' : '#dc2626' }}>{Number(res.nota).toFixed(1)}</td>
+                              <td style={{ padding: '9px 10px', textAlign: 'right', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                                <button
+                                  onClick={() => descargarHojasCorregidasPDF([res], `_${res.rut}`)}
+                                  style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                >
+                                  <FileDown size={14} /> PDF Alumno
+                                </button>
                                 <button onClick={() => eliminarResultadoEscaneo(res)} style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                  <Trash2 size={14} /> Eliminar
+                                  <Trash2 size={14} />
                                 </button>
                               </td>
                             </tr>

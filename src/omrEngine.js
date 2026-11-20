@@ -9,7 +9,6 @@ async function obtenerOpenCV() {
   });
 }
 
-// Lee el QR buscando primero en un recorte ampliado de la esquina superior derecha
 function leerCodigoQR(canvas) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const { width, height } = canvas;
@@ -55,6 +54,48 @@ function ordenarEsquinas(puntos) {
   return [supIzq, supDer, infDer, infIzq];
 }
 
+// Dibuja un ticket verde (✓) en coordenadas (x, y)
+function dibujarTicketVerde(ctx, x, y) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(x - 14, y + 2);
+  ctx.lineTo(x - 4, y + 13);
+  ctx.lineTo(x + 17, y - 12);
+  ctx.lineWidth = 6;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#16a34a';
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Dibuja una cruz roja (✗) en coordenadas (x, y)
+function dibujarCruzRoja(ctx, x, y) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(x - 12, y - 12);
+  ctx.lineTo(x + 12, y + 12);
+  ctx.moveTo(x + 12, y - 12);
+  ctx.lineTo(x - 12, y + 12);
+  ctx.lineWidth = 6;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = '#dc2626';
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Dibuja una etiqueta de estado (BLANCO / DOBLE) al costado de la fila
+function dibujarEtiquetaEstado(ctx, x, y, texto, colorFondo) {
+  ctx.save();
+  ctx.font = 'bold 20px sans-serif';
+  const ancho = ctx.measureText(texto).width + 16;
+  ctx.fillStyle = colorFondo;
+  ctx.fillRect(x, y - 15, ancho, 28);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(texto, x + 8, y + 6);
+  ctx.restore();
+}
+
 export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   const cv = await obtenerOpenCV();
 
@@ -77,7 +118,6 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-  // 1. Leer QR
   const qrData = archivoImagen.qrPreDetectado || leerCodigoQR(canvas);
 
   const totalPreguntas = Number(configEvaluacion.numPreguntas || 30);
@@ -85,7 +125,6 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   const opciones = alternativasStr.split('');
   const pauta = configEvaluacion.pauta || {};
 
-  // 2. Detectar los 4 cuadros negros fiduciales
   const src = cv.imread(canvas);
   const gray = new cv.Mat();
   const blurred = new cv.Mat();
@@ -147,7 +186,6 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     }
   }
 
-  // 3. Enderezar área entre centros
   const W = 1830;
   const H = 2460;
   const warped = new cv.Mat();
@@ -176,7 +214,6 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     cropped.delete();
   }
 
-  // 4. Medir tinta dentro de cada burbuja (calibrado para círculos pintados, cruces X y trazos suaves)
   const warpedGray = new cv.Mat();
   const warpedBin = new cv.Mat();
   cv.cvtColor(warped, warpedGray, cv.COLOR_RGBA2GRAY);
@@ -186,8 +223,7 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   cv.imshow(outCanvas, warped);
   const outCtx = outCanvas.getContext('2d');
 
-  // Radio interior de 20px (evita el borde impreso del círculo de 27px)
-  const radioPx = 20;
+  const radioPx = 22;
   const respuestas = {};
 
   for (let p = 1; p <= totalPreguntas; p++) {
@@ -217,28 +253,12 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       return { letra, ratio: total > 0 ? oscuros / total : 0, px, py };
     });
 
-    // Línea base de los círculos vacíos de esta misma pregunta (promedio de los 2 menos oscuros)
-    const ordenados = [...densidades].sort((a, b) => a.ratio - b.ratio);
-    const baseVacio = (ordenados[0].ratio + ordenados[1].ratio) / 2;
-
-    // Detección híbrida:
-    // - Marca llena (> 0.38)
-    // - O cruz / trazo suave (> 0.23 y al menos +0.12 más oscuro que los círculos vacíos de la fila)
-    const marcadas = densidades.filter(
-      (d) => d.ratio > 0.38 || (d.ratio > 0.23 && d.ratio - baseVacio >= 0.12)
-    );
-
+    const marcadas = densidades.filter((d) => d.ratio > 0.42);
     let respuestaFinal = '';
     if (marcadas.length === 1) {
       respuestaFinal = marcadas[0].letra;
     } else if (marcadas.length > 1) {
-      // Si hay una marca muy rellena (>0.50) y otra fue apenas un roce/cruz tenue (<0.30), prioriza la rellena
-      const muyLlenas = marcadas.filter((m) => m.ratio > 0.50);
-      if (muyLlenas.length === 1 && marcadas.every((m) => m === muyLlenas[0] || m.ratio < 0.30)) {
-        respuestaFinal = muyLlenas[0].letra;
-      } else {
-        respuestaFinal = 'DOBLE';
-      }
+      respuestaFinal = 'DOBLE';
     }
 
     respuestas[p] = respuestaFinal;
@@ -247,9 +267,13 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     const correcta = typeof itemPauta === 'object' ? itemPauta?.correcta : itemPauta;
     const esCorrecta = Boolean(correcta) && respuestaFinal === correcta;
 
+    const ultimaBurbuja = densidades[densidades.length - 1];
+    const posXIcono = ultimaBurbuja.px + 52;
+    const posYIcono = ultimaBurbuja.py;
+
+    // Resaltar círculos marcados y la alternativa correcta si falló
     densidades.forEach((d) => {
-      const fueElegida = respuestaFinal === d.letra || (respuestaFinal === 'DOBLE' && marcadas.some((m) => m.letra === d.letra));
-      if (fueElegida) {
+      if (marcadas.some((m) => m.letra === d.letra)) {
         outCtx.beginPath();
         outCtx.arc(d.px, d.py, 28, 0, 2 * Math.PI);
         outCtx.lineWidth = 6;
@@ -263,6 +287,19 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
         outCtx.stroke();
       }
     });
+
+    // Dibujar Ticket Verde, Cruz Roja, BLANCO o DOBLE a la derecha de la fila
+    if (respuestaFinal === '') {
+      dibujarCruzRoja(outCtx, posXIcono, posYIcono);
+      dibujarEtiquetaEstado(outCtx, posXIcono + 24, posYIcono, 'BLANCO', '#64748b');
+    } else if (respuestaFinal === 'DOBLE') {
+      dibujarCruzRoja(outCtx, posXIcono, posYIcono);
+      dibujarEtiquetaEstado(outCtx, posXIcono + 24, posYIcono, 'DOBLE', '#d97706');
+    } else if (esCorrecta) {
+      dibujarTicketVerde(outCtx, posXIcono, posYIcono);
+    } else if (correcta) {
+      dibujarCruzRoja(outCtx, posXIcono, posYIcono);
+    }
   }
 
   src.delete();
@@ -278,6 +315,6 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   return {
     qrData,
     respuestas,
-    imagenProcesada: outCanvas.toDataURL('image/jpeg', 0.6)
+    imagenProcesada: outCanvas.toDataURL('image/jpeg', 0.85)
   };
 }
