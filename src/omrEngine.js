@@ -270,7 +270,15 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       return { letra, ratio: total > 0 ? oscuros / total : 0, px, py };
     });
 
-    const marcadas = densidades.filter((d) => d.ratio > 0.42);
+    // Ordenar burbujas de mayor a menor densidad de tinta
+    const ordenadas = [...densidades].sort((a, b) => b.ratio - a.ratio);
+    const fondoFila = ordenadas[ordenadas.length - 1].ratio; // densidad base de círculo vacío en esa fila
+
+    // Detectar burbujas pintadas (incluye lápiz grafito suave > 0.28 y claramente sobre el fondo de la fila)
+    const marcadas = densidades.filter(
+      (d) => d.ratio > 0.28 && d.ratio - fondoFila > 0.10
+    );
+
     let respuestaFinal = '';
     if (marcadas.length === 1) {
       respuestaFinal = marcadas[0].letra;
@@ -285,7 +293,7 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     const esCorrecta = Boolean(correcta) && respuestaFinal === correcta;
 
     const ultimaBurbuja = densidades[densidades.length - 1];
-    const posXIcono = ultimaBurbuja.px + 52;
+    const posXIcono = ultimaBurbuja.px + 54;
     const posYIcono = ultimaBurbuja.py;
 
     densidades.forEach((d) => {
@@ -306,10 +314,10 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
 
     if (respuestaFinal === '') {
       dibujarCruzRoja(outCtx, posXIcono, posYIcono);
-      dibujarEtiquetaEstado(outCtx, posXIcono + 24, posYIcono, 'BLANCO', '#64748b');
+      dibujarEtiquetaEstado(outCtx, posXIcono + 22, posYIcono, 'BLANCO', '#64748b');
     } else if (respuestaFinal === 'DOBLE') {
       dibujarCruzRoja(outCtx, posXIcono, posYIcono);
-      dibujarEtiquetaEstado(outCtx, posXIcono + 24, posYIcono, 'DOBLE', '#d97706');
+      dibujarEtiquetaEstado(outCtx, posXIcono + 22, posYIcono, 'DOBLE', '#d97706');
     } else if (esCorrecta) {
       dibujarTicketVerde(outCtx, posXIcono, posYIcono);
     } else if (correcta) {
