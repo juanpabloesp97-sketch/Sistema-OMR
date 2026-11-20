@@ -4,7 +4,7 @@ import QRCode from 'qrcode';
 import {
   FileDown, User, CheckCircle2, Camera, CheckSquare, Square,
   Cloud, BarChart3, Printer, Clock, AlertCircle, Save, Trash2, UserPlus,
-  UserX, UserCheck, Share2, Copy, GraduationCap, Users, FolderOpen, ArrowLeft, FilePlus2
+  UserX, UserCheck, Share2, GraduationCap, Users, FolderOpen, ArrowLeft, FilePlus2, Filter
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import VisorCurso from './VisorCurso';
@@ -29,17 +29,18 @@ export default function App() {
     activo: true
   });
 
-  // Vistas: 'panel-nivel' | 'panel-curso' | 'visor-curso' | 'detalle-evaluacion' | 'crear-evaluacion' | 'perfil' | 'usuarios'
   const [vistaActiva, setVistaActiva] = useState('crear-evaluacion');
   const [nivelActivoId, setNivelActivoId] = useState('');
   const [cursoActivoId, setCursoActivoId] = useState('');
   const [modoResultadosNivel, setModoResultadosNivel] = useState(false);
 
-  // Estructura escolar
+  // 'curso' (cuando entras desde un curso específico) | 'nivel' (cuando entras desde Evaluaciones del Nivel)
+  const [contextoAperturaEval, setContextoAperturaEval] = useState('curso');
+  const [filtroCursoEnNivel, setFiltroCursoEnNivel] = useState('TODOS');
+
   const [niveles, setNiveles] = useState([]);
   const [cursos, setCursos] = useState([]);
 
-  // Evaluaciones propias y compartidas
   const [evaluacionesPropias, setEvaluacionesPropias] = useState([]);
   const [evaluacionesCompartidas, setEvaluacionesCompartidas] = useState([]);
 
@@ -169,7 +170,9 @@ export default function App() {
       setEximidosRuts([]);
     }
 
-    if (config.cursoId) {
+    if (contextoAperturaEval === 'curso' && cursoActivoId) {
+      cargarEstudiantesParaEval(cursoActivoId, null);
+    } else if (config.cursoId) {
       cargarEstudiantesParaEval(config.cursoId, null);
     } else if (config.nivelId) {
       cargarEstudiantesParaEval(null, config.nivelId);
@@ -177,7 +180,7 @@ export default function App() {
       setEstudiantesCursoEval([]);
       setSeleccionadosImprimir([]);
     }
-  }, [config.id, config.cursoId, config.nivelId, vistaActiva, cursos]);
+  }, [config.id, config.cursoId, config.nivelId, vistaActiva, contextoAperturaEval, cursoActivoId, cursos]);
 
   const cerrarSesion = async () => {
     if (supabase) await supabase.auth.signOut();
@@ -220,8 +223,8 @@ export default function App() {
   const valorSelectDestino = config.cursoId
     ? config.cursoId
     : config.nivelId
-      ? `nivel:${config.nivelId}`
-      : '';
+    ? `nivel:${config.nivelId}`
+    : '';
 
   const toggleEximirEstudiante = async (rut) => {
     const rutNorm = rut.trim().toLowerCase();
@@ -267,7 +270,6 @@ export default function App() {
     return { nivelesVisibles, cursosVisibles };
   };
 
-  // Cada docente carga únicamente SUS evaluaciones propias (y aparte las compartidas para importar)
   const cargarEvaluacionesNube = async (perfilUsuario = profesor) => {
     if (!supabase || !perfilUsuario?.id) return;
 
@@ -362,7 +364,7 @@ export default function App() {
     }
   };
 
-  const abrirEvaluacion = (ev, cursoFiltradoId = '') => {
+  const abrirEvaluacion = (ev, cursoFiltradoId = '', contexto = 'curso') => {
     setConfig({
       id: ev.id,
       docenteId: ev.docente_id || null,
@@ -381,7 +383,13 @@ export default function App() {
       pauta: ev.pauta || {}
     });
 
-    if (cursoFiltradoId) setCursoActivoId(cursoFiltradoId);
+    setContextoAperturaEval(contexto);
+    setFiltroCursoEnNivel('TODOS');
+    if (cursoFiltradoId) {
+      setCursoActivoId(cursoFiltradoId);
+    } else if (contexto === 'nivel') {
+      setCursoActivoId('');
+    }
     setEximidosRuts(Array.isArray(ev.eximidos) ? ev.eximidos : []);
     setSubVistaEval('avance');
     setVistaActiva('detalle-evaluacion');
@@ -465,7 +473,11 @@ export default function App() {
       } else if (data) {
         alert('✅ Evaluación creada correctamente.');
         await cargarEvaluacionesNube(profesor);
-        abrirEvaluacion(data);
+        if (data.curso_id) {
+          abrirEvaluacion(data, data.curso_id, 'curso');
+        } else {
+          abrirEvaluacion(data, '', 'nivel');
+        }
       }
     }
   };
@@ -505,34 +517,6 @@ export default function App() {
     alert(`✅ Pauta "${evCompartida.titulo}" cargada. Elige tu curso o nivel y presiona Guardar Evaluación.`);
   };
 
-  const actualizarDestinoEvaluacionNube = async (valorSelect) => {
-    manejarCambioDestinoEvaluacion(valorSelect);
-    if (!supabase || !config.id) return;
-
-    let nuevoCursoId = null;
-    let nuevoNivelId = null;
-
-    if (valorSelect.startsWith('nivel:')) {
-      nuevoNivelId = valorSelect.replace('nivel:', '');
-    } else if (valorSelect) {
-      nuevoCursoId = valorSelect;
-      const cObj = cursos.find((c) => c.id === valorSelect);
-      nuevoNivelId = cObj ? cObj.nivel_id : null;
-    }
-
-    const { error } = await supabase
-      .from('evaluaciones')
-      .update({
-        curso_id: nuevoCursoId,
-        nivel_id: nuevoNivelId
-      })
-      .eq('id', config.id);
-
-    if (!error) {
-      cargarEvaluacionesNube(profesor);
-    }
-  };
-
   const eliminarEvaluacion = async () => {
     if (!supabase || !config.id) return;
     if (!confirm(`¿Eliminar definitivamente "${config.tituloPrueba}" y todos sus resultados escaneados?`)) {
@@ -568,7 +552,9 @@ export default function App() {
     e.preventDefault();
     if (!rutExtra.trim() || !nombreExtra.trim()) return;
     const nuevo = { id: 'local-' + Date.now(), rut: rutExtra.trim(), nombre: nombreExtra.trim() };
-    const cursoDestinoId = config.cursoId || (config.nivelId ? cursos.find((c) => c.nivel_id === config.nivelId)?.id : null);
+    const cursoDestinoId = (contextoAperturaEval === 'curso' && cursoActivoId)
+      ? cursoActivoId
+      : (config.cursoId || (config.nivelId ? cursos.find((c) => c.nivel_id === config.nivelId)?.id : null));
 
     if (cursoDestinoId && supabase) {
       const { error } = await supabase
@@ -578,7 +564,11 @@ export default function App() {
         alert('Error al agregar estudiante: ' + error.message);
         return;
       }
-      await cargarEstudiantesParaEval(config.cursoId, config.nivelId);
+      if (contextoAperturaEval === 'curso' && cursoActivoId) {
+        await cargarEstudiantesParaEval(cursoActivoId, null);
+      } else {
+        await cargarEstudiantesParaEval(config.cursoId, config.nivelId);
+      }
     }
     setRutExtra('');
     setNombreExtra('');
@@ -589,6 +579,7 @@ export default function App() {
     setSeleccionadosImprimir((prev) => prev.filter((r) => r !== rut));
   };
 
+  // PDF agrupado por curso (6° A, 6° B, 6° C) y ordenado alfabéticamente por Apellido Apellido Nombres
   const imprimirHojasPDF = async (listaEstudiantesAImprimir, sufijoArchivo = '') => {
     if (!listaEstudiantesAImprimir || listaEstudiantesAImprimir.length === 0) {
       alert('No hay estudiantes seleccionados para imprimir.');
@@ -597,7 +588,6 @@ export default function App() {
 
     const cursoGlobalObj = cursos.find((c) => c.id === (cursoActivoId || config.cursoId));
 
-    // Ordenar primero por curso (6° A, 6° B, 6° C) y luego alfabéticamente por Apellido Apellido Nombres
     const listaOrdenada = [...listaEstudiantesAImprimir].sort((a, b) => {
       const cursoA = (a.curso_nombre || (cursoGlobalObj ? cursoGlobalObj.nombre : '')).trim();
       const cursoB = (b.curso_nombre || (cursoGlobalObj ? cursoGlobalObj.nombre : '')).trim();
@@ -829,11 +819,38 @@ export default function App() {
     return <Login />;
   }
 
-  // Cálculos de cobertura para detalle-evaluacion
-  const rutsRendidos = new Set(resultadosCurso.map((r) => r.rut.trim().toLowerCase()));
+  const nivelActualObj = niveles.find((n) => n.id === nivelActivoId);
+  const cursoActualObj = cursos.find((c) => c.id === cursoActivoId);
+  const cursosDelNivelActivo = cursos.filter((c) => c.nivel_id === (config.nivelId || nivelActivoId));
+
+  // Filtrado estricto: si entras desde un Curso, muestra SOLO ese curso; si entras desde Evaluaciones del Nivel, permite filtrar
+  const cursoFiltroEfectivo =
+    contextoAperturaEval === 'curso' && cursoActivoId
+      ? cursoActivoId
+      : filtroCursoEnNivel !== 'TODOS'
+      ? filtroCursoEnNivel
+      : '';
+
+  const cursoFiltroObj = cursos.find((c) => c.id === cursoFiltroEfectivo);
+
+  const estudiantesVisiblesEval = cursoFiltroEfectivo
+    ? estudiantesCursoEval.filter((e) => e.curso_id === cursoFiltroEfectivo || e.curso_nombre === cursoFiltroObj?.nombre)
+    : estudiantesCursoEval;
+
+  const rutsPermitidosFiltro = new Set(estudiantesVisiblesEval.map((e) => e.rut.trim().toLowerCase()));
+
+  const resultadosVisiblesEval = cursoFiltroEfectivo
+    ? resultadosCurso.filter(
+        (r) =>
+          (cursoFiltroObj && r.curso === cursoFiltroObj.nombre) ||
+          rutsPermitidosFiltro.has(r.rut.trim().toLowerCase())
+      )
+    : resultadosCurso;
+
+  const rutsRendidos = new Set(resultadosVisiblesEval.map((r) => r.rut.trim().toLowerCase()));
   const eximidosSet = new Set(eximidosRuts);
-  const estudiantesActivos = estudiantesCursoEval.filter((e) => !eximidosSet.has(e.rut.trim().toLowerCase()));
-  const estudiantesEximidos = estudiantesCursoEval.filter((e) => eximidosSet.has(e.rut.trim().toLowerCase()));
+  const estudiantesActivos = estudiantesVisiblesEval.filter((e) => !eximidosSet.has(e.rut.trim().toLowerCase()));
+  const estudiantesEximidos = estudiantesVisiblesEval.filter((e) => eximidosSet.has(e.rut.trim().toLowerCase()));
   const totalActivos = estudiantesActivos.length;
   const estudiantesRendidos = estudiantesActivos.filter((e) => rutsRendidos.has(e.rut.trim().toLowerCase()));
   const estudiantesPendientes = estudiantesActivos.filter((e) => !rutsRendidos.has(e.rut.trim().toLowerCase()));
@@ -845,8 +862,6 @@ export default function App() {
 
   const nivelActivoNombre = obtenerNombreNivelActivo();
   const tieneDestinoAsignado = Boolean(config.cursoId || config.nivelId);
-  const nivelActualObj = niveles.find((n) => n.id === nivelActivoId);
-  const cursoActualObj = cursos.find((c) => c.id === cursoActivoId);
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#1e293b' }}>
@@ -870,13 +885,13 @@ export default function App() {
           setCursoActivoId(id);
           setModoResultadosNivel(false);
         }}
-        onAbrirEvaluacion={(ev, cId) => abrirEvaluacion(ev, cId)}
+        onAbrirEvaluacion={(ev, cId) => abrirEvaluacion(ev, cId, cId ? 'curso' : 'nivel')}
         profesor={profesor}
         onCerrarSesion={cerrarSesion}
       />
 
       <main style={{ flex: 1, padding: '24px', maxWidth: '1100px', margin: '0 auto', boxSizing: 'border-box' }}>
-        {/* VISTA NUEVA A: PANEL DE NIVEL (Tarjetas de cada curso + tarjeta Resultados del Nivel) */}
+        {/* VISTA A: PANEL DE NIVEL */}
         {vistaActiva === 'panel-nivel' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
@@ -895,16 +910,15 @@ export default function App() {
                   display: 'flex', alignItems: 'center', gap: '7px'
                 }}
               >
-                <FilePlus2 size={17} /> Nueva Evaluación en {nivelActualObj?.nombre}
+                <FilePlus2 size={17} /> Nueva Evaluación de Nivel ({nivelActualObj?.nombre})
               </button>
             </div>
 
-            {/* Cuadros de Cursos + Cuadro Resultados del Nivel */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '16px' }}>
               {cursos
                 .filter((c) => c.nivel_id === nivelActivoId)
                 .map((curso) => {
-                  const cantEvals = evaluacionesPropias.filter(
+                  const cantEvalsCurso = evaluacionesPropias.filter(
                     (ev) => ev.curso_id === curso.id || (!ev.curso_id && ev.nivel_id === nivelActivoId)
                   ).length;
 
@@ -926,8 +940,7 @@ export default function App() {
                         display: 'flex',
                         flexDirection: 'column',
                         justifyContent: 'space-between',
-                        gap: '12px',
-                        transition: 'transform 0.15s'
+                        gap: '12px'
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -935,20 +948,20 @@ export default function App() {
                           <GraduationCap size={22} color="#2563eb" />
                         </div>
                         <span style={{ fontSize: '12px', fontWeight: '700', background: '#f1f5f9', color: '#475569', padding: '4px 10px', borderRadius: '999px' }}>
-                          {cantEvals} eval.
+                          {cantEvalsCurso} eval.
                         </span>
                       </div>
                       <div>
                         <h3 style={{ margin: '0 0 4px 0', fontSize: '18px', color: '#0f172a' }}>{curso.nombre}</h3>
                         <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>
-                          Ver evaluaciones y lista de curso
+                          Lista de curso y evaluaciones
                         </p>
                       </div>
                     </div>
                   );
                 })}
 
-              {/* Tarjeta Especial: Resultados del Nivel */}
+              {/* Tarjeta Evaluaciones del Nivel */}
               <div
                 onClick={() => setModoResultadosNivel(!modoResultadosNivel)}
                 style={{
@@ -969,23 +982,22 @@ export default function App() {
                     <BarChart3 size={22} color="#ffffff" />
                   </div>
                   <span style={{ fontSize: '11.5px', fontWeight: '700', background: modoResultadosNivel ? 'rgba(255,255,255,0.2)' : '#bfdbfe', color: modoResultadosNivel ? '#ffffff' : '#1e40af', padding: '4px 10px', borderRadius: '999px' }}>
-                    Consolidado
+                    Nivel Completo
                   </span>
                 </div>
                 <div>
-                  <h3 style={{ margin: '0 0 4px 0', fontSize: '18px' }}>Resultados del Nivel</h3>
+                  <h3 style={{ margin: '0 0 4px 0', fontSize: '18px' }}>Evaluaciones del Nivel</h3>
                   <p style={{ margin: 0, fontSize: '13px', opacity: 0.85 }}>
-                    Evaluaciones y reportes de todo {nivelActualObj?.nombre}
+                    Resultados consolidados y filtro por curso
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Si hizo clic en "Resultados del Nivel", muestra sus evaluaciones de nivel */}
             {modoResultadosNivel && (
               <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #cbd5e1', marginTop: '6px' }}>
                 <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', color: '#0f172a' }}>
-                  Evaluaciones de {nivelActualObj?.nombre}
+                  Evaluaciones Aplicadas a {nivelActualObj?.nombre}
                 </h3>
                 {(() => {
                   const idsCursosNivel = new Set(cursos.filter((c) => c.nivel_id === nivelActivoId).map((c) => c.id));
@@ -1000,7 +1012,7 @@ export default function App() {
                       {evalsNivel.map((ev) => (
                         <div
                           key={ev.id}
-                          onClick={() => abrirEvaluacion(ev)}
+                          onClick={() => abrirEvaluacion(ev, '', 'nivel')}
                           style={{
                             padding: '12px 16px', borderRadius: '9px', border: '1px solid #e2e8f0',
                             background: '#f8fafc', cursor: 'pointer', display: 'flex',
@@ -1014,7 +1026,7 @@ export default function App() {
                             </div>
                           </div>
                           <span style={{ color: '#2563eb', fontWeight: '700', fontSize: '13px' }}>
-                            Abrir Resultados →
+                            Ver Resultados del Nivel →
                           </span>
                         </div>
                       ))}
@@ -1026,7 +1038,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA NUEVA B: PANEL DE CURSO (2 cuadros: Evaluaciones y Lista de Curso) */}
+        {/* VISTA B: PANEL DE CURSO (2 cuadros: Lista de Curso + Evaluaciones solo de este curso) */}
         {vistaActiva === 'panel-curso' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -1050,9 +1062,34 @@ export default function App() {
               </div>
             </div>
 
-            {/* Los 2 Cuadros del Curso */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
-              {/* Cuadro 1: Evaluaciones del Curso */}
+              {/* Cuadro 1: Lista de Curso */}
+              <div
+                onClick={() => setVistaActiva('visor-curso')}
+                style={{
+                  background: '#ffffff', padding: '24px', borderRadius: '14px',
+                  border: '1px solid #cbd5e1', cursor: 'pointer',
+                  display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '16px'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ width: '46px', height: '46px', borderRadius: '12px', background: '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Users size={24} color="#16a34a" />
+                  </div>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: '19px', color: '#0f172a' }}>Lista de Curso</h2>
+                    <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#64748b' }}>
+                      Nómina de estudiantes de {cursoActualObj?.nombre}, subir Excel o agregar alumnos
+                    </p>
+                  </div>
+                </div>
+
+                <div style={{ padding: '12px 14px', background: '#f0fdf4', borderRadius: '9px', color: '#166534', fontWeight: '700', fontSize: '13.5px', textAlign: 'right' }}>
+                  Abrir Nómina de {cursoActualObj?.nombre} →
+                </div>
+              </div>
+
+              {/* Cuadro 2: Evaluaciones (solo de este curso) */}
               <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #cbd5e1', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -1061,7 +1098,9 @@ export default function App() {
                     </div>
                     <div>
                       <h2 style={{ margin: 0, fontSize: '19px', color: '#0f172a' }}>Evaluaciones</h2>
-                      <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#64748b' }}>Pruebas asignadas a este curso</p>
+                      <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#64748b' }}>
+                        Resultados y gestión solo para {cursoActualObj?.nombre}
+                      </p>
                     </div>
                   </div>
                   <button
@@ -1083,7 +1122,7 @@ export default function App() {
                   if (evalsCurso.length === 0) {
                     return (
                       <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '8px', fontSize: '13.5px', color: '#64748b' }}>
-                        Aún no has creado evaluaciones para {cursoActualObj?.nombre}.
+                        Aún no hay evaluaciones registradas para {cursoActualObj?.nombre}.
                       </div>
                     );
                   }
@@ -1092,7 +1131,7 @@ export default function App() {
                       {evalsCurso.map((ev) => (
                         <div
                           key={ev.id}
-                          onClick={() => abrirEvaluacion(ev, cursoActivoId)}
+                          onClick={() => abrirEvaluacion(ev, cursoActivoId, 'curso')}
                           style={{
                             padding: '12px 14px', borderRadius: '9px', border: '1px solid #e2e8f0',
                             background: '#f8fafc', cursor: 'pointer', display: 'flex',
@@ -1109,32 +1148,6 @@ export default function App() {
                     </div>
                   );
                 })()}
-              </div>
-
-              {/* Cuadro 2: Lista de Curso */}
-              <div
-                onClick={() => setVistaActiva('visor-curso')}
-                style={{
-                  background: '#ffffff', padding: '24px', borderRadius: '14px',
-                  border: '1px solid #cbd5e1', cursor: 'pointer',
-                  display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '16px'
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <div style={{ width: '46px', height: '46px', borderRadius: '12px', background: '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Users size={24} color="#16a34a" />
-                  </div>
-                  <div>
-                    <h2 style={{ margin: 0, fontSize: '19px', color: '#0f172a' }}>Lista de Curso</h2>
-                    <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#64748b' }}>
-                      Ver nómina de estudiantes, subir Excel o agregar alumnos
-                    </p>
-                  </div>
-                </div>
-
-                <div style={{ padding: '12px 14px', background: '#f0fdf4', borderRadius: '9px', color: '#166534', fontWeight: '700', fontSize: '13.5px', textAlign: 'right' }}>
-                  Abrir Nómina de {cursoActualObj?.nombre} →
-                </div>
               </div>
             </div>
           </div>
@@ -1218,7 +1231,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA 3: CREAR EVALUACIÓN (Siempre parte en blanco para el docente actual) */}
+        {/* VISTA 3: CREAR EVALUACIÓN */}
         {vistaActiva === 'crear-evaluacion' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
@@ -1358,7 +1371,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA 4: DETALLE DE EVALUACIÓN SELECCIONADA */}
+        {/* VISTA 4: DETALLE DE EVALUACIÓN (Vista Curso estricta o Vista Nivel con filtro) */}
         {vistaActiva === 'detalle-evaluacion' && config.id && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ background: '#ffffff', padding: '18px 20px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -1366,7 +1379,7 @@ export default function App() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <button
                     onClick={() => {
-                      if (cursoActivoId) setVistaActiva('panel-curso');
+                      if (contextoAperturaEval === 'curso' && cursoActivoId) setVistaActiva('panel-curso');
                       else if (nivelActivoId) setVistaActiva('panel-nivel');
                       else setVistaActiva('crear-evaluacion');
                     }}
@@ -1379,41 +1392,36 @@ export default function App() {
                     <ArrowLeft size={15} /> Volver
                   </button>
                   <div>
-                    <h2 style={{ margin: 0, fontSize: '19px', color: '#0f172a' }}>{config.tituloPrueba}</h2>
-                    <div style={{ fontSize: '12.5px', color: '#64748b' }}>
-                      {config.asignatura} • {config.numPreguntas} preguntas
+                    <div style={{ fontSize: '11.5px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase' }}>
+                      {contextoAperturaEval === 'curso' && cursoActualObj
+                        ? `Vista Exclusiva Curso: ${cursoActualObj.nombre}`
+                        : `Vista Nivel Completo: ${nivelActivoNombre}`}
                     </div>
+                    <h2 style={{ margin: 0, fontSize: '19px', color: '#0f172a' }}>{config.tituloPrueba}</h2>
                   </div>
                 </div>
 
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                  <select
-                    value={valorSelectDestino}
-                    onChange={(e) => actualizarDestinoEvaluacionNube(e.target.value)}
-                    style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #3b82f6', background: '#eff6ff', fontSize: '13px', fontWeight: '600' }}
-                  >
-                    <option value="">-- Sin asignar --</option>
-                    <optgroup label="Nivel Completo">
-                      {niveles.map((n) => (
-                        <option key={`niv-${n.id}`} value={`nivel:${n.id}`}>
-                          📚 Nivel: {n.nombre}
-                        </option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Curso Individual">
-                      {cursos.map((c) => {
-                        const niv = niveles.find((n) => n.id === c.nivel_id);
-                        return (
+                  {contextoAperturaEval === 'nivel' && cursosDelNivelActivo.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: '8px', padding: '5px 10px' }}>
+                      <Filter size={14} color="#1d4ed8" />
+                      <select
+                        value={filtroCursoEnNivel}
+                        onChange={(e) => setFiltroCursoEnNivel(e.target.value)}
+                        style={{ border: 'none', background: 'transparent', fontSize: '13px', fontWeight: '700', color: '#1e40af', cursor: 'pointer', outline: 'none' }}
+                      >
+                        <option value="TODOS">Todos los cursos ({nivelActivoNombre})</option>
+                        {cursosDelNivelActivo.map((c) => (
                           <option key={c.id} value={c.id}>
-                            {niv ? `${niv.nombre} — ` : ''}{c.nombre}
+                            Solo {c.nombre}
                           </option>
-                        );
-                      })}
-                    </optgroup>
-                  </select>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   <button
-                    onClick={() => imprimirHojasPDF(estudiantesActivos)}
+                    onClick={() => imprimirHojasPDF(estudiantesActivos, cursoFiltroObj ? `_${cursoFiltroObj.nombre.replace(/\s+/g, '_')}` : '')}
                     style={{
                       display: 'flex', alignItems: 'center', gap: '6px',
                       padding: '8px 12px', borderRadius: '8px', border: '1px solid #2563eb',
@@ -1457,7 +1465,7 @@ export default function App() {
               {[
                 { id: 'avance', label: 'Avance y Pendientes', icon: Clock },
                 { id: 'imprimir', label: 'Imprimir / Nómina Alumnos', icon: Printer },
-                { id: 'escanear', label: `Escanear Hojas (${resultadosCurso.length})`, icon: Camera },
+                { id: 'escanear', label: `Escanear Hojas (${resultadosVisiblesEval.length})`, icon: Camera },
                 { id: 'pauta', label: 'Editar Pauta y Escala', icon: CheckSquare },
                 { id: 'analisis', label: 'Análisis y Reportes', icon: BarChart3 }
               ].map((tab) => {
@@ -1486,7 +1494,7 @@ export default function App() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 {!tieneDestinoAsignado ? (
                   <div style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', padding: '16px', borderRadius: '12px', fontSize: '14px' }}>
-                    <strong>Esta evaluación aún no tiene un curso o nivel asignado.</strong> Selecciónalo arriba.
+                    <strong>Esta evaluación aún no tiene un curso o nivel asignado.</strong>
                   </div>
                 ) : (
                   <>
@@ -1522,7 +1530,7 @@ export default function App() {
 
                         <div>
                           <div style={{ fontSize: '12px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase' }}>
-                            Cobertura de Aplicación {config.nivelId && !config.cursoId ? `(Nivel ${nivelActivoNombre})` : ''}
+                            Cobertura {cursoFiltroObj ? `(${cursoFiltroObj.nombre})` : `(Nivel ${nivelActivoNombre})`}
                           </div>
                           <h3 style={{ margin: '4px 0', fontSize: '20px', color: '#0f172a' }}>
                             {estudiantesRendidos.length} de {totalActivos} estudiantes ya rindieron
@@ -1642,12 +1650,12 @@ export default function App() {
                   <h3 style={{ margin: 0, fontSize: '17px' }}>Nómina de Impresión de Hojas de Respuestas</h3>
                   <button
                     onClick={() => {
-                      const lista = estudiantesCursoEval.filter((e) => seleccionadosImprimir.includes(e.rut));
+                      const lista = estudiantesVisiblesEval.filter((e) => seleccionadosImprimir.includes(e.rut));
                       imprimirHojasPDF(lista);
                     }}
                     style={{ background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px', padding: '10px 18px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
                   >
-                    <FileDown size={18} /> Descargar PDF ({seleccionadosImprimir.length})
+                    <FileDown size={18} /> Descargar PDF ({estudiantesVisiblesEval.filter((e) => seleccionadosImprimir.includes(e.rut)).length})
                   </button>
                 </div>
 
@@ -1665,12 +1673,16 @@ export default function App() {
                       <th style={{ padding: '10px', width: '40px', textAlign: 'center' }}>
                         <button
                           onClick={() => {
-                            if (seleccionadosImprimir.length === estudiantesCursoEval.length) setSeleccionadosImprimir([]);
-                            else setSeleccionadosImprimir(estudiantesCursoEval.map((e) => e.rut));
+                            const rutsVisibles = estudiantesVisiblesEval.map((e) => e.rut);
+                            const todosMarcados = rutsVisibles.every((r) => seleccionadosImprimir.includes(r));
+                            if (todosMarcados) setSeleccionadosImprimir((prev) => prev.filter((r) => !rutsVisibles.includes(r)));
+                            else setSeleccionadosImprimir((prev) => Array.from(new Set([...prev, ...rutsVisibles])));
                           }}
                           style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
                         >
-                          {seleccionadosImprimir.length === estudiantesCursoEval.length && estudiantesCursoEval.length > 0 ? <CheckSquare size={18} color="#2563eb" /> : <Square size={18} color="#64748b" />}
+                          {estudiantesVisiblesEval.length > 0 && estudiantesVisiblesEval.every((e) => seleccionadosImprimir.includes(e.rut))
+                            ? <CheckSquare size={18} color="#2563eb" />
+                            : <Square size={18} color="#64748b" />}
                         </button>
                       </th>
                       <th style={{ padding: '10px', textAlign: 'left' }}>RUT</th>
@@ -1682,7 +1694,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {estudiantesCursoEval.map((est) => {
+                    {estudiantesVisiblesEval.map((est) => {
                       const marcado = seleccionadosImprimir.includes(est.rut);
                       const yaRindio = rutsRendidos.has(est.rut.trim().toLowerCase());
                       const esEximido = eximidosSet.has(est.rut.trim().toLowerCase());
@@ -1767,15 +1779,15 @@ export default function App() {
             {/* SUBVISTA E: ANÁLISIS Y REPORTES */}
             {subVistaEval === 'analisis' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                <AnalisisPanel resultados={resultadosCurso} config={config} />
+                <AnalisisPanel resultados={resultadosVisiblesEval} config={config} />
 
                 <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                   <h3 style={{ margin: '0 0 12px 0', fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <Trash2 size={18} color="#dc2626" />
-                    Administrar Hojas Escaneadas ({resultadosCurso.length})
+                    Administrar Hojas Escaneadas ({resultadosVisiblesEval.length})
                   </h3>
-                  {resultadosCurso.length === 0 ? (
-                    <div style={{ padding: '14px', background: '#f8fafc', borderRadius: '8px', color: '#64748b', fontSize: '14px' }}>No hay hojas escaneadas registradas.</div>
+                  {resultadosVisiblesEval.length === 0 ? (
+                    <div style={{ padding: '14px', background: '#f8fafc', borderRadius: '8px', color: '#64748b', fontSize: '14px' }}>No hay hojas escaneadas registradas en esta vista.</div>
                   ) : (
                     <div style={{ overflowX: 'auto' }}>
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
@@ -1783,6 +1795,7 @@ export default function App() {
                           <tr>
                             <th style={{ padding: '10px', textAlign: 'left' }}>Estudiante</th>
                             <th style={{ padding: '10px', textAlign: 'left' }}>RUT</th>
+                            <th style={{ padding: '10px', textAlign: 'left' }}>Curso</th>
                             <th style={{ padding: '10px', textAlign: 'center' }}>Puntaje</th>
                             <th style={{ padding: '10px', textAlign: 'center' }}>Logro</th>
                             <th style={{ padding: '10px', textAlign: 'center' }}>Nota</th>
@@ -1790,10 +1803,11 @@ export default function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {resultadosCurso.map((res, idx) => (
+                          {resultadosVisiblesEval.map((res, idx) => (
                             <tr key={res.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
                               <td style={{ padding: '9px 10px', fontWeight: '600' }}>{res.nombre}</td>
                               <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{res.rut}</td>
+                              <td style={{ padding: '9px 10px', color: '#64748b' }}>{res.curso || '-'}</td>
                               <td style={{ padding: '9px 10px', textAlign: 'center' }}>{res.puntaje} / {res.total}</td>
                               <td style={{ padding: '9px 10px', textAlign: 'center' }}>{res.porcentaje}%</td>
                               <td style={{ padding: '9px 10px', textAlign: 'center', fontWeight: '800', color: Number(res.nota) >= 4.0 ? '#16a34a' : '#dc2626' }}>{Number(res.nota).toFixed(1)}</td>
