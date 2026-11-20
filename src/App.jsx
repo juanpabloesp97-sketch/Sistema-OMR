@@ -10,6 +10,7 @@ import Sidebar from './Sidebar';
 import VisorCurso from './VisorCurso';
 import PautaEditor from './PautaEditor';
 import AnalisisPanel from './AnalisisPanel';
+import CamaraOMR from './CamaraOMR';
 import Login from './Login';
 import GestionUsuarios from './GestionUsuarios';
 import { procesarHojaOMR } from './omrEngine';
@@ -70,6 +71,7 @@ export default function App() {
 
   const [ultimoResultado, setUltimoResultado] = useState(null);
   const [procesando, setProcesando] = useState(false);
+  const [camaraAbierta, setCamaraAbierta] = useState(false);
   const [progresoLote, setProgresoLote] = useState('');
 
   const [rutExtra, setRutExtra] = useState('');
@@ -274,8 +276,8 @@ export default function App() {
   const valorSelectDestino = config.cursoId
     ? config.cursoId
     : config.nivelId
-    ? `nivel:${config.nivelId}`
-    : '';
+      ? `nivel:${config.nivelId}`
+      : '';
 
   const toggleEximirEstudiante = async (rut) => {
     const rutNorm = rut.trim().toLowerCase();
@@ -1003,8 +1005,8 @@ export default function App() {
     contextoAperturaEval === 'curso' && cursoActivoId
       ? cursoActivoId
       : filtroCursoEnNivel !== 'TODOS'
-      ? filtroCursoEnNivel
-      : '';
+        ? filtroCursoEnNivel
+        : '';
 
   const cursoFiltroObj = cursos.find((c) => c.id === cursoFiltroEfectivo);
 
@@ -1016,10 +1018,10 @@ export default function App() {
 
   const resultadosVisiblesEval = cursoFiltroEfectivo
     ? resultadosCurso.filter(
-        (r) =>
-          (cursoFiltroObj && r.curso === cursoFiltroObj.nombre) ||
-          rutsPermitidosFiltro.has(r.rut.trim().toLowerCase())
-      )
+      (r) =>
+        (cursoFiltroObj && r.curso === cursoFiltroObj.nombre) ||
+        rutsPermitidosFiltro.has(r.rut.trim().toLowerCase())
+    )
     : resultadosCurso;
 
   const rutsRendidos = new Set(resultadosVisiblesEval.map((r) => r.rut.trim().toLowerCase()));
@@ -1927,6 +1929,45 @@ export default function App() {
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', background: procesando ? '#94a3b8' : '#2563eb', color: 'white', padding: '12px 20px', borderRadius: '10px', cursor: procesando ? 'wait' : 'pointer', fontWeight: '700', fontSize: '15px' }}>
                   <Camera size={20} />
                   {procesando ? (progresoLote || 'Procesando...') : 'Subir Foto o PDF Escaneado'}
+                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => setCamaraAbierta(true)}
+                      disabled={procesando}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        background: '#16a34a',
+                        color: 'white',
+                        border: 'none',
+                        padding: '12px 20px',
+                        borderRadius: '10px',
+                        cursor: 'pointer',
+                        fontWeight: '700',
+                        fontSize: '15px'
+                      }}
+                    >
+                      <Camera size={20} />
+                      Escanear con Cámara (Celular)
+                    </button>
+
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', background: procesando ? '#94a3b8' : '#2563eb', color: 'white', padding: '12px 20px', borderRadius: '10px', cursor: procesando ? 'wait' : 'pointer', fontWeight: '700', fontSize: '15px' }}>
+                      <FileDown size={20} />
+                      {procesando ? (progresoLote || 'Procesando...') : 'Subir Foto o PDF Escaneado'}
+                      <input type="file" accept="image/*,application/pdf" multiple onChange={manejarEscaneo} disabled={procesando} style={{ display: 'none' }} />
+                    </label>
+                  </div>
+
+                  {camaraAbierta && (
+                    <CamaraOMR
+                      tituloPrueba={config.tituloPrueba}
+                      onCerrar={() => setCamaraAbierta(false)}
+                      onCapturarImagen={(fileCapturado) => {
+                        setCamaraAbierta(false);
+                        manejarEscaneo({ target: { files: [fileCapturado], value: '' } });
+                      }}
+                    />
+                  )}
                   <input type="file" accept="image/*,application/pdf" multiple onChange={manejarEscaneo} disabled={procesando} style={{ display: 'none' }} />
                 </label>
 

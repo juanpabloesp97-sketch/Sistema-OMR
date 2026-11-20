@@ -13,14 +13,16 @@ function leerCodigoQR(canvas) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const { width, height } = canvas;
 
-  const cropX = Math.floor(width * 0.62);
+  // Buscar primero en el cuadrante superior derecho
+  const cropX = Math.floor(width * 0.50);
   const cropY = 0;
   const cropW = width - cropX;
-  const cropH = Math.floor(height * 0.25);
+  const cropH = Math.floor(height * 0.35);
 
   const cropData = ctx.getImageData(cropX, cropY, cropW, cropH);
   let code = jsQR(cropData.data, cropW, cropH, { inversionAttempts: 'attemptBoth' });
 
+  // Si no se encontró (ej. foto de celular con mucho margen), buscar en toda la imagen
   if (!code) {
     const fullData = ctx.getImageData(0, 0, width, height);
     code = jsQR(fullData.data, width, height, { inversionAttempts: 'attemptBoth' });
@@ -54,7 +56,6 @@ function ordenarEsquinas(puntos) {
   return [supIzq, supDer, infDer, infIzq];
 }
 
-// Dibuja un ticket verde (✓) en coordenadas (x, y)
 function dibujarTicketVerde(ctx, x, y) {
   ctx.save();
   ctx.beginPath();
@@ -69,7 +70,6 @@ function dibujarTicketVerde(ctx, x, y) {
   ctx.restore();
 }
 
-// Dibuja una cruz roja (✗) en coordenadas (x, y)
 function dibujarCruzRoja(ctx, x, y) {
   ctx.save();
   ctx.beginPath();
@@ -84,7 +84,6 @@ function dibujarCruzRoja(ctx, x, y) {
   ctx.restore();
 }
 
-// Dibuja una etiqueta de estado (BLANCO / DOBLE) al costado de la fila
 function dibujarEtiquetaEstado(ctx, x, y, texto, colorFondo) {
   ctx.save();
   ctx.font = 'bold 20px sans-serif';
@@ -132,7 +131,8 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
 
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
   cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-  cv.adaptiveThreshold(blurred, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 25, 10);
+  // Bloque más amplio (35) para tolerar sombras suaves en fotos con celular
+  cv.adaptiveThreshold(blurred, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 35, 12);
 
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();
@@ -144,45 +144,41 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   for (let i = 0; i < contours.size(); i++) {
     const cnt = contours.get(i);
     const area = cv.contourArea(cnt);
-    if (area > areaTotal * 0.0002 && area < areaTotal * 0.02) {
+    // Rango flexible para escaner (hoja completa) y celular (hoja con margen alrededor)
+    if (area > areaTotal * 0.00012 && area < areaTotal * 0.025) {
       const rect = cv.boundingRect(cnt);
       const aspecto = rect.width / rect.height;
       const extension = area / (rect.width * rect.height);
-      if (aspecto >= 0.7 && aspecto <= 1.35 && extension >= 0.7) {
+      if (aspecto >= 0.65 && aspecto <= 1.45 && extension >= 0.68) {
         candidatos.push({
           x: rect.x + rect.width / 2,
-          y: rect.y + rect.height / 2
+          y: rect.y + rect.height / 2,
+          area
         });
       }
     }
     cnt.delete();
   }
 
-  const objetivos = [
-    { x: canvas.width * (16 / 215.9), y: canvas.height * (16 / 279.4) },
-    { x: canvas.width * (199 / 215.9), y: canvas.height * (16 / 279.4) },
-    { x: canvas.width * (199 / 215.9), y: canvas.height * (262 / 279.4) },
-    { x: canvas.width * (16 / 215.9), y: canvas.height * (262 / 279.4) }
-  ];
-
+  // Buscar el marcador más extremo de cada cuadrante (funciona tanto con escáner como con foto de celular)
   let esquinasDetectadas = null;
   if (candidatos.length >= 4) {
-    const elegidos = objetivos.map((obj) => {
-      let mejor = null;
-      let distMin = Infinity;
-      for (const c of candidatos) {
-        const d = Math.hypot(c.x - obj.x, c.y - obj.y);
-        if (d < distMin) {
-          distMin = d;
-          mejor = c;
-        }
-      }
-      return mejor;
-    });
+    const mitadX = canvas.width * 0.5;
+    const mitadY = canvas.height * 0.5;
 
-    const unicos = new Set(elegidos.map((p) => `${Math.round(p.x)}_${Math.round(p.y)}`));
-    if (unicos.size === 4) {
-      esquinasDetectadas = ordenarEsquinas(elegidos);
+    const qSupIzq = candidatos.filter((c) => c.x < mitadX && c.y < mitadY);
+    const qSupDer = candidatos.filter((c) => c.x >= mitadX && c.y < mitadY);
+    const qInfDer = candidatos.filter((c) => c.x >= mitadX && c.y >= mitadY);
+    const qInfIzq = candidatos.filter((c) => c.x < mitadX && c.y >= mitadY);
+
+    if (qSupIzq.length > 0 && qSupDer.length > 0 && qInfDer.length > 0 && qInfIzq.length > 0) {
+      // Elegir en cada cuadrante el cuadrado más cercano al extremo correspondiente
+      const supIzq = qSupIzq.reduce((best, c) => (c.x + c.y < best.x + best.y ? c : best));
+      const supDer = qSupDer.reduce((best, c) => (c.y - c.x < best.y - best.x ? c : best));
+      const infDer = qInfDer.reduce((best, c) => (c.x + c.y > best.x + best.y ? c : best));
+      const infIzq = qInfIzq.reduce((best, c) => (c.y - c.x > best.y - best.x ? c : best));
+
+      esquinasDetectadas = ordenarEsquinas([supIzq, supDer, infDer, infIzq]);
     }
   }
 
@@ -214,16 +210,20 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     cropped.delete();
   }
 
+  // Usar umbral adaptativo local en la hoja enderezada para compensar sombras del celular
   const warpedGray = new cv.Mat();
+  const warpedBlur = new cv.Mat();
   const warpedBin = new cv.Mat();
   cv.cvtColor(warped, warpedGray, cv.COLOR_RGBA2GRAY);
-  cv.threshold(warpedGray, warpedBin, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+  cv.GaussianBlur(warpedGray, warpedBlur, new cv.Size(5, 5), 0);
+  cv.adaptiveThreshold(warpedBlur, warpedBin, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 65, 18);
 
   const outCanvas = document.createElement('canvas');
   cv.imshow(outCanvas, warped);
   const outCtx = outCanvas.getContext('2d');
 
-  const radioPx = 22;
+  // Radio interno reducido (18px) para medir el centro de la burbuja sin contar el borde impreso
+  const radioPx = 18;
   const respuestas = {};
 
   for (let p = 1; p <= totalPreguntas; p++) {
@@ -253,7 +253,8 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       return { letra, ratio: total > 0 ? oscuros / total : 0, px, py };
     });
 
-    const marcadas = densidades.filter((d) => d.ratio > 0.42);
+    // Una burbuja vacía con la letra impresa adentro tiene ~15-22% de tinta; una pintada tiene >45%
+    const marcadas = densidades.filter((d) => d.ratio > 0.45);
     let respuestaFinal = '';
     if (marcadas.length === 1) {
       respuestaFinal = marcadas[0].letra;
@@ -271,7 +272,6 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     const posXIcono = ultimaBurbuja.px + 52;
     const posYIcono = ultimaBurbuja.py;
 
-    // Resaltar círculos marcados y la alternativa correcta si falló
     densidades.forEach((d) => {
       if (marcadas.some((m) => m.letra === d.letra)) {
         outCtx.beginPath();
@@ -288,7 +288,6 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       }
     });
 
-    // Dibujar Ticket Verde, Cruz Roja, BLANCO o DOBLE a la derecha de la fila
     if (respuestaFinal === '') {
       dibujarCruzRoja(outCtx, posXIcono, posYIcono);
       dibujarEtiquetaEstado(outCtx, posXIcono + 24, posYIcono, 'BLANCO', '#64748b');
@@ -310,6 +309,7 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   hierarchy.delete();
   warped.delete();
   warpedGray.delete();
+  warpedBlur.delete();
   warpedBin.delete();
 
   return {
