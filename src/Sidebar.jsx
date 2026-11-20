@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
-  User, GraduationCap, FilePlus2,
-  ChevronDown, ChevronRight, Menu, X, CheckSquare, Users, LogOut, BarChart3
+  Home, User, GraduationCap, FilePlus2,
+  ChevronDown, ChevronRight, Menu, X, CheckSquare, Users, LogOut
 } from 'lucide-react';
 
 export default function Sidebar({
@@ -19,7 +19,6 @@ export default function Sidebar({
   onCerrarSesion
 }) {
   const [colapsado, setColapsado] = useState(false);
-  // Todos los menús parten cerrados por defecto
   const [menuCursosAbierto, setMenuCursosAbierto] = useState(false);
   const [nivelesAbiertos, setNivelesAbiertos] = useState({});
   const [cursosAbiertos, setCursosAbiertos] = useState({});
@@ -85,7 +84,10 @@ export default function Sidebar({
         }}
       >
         {!colapsado && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div
+            onClick={() => setVistaActiva('inicio')}
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+          >
             <CheckSquare size={22} color="#2563eb" />
             <div>
               <div style={{ fontWeight: '800', fontSize: '15px', color: '#0f172a', lineHeight: 1.1 }}>
@@ -115,6 +117,18 @@ export default function Sidebar({
 
       {/* Navegación */}
       <nav style={{ padding: '12px 10px', flex: 1, display: 'flex', flexDirection: 'column', gap: '4px', overflowY: 'auto' }}>
+        {/* 0. Inicio */}
+        <button
+          onClick={() => setVistaActiva('inicio')}
+          style={estiloBotonMenu(vistaActiva === 'inicio')}
+          title="Panel Principal"
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Home size={18} />
+            {!colapsado && <span>Inicio</span>}
+          </span>
+        </button>
+
         {/* 1. Mi Perfil */}
         <button
           onClick={() => setVistaActiva('perfil')}
@@ -141,7 +155,7 @@ export default function Sidebar({
           </button>
         )}
 
-        {/* 3. Mis Cursos (Desplegable, cerrado al inicio) */}
+        {/* 3. Mis Cursos */}
         <div style={{ marginTop: '4px' }}>
           <button
             onClick={() => {
@@ -191,7 +205,6 @@ export default function Sidebar({
 
                 return (
                   <div key={nivel.id} style={{ marginTop: '2px' }}>
-                    {/* Fila del Nivel: clic en texto abre tarjetas del nivel; clic en flecha despliega cursos */}
                     <div
                       style={{
                         display: 'flex',
@@ -238,7 +251,6 @@ export default function Sidebar({
                       </button>
                     </div>
 
-                    {/* Subnivel: Cursos del Nivel */}
                     {nivelAbierto && (
                       <div style={{ paddingLeft: '10px', display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '2px' }}>
                         {cursosDelNivel.length === 0 ? (
@@ -302,7 +314,6 @@ export default function Sidebar({
                                   )}
                                 </div>
 
-                                {/* Subnivel: Evaluaciones dentro de cada curso */}
                                 {cursoAbierto && evalsDelCurso.length > 0 && (
                                   <div style={{ paddingLeft: '12px', display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '2px', borderLeft: '1px solid #e2e8f0', marginLeft: '8px' }}>
                                     {evalsDelCurso.map((ev) => (
@@ -342,7 +353,7 @@ export default function Sidebar({
           )}
         </div>
 
-        {/* 4. Botón único: Crear Evaluación */}
+        {/* 4. Crear Evaluación */}
         <button
           onClick={() => setVistaActiva('crear-evaluacion')}
           style={{

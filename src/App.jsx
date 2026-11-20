@@ -30,7 +30,7 @@ export default function App() {
     activo: true
   });
 
-  const [vistaActiva, setVistaActiva] = useState('crear-evaluacion');
+  const [vistaActiva, setVistaActiva] = useState('inicio');
   const [nivelActivoId, setNivelActivoId] = useState('');
   const [cursoActivoId, setCursoActivoId] = useState('');
   const [modoResultadosNivel, setModoResultadosNivel] = useState(false);
@@ -195,7 +195,7 @@ export default function App() {
             if (nav.filtroCursoEnNivel) setFiltroCursoEnNivel(nav.filtroCursoEnNivel);
             restaurado = true;
           }
-        } else if (nav.vistaActiva) {
+        } else if (nav.vistaActiva && nav.vistaActiva !== 'crear-evaluacion') {
           setVistaActiva(nav.vistaActiva);
           restaurado = true;
         }
@@ -207,10 +207,8 @@ export default function App() {
     if (!restaurado) {
       if (nivelesVisibles && nivelesVisibles.length > 0) {
         setNivelActivoId(nivelesVisibles[0].id);
-        setVistaActiva('panel-nivel');
-      } else {
-        setVistaActiva('crear-evaluacion');
       }
+      setVistaActiva('inicio');
     }
   };
 
@@ -236,6 +234,9 @@ export default function App() {
   }, [config.id, config.cursoId, config.nivelId, vistaActiva, contextoAperturaEval, cursoActivoId, cursos]);
 
   const cerrarSesion = async () => {
+    if (profesor?.id) {
+      localStorage.removeItem(`omr_nav_estado_${profesor.id}`);
+    }
     if (supabase) await supabase.auth.signOut();
     setSesion(null);
   };
@@ -592,7 +593,7 @@ export default function App() {
     await cargarEvaluacionesNube(profesor);
     if (cursoActivoId) setVistaActiva('panel-curso');
     else if (nivelActivoId) setVistaActiva('panel-nivel');
-    else setVistaActiva('crear-evaluacion');
+    else setVistaActiva('inicio');
   };
 
   const eliminarResultadoEscaneo = async (resultadoObj) => {
@@ -709,7 +710,6 @@ export default function App() {
     doc.save(`Hojas_${config.tituloPrueba.replace(/\s+/g, '_')}${sufijoArchivo}.pdf`);
   };
 
-  // PDF DE DEVOLUCIÓN: Usa la foto/escaneo real con las marcas encima + cuadro de nota y puntaje
   const descargarHojasCorregidasPDF = (listaResultadosAExportar, sufijoArchivo = '') => {
     if (!listaResultadosAExportar || listaResultadosAExportar.length === 0) {
       alert('No hay resultados corregidos para descargar.');
@@ -733,7 +733,6 @@ export default function App() {
       const res = listaOrdenada[i];
       const respuestasAl = res.respuestas || {};
 
-      // Encabezado superior con datos del estudiante, puntaje y Nota Final
       doc.setDrawColor(200, 210, 225);
       doc.setFillColor(248, 250, 252);
       doc.roundedRect(14, 10, 188, 28, 3, 3, 'FD');
@@ -759,11 +758,9 @@ export default function App() {
       doc.setFontSize(15);
       doc.text(Number(res.nota).toFixed(1), 182.5, 30, { align: 'center' });
 
-      // Si tiene la foto/escaneo real con las marcas encima, incrustarla a página completa
       if (res.imagenProcesada) {
         doc.addImage(res.imagenProcesada, 'JPEG', 18, 41, 180, 228);
       } else {
-        // Respaldo vectorial solo si fue escaneado antes de activar guardado de imagen
         doc.setTextColor(71, 85, 105);
         doc.setFontSize(8);
         doc.text('Leyenda: [Verde] Correcta | [Rojo] Incorrecta | [Azul] Respuesta Correcta | BLANCO / DOBLE', 18, 44);
@@ -832,7 +829,6 @@ export default function App() {
     doc.save(`Corregidas_${config.tituloPrueba.replace(/\s+/g, '_')}${sufijoArchivo}.pdf`);
   };
 
-  // Fórmula oficial compatible con escaladenotas.cl
   const calcularNota = (puntaje, total) => {
     const nMin = Number(config.notaMin ?? 1.0);
     const nMax = Number(config.notaMax ?? 7.0);
@@ -1077,6 +1073,179 @@ export default function App() {
       />
 
       <main style={{ flex: 1, padding: '24px', maxWidth: '1100px', margin: '0 auto', boxSizing: 'border-box' }}>
+        {/* VISTA INICIO: PANEL PRINCIPAL DEL DOCENTE */}
+        {vistaActiva === 'inicio' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            {/* Cabecera de bienvenida */}
+            <div
+              style={{
+                background: 'linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)',
+                color: '#ffffff',
+                padding: '26px 28px',
+                borderRadius: '16px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '16px'
+              }}
+            >
+              <div>
+                <div style={{ fontSize: '12px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', opacity: 0.85 }}>
+                  Sistema OMR • {profesor.asignatura || 'Gestión Escolar'}
+                </div>
+                <h1 style={{ margin: '4px 0 6px 0', fontSize: '26px', fontWeight: '800' }}>
+                  Hola, {profesor.nombre}
+                </h1>
+                <p style={{ margin: 0, fontSize: '14px', opacity: 0.9 }}>
+                  Tienes {niveles.length} nivel(es) y {evaluacionesPropias.length} evaluación(es) creadas en tu cuenta.
+                </p>
+              </div>
+
+              <button
+                onClick={() => iniciarNuevaEvaluacion()}
+                style={{
+                  background: '#ffffff',
+                  color: '#1e3a8a',
+                  border: 'none',
+                  borderRadius: '10px',
+                  padding: '12px 18px',
+                  fontWeight: '800',
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.12)'
+                }}
+              >
+                <FilePlus2 size={18} /> Crear Nueva Evaluación
+              </button>
+            </div>
+
+            {/* Accesos directos a Niveles y Cursos */}
+            <div>
+              <h2 style={{ margin: '0 0 12px 0', fontSize: '17px', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <GraduationCap size={20} color="#2563eb" /> Mis Niveles y Cursos
+              </h2>
+
+              {niveles.length === 0 ? (
+                <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #cbd5e1', fontSize: '14px', color: '#64748b' }}>
+                  Aún no tienes cursos asignados. Si eres administrador, configúralos en <strong>Mis Cursos → Configurar Niveles y Cursos</strong>.
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: '14px' }}>
+                  {niveles.map((niv) => {
+                    const cursosNiv = cursos.filter((c) => c.nivel_id === niv.id);
+                    return (
+                      <div
+                        key={niv.id}
+                        onClick={() => {
+                          setNivelActivoId(niv.id);
+                          setCursoActivoId('');
+                          setVistaActiva('panel-nivel');
+                        }}
+                        style={{
+                          background: '#ffffff',
+                          padding: '18px 20px',
+                          borderRadius: '13px',
+                          border: '1px solid #cbd5e1',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'space-between',
+                          gap: '10px',
+                          boxShadow: '0 2px 5px rgba(0,0,0,0.02)'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontWeight: '800', fontSize: '17px', color: '#0f172a' }}>{niv.nombre}</span>
+                          <span style={{ fontSize: '12px', fontWeight: '700', background: '#eff6ff', color: '#1d4ed8', padding: '3px 9px', borderRadius: '999px' }}>
+                            {cursosNiv.length} curso{cursosNiv.length === 1 ? '' : 's'}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '12.5px', color: '#64748b' }}>
+                          {cursosNiv.length > 0
+                            ? cursosNiv.map((c) => c.nombre).join(' • ')
+                            : 'Sin cursos creados'}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Evaluaciones Recientes */}
+            <div style={{ background: '#ffffff', padding: '20px', borderRadius: '14px', border: '1px solid #cbd5e1' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                <h2 style={{ margin: 0, fontSize: '17px', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <FolderOpen size={20} color="#16a34a" /> Mis Evaluaciones Recientes
+                </h2>
+              </div>
+
+              {evaluacionesPropias.length === 0 ? (
+                <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '9px', fontSize: '14px', color: '#64748b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                  <span>Aún no has creado ninguna evaluación.</span>
+                  <button
+                    onClick={() => iniciarNuevaEvaluacion()}
+                    style={{ background: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontWeight: '700', fontSize: '13px', cursor: 'pointer' }}
+                  >
+                    + Crear mi primera evaluación
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {evaluacionesPropias.slice(0, 6).map((ev) => {
+                    const cObj = cursos.find((c) => c.id === ev.curso_id);
+                    const nObj = niveles.find((n) => n.id === ev.nivel_id);
+                    const etiquetaDestino = cObj
+                      ? cObj.nombre
+                      : nObj
+                      ? `Nivel Completo: ${nObj.nombre}`
+                      : 'Sin asignar';
+
+                    return (
+                      <div
+                        key={ev.id}
+                        onClick={() =>
+                          abrirEvaluacion(
+                            ev,
+                            ev.curso_id || '',
+                            ev.curso_id ? 'curso' : 'nivel'
+                          )
+                        }
+                        style={{
+                          padding: '14px 16px',
+                          borderRadius: '10px',
+                          border: '1px solid #e2e8f0',
+                          background: '#f8fafc',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          flexWrap: 'wrap',
+                          gap: '10px'
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontWeight: '700', fontSize: '15px', color: '#0f172a' }}>{ev.titulo}</div>
+                          <div style={{ fontSize: '12.5px', color: '#64748b', marginTop: '2px' }}>
+                            {etiquetaDestino} • {ev.asignatura} • {ev.num_preguntas} preguntas
+                          </div>
+                        </div>
+                        <span style={{ background: '#eff6ff', color: '#1d4ed8', padding: '6px 12px', borderRadius: '8px', fontWeight: '700', fontSize: '12.5px' }}>
+                          Abrir Evaluación →
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* VISTA A: PANEL DE NIVEL */}
         {vistaActiva === 'panel-nivel' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -1565,7 +1734,7 @@ export default function App() {
                     onClick={() => {
                       if (contextoAperturaEval === 'curso' && cursoActivoId) setVistaActiva('panel-curso');
                       else if (nivelActivoId) setVistaActiva('panel-nivel');
-                      else setVistaActiva('crear-evaluacion');
+                      else setVistaActiva('inicio');
                     }}
                     style={{
                       background: '#f1f5f9', border: 'none', borderRadius: '8px',
@@ -1915,7 +2084,7 @@ export default function App() {
               </div>
             )}
 
-            {/* SUBVISTA C: ESCANEAR (Botones limpios y separados) */}
+            {/* SUBVISTA C: ESCANEAR */}
             {subVistaEval === 'escanear' && (
               <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
@@ -1935,7 +2104,6 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Dos botones independientes y ordenados */}
                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
                   <button
                     type="button"
