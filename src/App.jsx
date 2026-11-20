@@ -75,21 +75,6 @@ export default function App() {
   const [rutExtra, setRutExtra] = useState('');
   const [nombreExtra, setNombreExtra] = useState('');
 
-  // Guardar ubicación actual en localStorage para no perderla al recargar o volver a entrar
-  useEffect(() => {
-    if (!profesor?.id) return;
-    const estadoNav = {
-      vistaActiva,
-      nivelActivoId,
-      cursoActivoId,
-      evalId: config.id || '',
-      subVistaEval,
-      contextoAperturaEval,
-      filtroCursoEnNivel
-    };
-    localStorage.setItem(`omr_nav_estado_${profesor.id}`, JSON.stringify(estadoNav));
-  }, [profesor?.id, vistaActiva, nivelActivoId, cursoActivoId, config.id, subVistaEval, contextoAperturaEval, filtroCursoEnNivel]);
-
   useEffect(() => {
     if (!supabase) {
       setCargandoSesion(false);
@@ -105,11 +90,8 @@ export default function App() {
       }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSesion(session);
-      // Evitar que al cambiar de pestaña en Chrome (TOKEN_REFRESHED) se reinicie la vista
-      if (event === 'TOKEN_REFRESHED') return;
-
       if (session?.user) {
         cargarPerfilUsuario(session.user);
       } else {
@@ -168,50 +150,40 @@ export default function App() {
     }));
     setCargandoSesion(false);
 
-    const { nivelesVisibles, cursosVisibles } = await cargarEstructuraEscolar(perfilFinal);
-    const { propias } = await cargarEvaluacionesNube(perfilFinal);
+    const { nivelesVisibles } = await cargarEstructuraEscolar(perfilFinal);
+    if (nivelesVisibles && nivelesVisibles.length > 0) {
+      setNivelActivoId(nivelesVisibles[0].id);
+      setVistaActiva('panel-nivel');
+    } else {
+      setVistaActiva('crear-evaluacion');
+    }
+    await cargarEvaluacionesNube(perfilFinal);
+  };
 
-    // Restaurar la última ubicación exacta del docente
-    let restaurado = false;
-    try {
-      const guardadoRaw = localStorage.getItem(`omr_nav_estado_${user.id}`);
-      if (guardadoRaw) {
-        const nav = JSON.parse(guardadoRaw);
-        if (nav.nivelActivoId && nivelesVisibles.some((n) => n.id === nav.nivelActivoId)) {
-          setNivelActivoId(nav.nivelActivoId);
-        } else if (nivelesVisibles.length > 0) {
-          setNivelActivoId(nivelesVisibles[0].id);
-        }
-
-        if (nav.cursoActivoId && cursosVisibles.some((c) => c.id === nav.cursoActivoId)) {
-          setCursoActivoId(nav.cursoActivoId);
-        }
-
-        if (nav.vistaActiva === 'detalle-evaluacion' && nav.evalId) {
-          const evEncontrada = (propias || []).find((e) => String(e.id) === String(nav.evalId));
-          if (evEncontrada) {
-            abrirEvaluacion(evEncontrada, nav.cursoActivoId || '', nav.contextoAperturaEval || 'curso');
-            if (nav.subVistaEval) setSubVistaEval(nav.subVistaEval);
-            if (nav.filtroCursoEnNivel) setFiltroCursoEnNivel(nav.filtroCursoEnNivel);
-            restaurado = true;
-          }
-        } else if (nav.vistaActiva) {
-          setVistaActiva(nav.vistaActiva);
-          restaurado = true;
-        }
-      }
-    } catch (e) {
-      console.warn('No se pudo restaurar navegación:', e);
+  useEffect(() => {
+    if (!sesion?.user || vistaActiva !== 'detalle-evaluacion') return;
+    if (config.id) {
+      cargarResultadosNube(config.id);
+    } else {
+      setResultadosCurso([]);
+      setEximidosRuts([]);
     }
 
-    if (!restaurado) {
-      if (nivelesVisibles && nivelesVisibles.length > 0) {
-        setNivelActivoId(nivelesVisibles[0].id);
-        setVistaActiva('panel-nivel');
-      } else {
-        setVistaActiva('crear-evaluacion');
-      }
+    if (contextoAperturaEval === 'curso' && cursoActivoId) {
+      cargarEstudiantesParaEval(cursoActivoId, null);
+    } else if (config.cursoId) {
+      cargarEstudiantesParaEval(config.cursoId, null);
+    } else if (config.nivelId) {
+      cargarEstudiantesParaEval(null, config.nivelId);
+    } else {
+      setEstudiantesCursoEval([]);
+      setSeleccionadosImprimir([]);
     }
+  }, [config.id, config.cursoId, config.nivelId, vistaActiva, contextoAperturaEval, cursoActivoId, cursos]);
+
+  const cerrarSesion = async () => {
+    if (supabase) await supabase.auth.signOut();
+    setSesion(null);
   };
 
   const obtenerNombreNivelActivo = () => {
