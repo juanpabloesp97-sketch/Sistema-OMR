@@ -4,15 +4,15 @@ import QRCode from 'qrcode';
 import {
   FileDown, User, CheckCircle2, Camera, CheckSquare, Square,
   Cloud, BarChart3, Printer, Clock, AlertCircle, Save, Trash2, UserPlus,
-  UserX, UserCheck, Share2, GraduationCap, Users, FolderOpen, ArrowLeft, FilePlus2, Filter, Eye
+  UserX, UserCheck, Share2, GraduationCap, Users, FolderOpen, ArrowLeft, FilePlus2, Filter, Eye, Upload
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import VisorCurso from './VisorCurso';
 import PautaEditor from './PautaEditor';
 import AnalisisPanel from './AnalisisPanel';
-import CamaraOMR from './CamaraOMR';
 import Login from './Login';
 import GestionUsuarios from './GestionUsuarios';
+import CamaraOMR from './CamaraOMR';
 import { procesarHojaOMR } from './omrEngine';
 import { convertirPdfAImagenes } from './pdfToImages';
 import { supabase } from './supabaseClient';
@@ -71,8 +71,8 @@ export default function App() {
 
   const [ultimoResultado, setUltimoResultado] = useState(null);
   const [procesando, setProcesando] = useState(false);
-  const [camaraAbierta, setCamaraAbierta] = useState(false);
   const [progresoLote, setProgresoLote] = useState('');
+  const [camaraAbierta, setCamaraAbierta] = useState(false);
 
   const [rutExtra, setRutExtra] = useState('');
   const [nombreExtra, setNombreExtra] = useState('');
@@ -276,8 +276,8 @@ export default function App() {
   const valorSelectDestino = config.cursoId
     ? config.cursoId
     : config.nivelId
-      ? `nivel:${config.nivelId}`
-      : '';
+    ? `nivel:${config.nivelId}`
+    : '';
 
   const toggleEximirEstudiante = async (rut) => {
     const rutNorm = rut.trim().toLowerCase();
@@ -412,7 +412,8 @@ export default function App() {
           total: Number(r.puntaje_total ?? 0),
           porcentaje: Number(r.porcentaje ?? 0),
           nota: Number(r.nota ?? 1.0),
-          respuestas: r.respuestas_alumno || {}
+          respuestas: r.respuestas_alumno || {},
+          imagenProcesada: r.imagen_corregida || null
         }))
       );
     }
@@ -708,6 +709,7 @@ export default function App() {
     doc.save(`Hojas_${config.tituloPrueba.replace(/\s+/g, '_')}${sufijoArchivo}.pdf`);
   };
 
+  // PDF DE DEVOLUCIÓN: Usa la foto/escaneo real con las marcas encima + cuadro de nota y puntaje
   const descargarHojasCorregidasPDF = (listaResultadosAExportar, sufijoArchivo = '') => {
     if (!listaResultadosAExportar || listaResultadosAExportar.length === 0) {
       alert('No hay resultados corregidos para descargar.');
@@ -731,92 +733,98 @@ export default function App() {
       const res = listaOrdenada[i];
       const respuestasAl = res.respuestas || {};
 
+      // Encabezado superior con datos del estudiante, puntaje y Nota Final
       doc.setDrawColor(200, 210, 225);
       doc.setFillColor(248, 250, 252);
-      doc.roundedRect(14, 12, 188, 32, 3, 3, 'FD');
+      doc.roundedRect(14, 10, 188, 28, 3, 3, 'FD');
 
       doc.setTextColor(15, 23, 42);
-      doc.setFontSize(13);
+      doc.setFontSize(12);
       doc.setFont('helvetica', 'bold');
-      doc.text(`${config.tituloPrueba} — Hoja Corregida`, 18, 20);
+      doc.text(`${config.tituloPrueba} — Revisión OMR`, 18, 17);
 
-      doc.setFontSize(9.5);
+      doc.setFontSize(9);
       doc.setFont('helvetica', 'normal');
-      doc.text(`Estudiante: ${res.nombre}`, 18, 27);
-      doc.text(`RUT: ${res.rut}   |   Curso: ${res.curso || '-'}   |   Asignatura: ${config.asignatura}`, 18, 33);
-      doc.text(`Puntaje: ${res.puntaje} / ${res.total} pts (${res.porcentaje}%)   |   Exigencia: ${config.exigencia}%`, 18, 39);
+      doc.text(`Estudiante: ${res.nombre}`, 18, 23);
+      doc.text(`RUT: ${res.rut}   |   Curso: ${res.curso || '-'}   |   Asignatura: ${config.asignatura}`, 18, 28.5);
+      doc.text(`Puntaje: ${res.puntaje} / ${res.total} pts (${res.porcentaje}%)   |   Exigencia: ${config.exigencia}%`, 18, 34);
 
       const aprobado = Number(res.nota) >= Number(config.notaAprob || 4.0);
       doc.setFillColor(aprobado ? 22 : 220, aprobado ? 163 : 38, aprobado ? 74 : 38);
-      doc.roundedRect(166, 15, 32, 26, 2.5, 2.5, 'F');
+      doc.roundedRect(167, 12.5, 31, 23, 2.5, 2.5, 'F');
       doc.setTextColor(255, 255, 255);
-      doc.setFontSize(8.5);
-      doc.setFont('helvetica', 'bold');
-      doc.text('NOTA FINAL', 182, 22, { align: 'center' });
-      doc.setFontSize(16);
-      doc.text(Number(res.nota).toFixed(1), 182, 34, { align: 'center' });
-
-      doc.setTextColor(71, 85, 105);
       doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      doc.text('Leyenda:   [Verde] Correcta    |    [Rojo] Incorrecta    |    [Azul] Respuesta Correcta    |    BLANCO / DOBLE', 18, 49);
+      doc.setFont('helvetica', 'bold');
+      doc.text('NOTA FINAL', 182.5, 18.5, { align: 'center' });
+      doc.setFontSize(15);
+      doc.text(Number(res.nota).toFixed(1), 182.5, 30, { align: 'center' });
 
-      for (let p = 1; p <= totalPreg; p++) {
-        const col = p <= 25 ? 0 : 1;
-        const fila = p <= 25 ? p - 1 : p - 26;
-        const baseX = col === 0 ? 24 : 116;
-        const baseY = 56 + fila * 7.8;
+      // Si tiene la foto/escaneo real con las marcas encima, incrustarla a página completa
+      if (res.imagenProcesada) {
+        doc.addImage(res.imagenProcesada, 'JPEG', 18, 41, 180, 228);
+      } else {
+        // Respaldo vectorial solo si fue escaneado antes de activar guardado de imagen
+        doc.setTextColor(71, 85, 105);
+        doc.setFontSize(8);
+        doc.text('Leyenda: [Verde] Correcta | [Rojo] Incorrecta | [Azul] Respuesta Correcta | BLANCO / DOBLE', 18, 44);
 
-        const respMarcada = respuestasAl[p] || '';
-        const itemPauta = config.pauta[p];
-        const correcta = typeof itemPauta === 'object' ? itemPauta?.correcta : itemPauta;
-        const esCorrecta = Boolean(correcta) && respMarcada === correcta;
+        for (let p = 1; p <= totalPreg; p++) {
+          const col = p <= 25 ? 0 : 1;
+          const fila = p <= 25 ? p - 1 : p - 26;
+          const baseX = col === 0 ? 24 : 116;
+          const baseY = 52 + fila * 7.8;
 
-        doc.setTextColor(15, 23, 42);
-        doc.setFontSize(9);
-        doc.setFont('helvetica', 'bold');
-        doc.text(`${p}.`, baseX - 7, baseY + 1.2);
+          const respMarcada = respuestasAl[p] || '';
+          const itemPauta = config.pauta[p];
+          const correcta = typeof itemPauta === 'object' ? itemPauta?.correcta : itemPauta;
+          const esCorrecta = Boolean(correcta) && respMarcada === correcta;
 
-        opciones.forEach((letra, idx) => {
-          const cx = baseX + idx * 10;
+          doc.setTextColor(15, 23, 42);
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'bold');
+          doc.text(`${p}.`, baseX - 7, baseY + 1.2);
 
-          if (respMarcada === letra) {
-            doc.setFillColor(esCorrecta ? 22 : 220, esCorrecta ? 163 : 38, esCorrecta ? 74 : 38);
-            doc.circle(cx, baseY, 2.7, 'F');
-            doc.setTextColor(255, 255, 255);
-          } else if (correcta === letra && !esCorrecta) {
-            doc.setDrawColor(37, 99, 235);
-            doc.setLineWidth(0.6);
-            doc.circle(cx, baseY, 2.7, 'S');
-            doc.setTextColor(37, 99, 235);
-          } else {
-            doc.setDrawColor(160, 170, 185);
-            doc.setLineWidth(0.25);
-            doc.circle(cx, baseY, 2.7, 'S');
-            doc.setTextColor(100, 116, 139);
-          }
+          opciones.forEach((letra, idx) => {
+            const cx = baseX + idx * 10;
 
+            if (respMarcada === letra) {
+              doc.setFillColor(esCorrecta ? 22 : 220, esCorrecta ? 163 : 38, esCorrecta ? 74 : 38);
+              doc.circle(cx, baseY, 2.7, 'F');
+              doc.setTextColor(255, 255, 255);
+            } else if (correcta === letra && !esCorrecta) {
+              doc.setDrawColor(37, 99, 235);
+              doc.setLineWidth(0.6);
+              doc.circle(cx, baseY, 2.7, 'S');
+              doc.setTextColor(37, 99, 235);
+            } else {
+              doc.setDrawColor(160, 170, 185);
+              doc.setLineWidth(0.25);
+              doc.circle(cx, baseY, 2.7, 'S');
+              doc.setTextColor(100, 116, 139);
+            }
+
+            doc.setFontSize(7.5);
+            doc.setFont('helvetica', 'bold');
+            doc.text(letra, cx - 1.2, baseY + 0.9);
+          });
+
+          const estadoX = baseX + opciones.length * 10 + 1;
           doc.setFontSize(7.5);
           doc.setFont('helvetica', 'bold');
-          doc.text(letra, cx - 1.2, baseY + 0.9);
-        });
 
-        const estadoX = baseX + opciones.length * 10 + 1;
-        doc.setFontSize(7.5);
-        doc.setFont('helvetica', 'bold');
-
-        if (respMarcada === '') {
-          doc.setTextColor(100, 116, 139);
-          doc.text('X  BLANCO', estadoX, baseY + 1);
-        } else if (respMarcada === 'DOBLE') {
-          doc.setTextColor(217, 119, 6);
-          doc.text('X  DOBLE', estadoX, baseY + 1);
-        } else if (esCorrecta) {
-          doc.setTextColor(22, 163, 74);
-          doc.text('OK', estadoX, baseY + 1);
-        } else if (correcta) {
-          doc.setTextColor(220, 38, 38);
-          doc.text(`X (${correcta})`, estadoX, baseY + 1);
+          if (respMarcada === '') {
+            doc.setTextColor(100, 116, 139);
+            doc.text('X  BLANCO', estadoX, baseY + 1);
+          } else if (respMarcada === 'DOBLE') {
+            doc.setTextColor(217, 119, 6);
+            doc.text('X  DOBLE', estadoX, baseY + 1);
+          } else if (esCorrecta) {
+            doc.setTextColor(22, 163, 74);
+            doc.text('OK', estadoX, baseY + 1);
+          } else if (correcta) {
+            doc.setTextColor(220, 38, 38);
+            doc.text(`X (${correcta})`, estadoX, baseY + 1);
+          }
         }
       }
     }
@@ -963,7 +971,8 @@ export default function App() {
               puntaje_total: Number(reg.total),
               porcentaje: Number(reg.porcentaje),
               nota: Number(reg.nota),
-              respuestas_alumno: reg.respuestas
+              respuestas_alumno: reg.respuestas,
+              imagen_corregida: reg.imagenProcesada || null
             }));
 
             const { error: insertError } = await supabase.from('resultados').insert(filasSupabase).select();
@@ -1005,8 +1014,8 @@ export default function App() {
     contextoAperturaEval === 'curso' && cursoActivoId
       ? cursoActivoId
       : filtroCursoEnNivel !== 'TODOS'
-        ? filtroCursoEnNivel
-        : '';
+      ? filtroCursoEnNivel
+      : '';
 
   const cursoFiltroObj = cursos.find((c) => c.id === cursoFiltroEfectivo);
 
@@ -1018,10 +1027,10 @@ export default function App() {
 
   const resultadosVisiblesEval = cursoFiltroEfectivo
     ? resultadosCurso.filter(
-      (r) =>
-        (cursoFiltroObj && r.curso === cursoFiltroObj.nombre) ||
-        rutsPermitidosFiltro.has(r.rut.trim().toLowerCase())
-    )
+        (r) =>
+          (cursoFiltroObj && r.curso === cursoFiltroObj.nombre) ||
+          rutsPermitidosFiltro.has(r.rut.trim().toLowerCase())
+      )
     : resultadosCurso;
 
   const rutsRendidos = new Set(resultadosVisiblesEval.map((r) => r.rut.trim().toLowerCase()));
@@ -1906,10 +1915,10 @@ export default function App() {
               </div>
             )}
 
-            {/* SUBVISTA C: ESCANEAR */}
+            {/* SUBVISTA C: ESCANEAR (Botones limpios y separados) */}
             {subVistaEval === 'escanear' && (
               <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
                   <h3 style={{ margin: 0, fontSize: '18px' }}>Escanear Hoja de Respuestas o Subir PDF</h3>
 
                   {resultadosVisiblesEval.length > 0 && (
@@ -1926,50 +1935,67 @@ export default function App() {
                   )}
                 </div>
 
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', background: procesando ? '#94a3b8' : '#2563eb', color: 'white', padding: '12px 20px', borderRadius: '10px', cursor: procesando ? 'wait' : 'pointer', fontWeight: '700', fontSize: '15px' }}>
-                  <Camera size={20} />
-                  {procesando ? (progresoLote || 'Procesando...') : 'Subir Foto o PDF Escaneado'}
-                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                    <button
-                      onClick={() => setCamaraAbierta(true)}
+                {/* Dos botones independientes y ordenados */}
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    onClick={() => setCamaraAbierta(true)}
+                    disabled={procesando}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '9px',
+                      background: procesando ? '#94a3b8' : '#16a34a',
+                      color: '#ffffff',
+                      border: 'none',
+                      padding: '12px 18px',
+                      borderRadius: '10px',
+                      cursor: procesando ? 'wait' : 'pointer',
+                      fontWeight: '700',
+                      fontSize: '14.5px'
+                    }}
+                  >
+                    <Camera size={19} />
+                    Escanear con Cámara (Celular)
+                  </button>
+
+                  <label
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '9px',
+                      background: procesando ? '#94a3b8' : '#2563eb',
+                      color: '#ffffff',
+                      padding: '12px 18px',
+                      borderRadius: '10px',
+                      cursor: procesando ? 'wait' : 'pointer',
+                      fontWeight: '700',
+                      fontSize: '14.5px'
+                    }}
+                  >
+                    <Upload size={19} />
+                    {procesando ? (progresoLote || 'Procesando...') : 'Subir Foto o PDF Escaneado'}
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      multiple
+                      onChange={manejarEscaneo}
                       disabled={procesando}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '10px',
-                        background: '#16a34a',
-                        color: 'white',
-                        border: 'none',
-                        padding: '12px 20px',
-                        borderRadius: '10px',
-                        cursor: 'pointer',
-                        fontWeight: '700',
-                        fontSize: '15px'
-                      }}
-                    >
-                      <Camera size={20} />
-                      Escanear con Cámara (Celular)
-                    </button>
-
-                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', background: procesando ? '#94a3b8' : '#2563eb', color: 'white', padding: '12px 20px', borderRadius: '10px', cursor: procesando ? 'wait' : 'pointer', fontWeight: '700', fontSize: '15px' }}>
-                      <FileDown size={20} />
-                      {procesando ? (progresoLote || 'Procesando...') : 'Subir Foto o PDF Escaneado'}
-                      <input type="file" accept="image/*,application/pdf" multiple onChange={manejarEscaneo} disabled={procesando} style={{ display: 'none' }} />
-                    </label>
-                  </div>
-
-                  {camaraAbierta && (
-                    <CamaraOMR
-                      tituloPrueba={config.tituloPrueba}
-                      onCerrar={() => setCamaraAbierta(false)}
-                      onCapturarImagen={(fileCapturado) => {
-                        setCamaraAbierta(false);
-                        manejarEscaneo({ target: { files: [fileCapturado], value: '' } });
-                      }}
+                      style={{ display: 'none' }}
                     />
-                  )}
-                  <input type="file" accept="image/*,application/pdf" multiple onChange={manejarEscaneo} disabled={procesando} style={{ display: 'none' }} />
-                </label>
+                  </label>
+                </div>
+
+                {camaraAbierta && (
+                  <CamaraOMR
+                    tituloPrueba={config.tituloPrueba}
+                    onCerrar={() => setCamaraAbierta(false)}
+                    onCapturarImagen={(fileCapturado) => {
+                      setCamaraAbierta(false);
+                      manejarEscaneo({ target: { files: [fileCapturado], value: '' } });
+                    }}
+                  />
+                )}
 
                 {ultimoResultado && (
                   <div style={{ marginTop: '20px', padding: '16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #cbd5e1' }}>
