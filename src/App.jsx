@@ -2215,7 +2215,57 @@ export default function App() {
             {/* SUBVISTA E: ANÁLISIS Y REPORTES */}
             {subVistaEval === 'analisis' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                <AnalisisPanel resultados={resultadosVisiblesEval} config={config} />
+                <AnalisisPanel
+                  resultados={resultadosVisiblesEval}
+                  config={config}
+                  onActualizarRespuesta={async (resultadoId, nuevasRespuestas) => {
+                    const totalPreg = Number(config.numPreguntas);
+                    let puntosObtenidos = 0;
+                    let puntosTotales = 0;
+
+                    for (let i = 1; i <= totalPreg; i++) {
+                      const item = config.pauta[i];
+                      const correcta = typeof item === 'object' ? item?.correcta : item;
+                      const puntajeItem = typeof item === 'object' ? Number(item?.puntaje || 1) : 1;
+                      if (correcta) {
+                        puntosTotales += puntajeItem;
+                        if (nuevasRespuestas[i] === correcta) puntosObtenidos += puntajeItem;
+                      }
+                    }
+                    if (puntosTotales === 0) puntosTotales = totalPreg;
+
+                    const porcentaje = Math.round((puntosObtenidos / puntosTotales) * 100);
+                    const nota = calcularNota(puntosObtenidos, puntosTotales);
+
+                    if (supabase && resultadoId) {
+                      const { error } = await supabase
+                        .from('resultados')
+                        .update({
+                          respuestas_alumno: nuevasRespuestas,
+                          puntaje_obtenido: puntosObtenidos,
+                          puntaje_total: puntosTotales,
+                          porcentaje,
+                          nota
+                        })
+                        .eq('id', resultadoId);
+
+                      if (error) {
+                        alert('Error al guardar cambio: ' + error.message);
+                        return null;
+                      }
+                    }
+
+                    setResultadosCurso((prev) =>
+                      prev.map((r) =>
+                        r.id === resultadoId
+                          ? { ...r, respuestas: nuevasRespuestas, puntaje: puntosObtenidos, total: puntosTotales, porcentaje, nota }
+                          : r
+                      )
+                    );
+
+                    return { puntaje: puntosObtenidos, total: puntosTotales, porcentaje, nota };
+                  }}
+                />
 
                 <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>

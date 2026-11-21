@@ -771,7 +771,7 @@ export default function AnalisisPanel({
                         }}
                       >
                         {al.nombre}
-                        {al.imagenUrl && <Eye size={14} color="#64748b" title="Tiene hoja escaneada" />}
+                        {al.imagenProcesada && <Eye size={14} color="#64748b" title="Tiene hoja escaneada" />}
                       </button>
                     </td>
                     <td style={{ padding: '10px', textAlign: 'center', color: '#475569' }}>{al.curso || '-'}</td>
@@ -1086,7 +1086,7 @@ export default function AnalisisPanel({
             onClick={(e) => e.stopPropagation()}
             style={{
               background: '#ffffff', borderRadius: '16px', width: '100%',
-              maxWidth: modalAlumno.imagenUrl ? '1180px' : '740px',
+              maxWidth: modalAlumno.imagenProcesada ? '1180px' : '740px',
               maxHeight: '90vh', display: 'flex', flexDirection: 'column',
               boxShadow: '0 25px 50px -12px rgba(0,0,0,0.28)', overflow: 'hidden'
             }}
@@ -1131,7 +1131,7 @@ export default function AnalisisPanel({
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: modalAlumno.imagenUrl ? '1.15fr 0.85fr' : '1fr',
+                gridTemplateColumns: modalAlumno.imagenProcesada ? '1.15fr 0.85fr' : '1fr',
                 gap: '20px',
                 padding: '18px 22px',
                 overflowY: 'auto',
@@ -1231,7 +1231,7 @@ export default function AnalisisPanel({
               </div>
 
               {/* Columna Derecha: Foto guardada por el visor OMR */}
-              {modalAlumno.imagenUrl && (
+              {modalAlumno.imagenProcesada && (
                 <div style={{ background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                   <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                     <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569' }}>
@@ -1251,7 +1251,7 @@ export default function AnalisisPanel({
 
                   <div style={{ width: '100%', maxHeight: '68vh', overflow: 'auto', textAlign: 'center' }}>
                     <img
-                      src={modalAlumno.imagenUrl}
+                      src={modalAlumno.imagenProcesada}
                       alt={`Hoja de ${modalAlumno.nombre}`}
                       style={{
                         width: zoomImagen ? '160%' : '100%',
