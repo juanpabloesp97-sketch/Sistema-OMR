@@ -29,6 +29,7 @@ const PERMISOS_RESPALDO = {
     ver_evals_depto: true,
     editar_evals_ajenas: true,
     escanear_hojas: true,
+    corregir_manual_propias: true,
     corregir_manual_ajenas: true,
     descargar_reportes: true
   },
@@ -43,6 +44,7 @@ const PERMISOS_RESPALDO = {
     ver_evals_depto: true,
     editar_evals_ajenas: false,
     escanear_hojas: true,
+    corregir_manual_propias: true,
     corregir_manual_ajenas: false,
     descargar_reportes: true
   },
@@ -57,6 +59,7 @@ const PERMISOS_RESPALDO = {
     ver_evals_depto: true,
     editar_evals_ajenas: false,
     escanear_hojas: true,
+    corregir_manual_propias: true,
     corregir_manual_ajenas: false,
     descargar_reportes: true
   },
@@ -71,6 +74,7 @@ const PERMISOS_RESPALDO = {
     ver_evals_depto: false,
     editar_evals_ajenas: false,
     escanear_hojas: true,
+    corregir_manual_propias: true,
     corregir_manual_ajenas: false,
     descargar_reportes: true
   }
@@ -427,11 +431,8 @@ export default function App() {
     const asigUsuario = (perfilUsuario.asignatura || '').trim().toLowerCase();
 
     const filtradas = (todasEvals || []).filter((ev) => {
-      // 1. Siempre ve sus propias evaluaciones
       if (ev.docente_id === perfilUsuario.id) return true;
-      // 2. Si tiene permiso de ver todo el colegio (Admin / UTP)
       if (perfilUsuario.rol === 'admin' || permsUsuario?.ver_evals_colegio) return true;
-      // 3. Si es Jefe de Departamento (permiso ver_evals_depto): ve las de su misma asignatura
       if (permsUsuario?.ver_evals_depto && asigUsuario) {
         const asigEval = (ev.asignatura || '').trim().toLowerCase();
         return asigEval === asigUsuario;
@@ -548,7 +549,6 @@ export default function App() {
     }
     setEximidosRuts(Array.isArray(ev.eximidos) ? ev.eximidos : []);
 
-    // Si entra en modo supervisión de una prueba ajena, abrir directo en Análisis y Reportes
     const esPropia = ev.docente_id === profesor.id;
     const puedeEditarAjena = profesor.rol === 'admin' || Boolean(permisosActivos?.editar_evals_ajenas);
     setSubVistaEval(esPropia || puedeEditarAjena ? 'avance' : 'analisis');
@@ -1117,7 +1117,10 @@ export default function App() {
   const esSuperAdmin = profesor.rol === 'admin';
   const puedeEditarEvalActual = esSuperAdmin || esEvaluacionPropia || Boolean(permisosActivos?.editar_evals_ajenas);
   const puedeEscanearEvalActual = esSuperAdmin || (esEvaluacionPropia && permisosActivos?.escanear_hojas !== false) || Boolean(permisosActivos?.editar_evals_ajenas);
-  const puedeCorregirManualActual = esSuperAdmin || esEvaluacionPropia || Boolean(permisosActivos?.corregir_manual_ajenas);
+  const puedeCorregirManualActual =
+    esSuperAdmin ||
+    (esEvaluacionPropia && permisosActivos?.corregir_manual_propias !== false) ||
+    (!esEvaluacionPropia && Boolean(permisosActivos?.corregir_manual_ajenas));
   const puedeEximirActual = esSuperAdmin || (esEvaluacionPropia && permisosActivos?.eximir_estudiantes !== false) || Boolean(permisosActivos?.editar_evals_ajenas);
   const puedeEditarNominasActual = esSuperAdmin || Boolean(permisosActivos?.editar_nominas);
   const puedeGestionarUsuarios = esSuperAdmin || Boolean(permisosActivos?.gestionar_usuarios);

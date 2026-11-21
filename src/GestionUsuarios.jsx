@@ -18,6 +18,7 @@ const PERMISOS_DEFAULT = {
     ver_evals_depto: true,
     editar_evals_ajenas: true,
     escanear_hojas: true,
+    corregir_manual_propias: true,
     corregir_manual_ajenas: true,
     descargar_reportes: true
   },
@@ -32,6 +33,7 @@ const PERMISOS_DEFAULT = {
     ver_evals_depto: true,
     editar_evals_ajenas: false,
     escanear_hojas: true,
+    corregir_manual_propias: true,
     corregir_manual_ajenas: false,
     descargar_reportes: true
   },
@@ -46,6 +48,7 @@ const PERMISOS_DEFAULT = {
     ver_evals_depto: true,
     editar_evals_ajenas: false,
     escanear_hojas: true,
+    corregir_manual_propias: true,
     corregir_manual_ajenas: false,
     descargar_reportes: true
   },
@@ -60,6 +63,7 @@ const PERMISOS_DEFAULT = {
     ver_evals_depto: false,
     editar_evals_ajenas: false,
     escanear_hojas: true,
+    corregir_manual_propias: true,
     corregir_manual_ajenas: false,
     descargar_reportes: true
   }
@@ -76,6 +80,7 @@ const FILAS_PERMISOS = [
   { key: 'ver_evals_depto', categoria: '3. Evaluaciones y Pautas', label: 'Supervisar evaluaciones de su Departamento / Asignatura' },
   { key: 'editar_evals_ajenas', categoria: '3. Evaluaciones y Pautas', label: 'Editar pauta, escala, PDF o eliminar evaluaciones de otros' },
   { key: 'escanear_hojas', categoria: '4. Escaneo y Reportes', label: 'Imprimir hojas y escanear (cámara / PDF) en sus pruebas' },
+  { key: 'corregir_manual_propias', categoria: '4. Escaneo y Reportes', label: 'Corregir lectura manual (P1–P30) o borrar escaneos en pruebas propias' },
   { key: 'corregir_manual_ajenas', categoria: '4. Escaneo y Reportes', label: 'Corregir lectura manual (P1–P30) o borrar escaneos en pruebas ajenas' },
   { key: 'descargar_reportes', categoria: '4. Escaneo y Reportes', label: 'Ver gráficos, visor de hoja escaneada y descargar Excel / PDFs' }
 ];
@@ -148,7 +153,6 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
   };
 
   const togglePermiso = (rolId, permisoKey) => {
-    // Evitar que el admin se quite a sí mismo la gestión de cuentas por accidente
     if (rolId === 'admin' && permisoKey === 'gestionar_usuarios') return;
 
     setMatrizPermisos((prev) => ({
