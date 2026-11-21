@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { CheckSquare, Wand2 } from 'lucide-react';
+import { CheckSquare, Wand2, FileText, Upload, ExternalLink, Trash2 } from 'lucide-react';
 import { obtenerOAsPorNivel } from './oaMatematica';
+import { supabase } from './supabaseClient';
 
 export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
   const numPreguntas = Number(config.numPreguntas || 30);
@@ -9,10 +10,10 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
 
   const listaOAsNivel = obtenerOAsPorNivel(nivelNombre);
 
-  // Estado para asignación masiva rápida por rango de preguntas
   const [rangoInicio, setRangoInicio] = useState(1);
   const [rangoFin, setRangoFin] = useState(10);
   const [oaMasivo, setOaMasivo] = useState('');
+  const [subiendoPdf, setSubiendoPdf] = useState(false);
 
   const actualizarItem = (numP, campo, valor) => {
     const actual = pauta[numP];
@@ -62,6 +63,70 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
     setConfig((prev) => ({ ...prev, pauta: nuevaPauta }));
   };
 
+  const manejarSubidaPdfNube = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !supabase) return;
+
+    setSubiendoPdf(true);
+    try {
+      const nombreLimpio = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const rutaArchivo = `${config.docenteId || 'docente'}/${Date.now()}_${nombreLimpio}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('pruebas_pdf')
+        .upload(rutaArchivo, file, { upsert: true });
+
+      if (uploadError) {
+        alert('Error al subir PDF: ' + uploadError.message);
+        return;
+      }
+
+      const { data: publicUrlData } = supabase.storage
+        .from('pruebas_pdf')
+        .getPublicUrl(rutaArchivo);
+
+      const urlPublica = publicUrlData.publicUrl;
+
+      setConfig((prev) => ({
+        ...prev,
+        pdfPruebaUrl: urlPublica,
+        pdfPruebaNombre: file.name
+      }));
+
+      // Si la evaluación ya existe en la nube, guardar la URL de inmediato
+      if (config.id) {
+        await supabase
+          .from('evaluaciones')
+          .update({
+            pdf_prueba_url: urlPublica,
+            pdf_prueba_nombre: file.name
+          })
+          .eq('id', config.id);
+      }
+
+      alert('✅ PDF de la prueba guardado permanentemente.');
+    } catch (err) {
+      alert('No se pudo subir el PDF: ' + err.message);
+    } finally {
+      setSubiendoPdf(false);
+      e.target.value = '';
+    }
+  };
+
+  const quitarPdfPrueba = async () => {
+    setConfig((prev) => ({
+      ...prev,
+      pdfPruebaUrl: '',
+      pdfPruebaNombre: ''
+    }));
+    if (config.id && supabase) {
+      await supabase
+        .from('evaluaciones')
+        .update({ pdf_prueba_url: null, pdf_prueba_nombre: null })
+        .eq('id', config.id);
+    }
+  };
+
   return (
     <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
@@ -77,49 +142,103 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
           </p>
         </div>
 
-        {/* Escala rápida */}
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', fontSize: '12.5px', background: '#f8fafc', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <strong>Exigencia:</strong>
-            <input
-              type="number"
-              min="1"
-              max="100"
-              value={config.exigencia ?? 60}
-              onChange={(e) => setConfig({ ...config, exigencia: Number(e.target.value) })}
-              style={{ width: '48px', padding: '3px 5px', borderRadius: '5px', border: '1px solid #cbd5e1' }}
-            />%
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <strong>Mín:</strong>
-            <input
-              type="number"
-              step="0.1"
-              value={config.notaMin ?? 1.0}
-              onChange={(e) => setConfig({ ...config, notaMin: Number(e.target.value) })}
-              style={{ width: '48px', padding: '3px 5px', borderRadius: '5px', border: '1px solid #cbd5e1' }}
-            />
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <strong>Aprob:</strong>
-            <input
-              type="number"
-              step="0.1"
-              value={config.notaAprob ?? 4.0}
-              onChange={(e) => setConfig({ ...config, notaAprob: Number(e.target.value) })}
-              style={{ width: '48px', padding: '3px 5px', borderRadius: '5px', border: '1px solid #cbd5e1' }}
-            />
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <strong>Máx:</strong>
-            <input
-              type="number"
-              step="0.1"
-              value={config.notaMax ?? 7.0}
-              onChange={(e) => setConfig({ ...config, notaMax: Number(e.target.value) })}
-              style={{ width: '48px', padding: '3px 5px', borderRadius: '5px', border: '1px solid #cbd5e1' }}
-            />
-          </label>
+        {/* Fila de Escala + Subida Permanente de PDF de la Prueba en el espacio derecho */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', width: '100%' }}>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', fontSize: '12.5px', background: '#f8fafc', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <strong>Exigencia:</strong>
+              <input
+                type="number"
+                min="1"
+                max="100"
+                value={config.exigencia ?? 60}
+                onChange={(e) => setConfig({ ...config, exigencia: Number(e.target.value) })}
+                style={{ width: '48px', padding: '3px 5px', borderRadius: '5px', border: '1px solid #cbd5e1' }}
+              />%
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <strong>Mín:</strong>
+              <input
+                type="number"
+                step="0.1"
+                value={config.notaMin ?? 1.0}
+                onChange={(e) => setConfig({ ...config, notaMin: Number(e.target.value) })}
+                style={{ width: '48px', padding: '3px 5px', borderRadius: '5px', border: '1px solid #cbd5e1' }}
+              />
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <strong>Aprob:</strong>
+              <input
+                type="number"
+                step="0.1"
+                value={config.notaAprob ?? 4.0}
+                onChange={(e) => setConfig({ ...config, notaAprob: Number(e.target.value) })}
+                style={{ width: '48px', padding: '3px 5px', borderRadius: '5px', border: '1px solid #cbd5e1' }}
+              />
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <strong>Máx:</strong>
+              <input
+                type="number"
+                step="0.1"
+                value={config.notaMax ?? 7.0}
+                onChange={(e) => setConfig({ ...config, notaMax: Number(e.target.value) })}
+                style={{ width: '48px', padding: '3px 5px', borderRadius: '5px', border: '1px solid #cbd5e1' }}
+              />
+            </label>
+          </div>
+
+          {/* Botón permanente para subir/ver PDF de la prueba */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            {config.pdfPruebaUrl ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: '8px', padding: '7px 12px', fontSize: '12.5px' }}>
+                <FileText size={16} color="#1d4ed8" />
+                <span style={{ fontWeight: '700', color: '#1e3a8a', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={config.pdfPruebaNombre || 'Prueba PDF'}>
+                  {config.pdfPruebaNombre || 'Prueba_Adjunta.pdf'}
+                </span>
+                <a
+                  href={config.pdfPruebaUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: '#1d4ed8', display: 'inline-flex', alignItems: 'center' }}
+                  title="Abrir PDF en pestaña nueva"
+                >
+                  <ExternalLink size={14} />
+                </a>
+                <label style={{ cursor: 'pointer', color: '#2563eb', fontWeight: '700', marginLeft: '4px' }} title="Reemplazar PDF">
+                  Cambiar
+                  <input type="file" accept="application/pdf" onChange={manejarSubidaPdfNube} disabled={subiendoPdf} style={{ display: 'none' }} />
+                </label>
+                <button
+                  type="button"
+                  onClick={quitarPdfPrueba}
+                  style={{ background: 'transparent', border: 'none', color: '#dc2626', cursor: 'pointer', padding: '0 2px', display: 'flex', alignItems: 'center' }}
+                  title="Quitar PDF"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ) : (
+              <label
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '7px',
+                  background: subiendoPdf ? '#94a3b8' : '#0f172a',
+                  color: '#ffffff',
+                  padding: '8px 14px',
+                  borderRadius: '8px',
+                  fontSize: '12.5px',
+                  fontWeight: '700',
+                  cursor: subiendoPdf ? 'wait' : 'pointer'
+                }}
+              >
+                <Upload size={15} />
+                {subiendoPdf ? 'Subiendo PDF...' : 'Subir Prueba en PDF'}
+                <input type="file" accept="application/pdf" onChange={manejarSubidaPdfNube} disabled={subiendoPdf} style={{ display: 'none' }} />
+              </label>
+            )}
+          </div>
         </div>
       </div>
 
@@ -179,7 +298,7 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
         </button>
       </div>
 
-      {/* Grilla de 3 columnas con burbujas + menú desplegable compacto de OA */}
+      {/* Grilla de burbujas + menú desplegable compacto de OA */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: '10px' }}>
         {Array.from({ length: numPreguntas }, (_, idx) => {
           const p = idx + 1;
@@ -206,7 +325,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
                 {p}.
               </span>
 
-              {/* Botones circulares A B C D */}
               <div style={{ display: 'flex', gap: '5px' }}>
                 {opciones.map((letra) => {
                   const activa = correcta === letra;
@@ -236,7 +354,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
                 })}
               </div>
 
-              {/* Desplegable compacto de OA del nivel (o texto libre si no es 1°-8° básico) */}
               {listaOAsNivel.length > 0 ? (
                 <select
                   value={oaActual}

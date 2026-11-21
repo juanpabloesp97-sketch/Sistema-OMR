@@ -250,16 +250,6 @@ export default function AnalisisPanel({
     }
   };
 
-  // --- SUBIR PDF DE LA PRUEBA PARA VERLO DENTRO DEL DETALLE DEL ÍTEM ---
-  const manejarSubirPdfPrueba = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (pdfPruebaUrl) URL.revokeObjectURL(pdfPruebaUrl);
-    const url = URL.createObjectURL(file);
-    setPdfPruebaUrl(url);
-    setPdfPruebaNombre(file.name);
-  };
-
   // --- EXPORTAR EXCEL COMPLETO ---
   const exportarExcel = () => {
     if (resultados.length === 0) return;
@@ -340,26 +330,6 @@ export default function AnalisisPanel({
           </div>
 
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            <label
-              style={{
-                background: pdfPruebaUrl ? '#eff6ff' : '#f8fafc',
-                color: pdfPruebaUrl ? '#1d4ed8' : '#334155',
-                border: `1px solid ${pdfPruebaUrl ? '#93c5fd' : '#cbd5e1'}`,
-                borderRadius: '8px',
-                padding: '8px 12px',
-                fontSize: '12.5px',
-                fontWeight: '600',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px'
-              }}
-              title="Adjunta el PDF de la prueba para verlo al hacer clic en cualquier pregunta"
-            >
-              <FileText size={15} />
-              {pdfPruebaNombre ? `PDF: ${pdfPruebaNombre.slice(0, 18)}...` : 'Adjuntar PDF Prueba'}
-              <input type="file" accept="application/pdf" onChange={manejarSubirPdfPrueba} style={{ display: 'none' }} />
-            </label>
 
             <button
               onClick={() => setMostrarConfigCortes(!mostrarConfigCortes)}
