@@ -159,7 +159,6 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   let esquinasDetectadas = null;
 
   if (esFotoCamara && candidatos.length >= 4) {
-    // En foto de celular: buscar el marcador más extremo de cada cuadrante
     const mitadX = canvas.width * 0.5;
     const mitadY = canvas.height * 0.5;
     const qSupIzq = candidatos.filter((c) => c.x < mitadX && c.y < mitadY);
@@ -175,7 +174,6 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       esquinasDetectadas = ordenarEsquinas([supIzq, supDer, infDer, infIzq]);
     }
   } else if (candidatos.length >= 4) {
-    // En escáner o PDF: buscar los 4 marcadores en las coordenadas exactas (16,16), (199,16), (199,262), (16,262)
     const objetivos = [
       { x: canvas.width * (16 / 215.9), y: canvas.height * (16 / 279.4) },
       { x: canvas.width * (199 / 215.9), y: canvas.height * (16 / 279.4) },
@@ -230,7 +228,6 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     cropped.delete();
   }
 
-  // Binarización OTSU exacta que dio 100% de precisión con el escáner de la escuela
   const warpedGray = new cv.Mat();
   const warpedBin = new cv.Mat();
   cv.cvtColor(warped, warpedGray, cv.COLOR_RGBA2GRAY);
@@ -241,6 +238,7 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   const outCtx = outCanvas.getContext('2d');
 
   const radioPx = 22;
+  const radioNucleoPx = 15; // Núcleo interior de la burbuja (sin tocar el contorno impreso)
   const respuestas = {};
 
   for (let p = 1; p <= totalPreguntas; p++) {
@@ -254,30 +252,48 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       const px = Math.round((cx - 16) * 10);
       const py = Math.round((baseY - 16) * 10);
 
-      let oscuros = 0;
-      let total = 0;
+      let oscurosBin = 0;
+      let totalBin = 0;
+      let sumaGrisNucleo = 0;
+      let totalNucleo = 0;
+
       for (let dy = -radioPx; dy <= radioPx; dy++) {
         for (let dx = -radioPx; dx <= radioPx; dx++) {
-          if (dx * dx + dy * dy <= radioPx * radioPx) {
+          const d2 = dx * dx + dy * dy;
+          if (d2 <= radioPx * radioPx) {
             if (py + dy >= 0 && py + dy < H && px + dx >= 0 && px + dx < W) {
-              const val = warpedBin.ucharPtr(py + dy, px + dx)[0];
-              if (val > 0) oscuros++;
-              total++;
+              const valBin = warpedBin.ucharPtr(py + dy, px + dx)[0];
+              if (valBin > 0) oscurosBin++;
+              totalBin++;
+
+              if (d2 <= radioNucleoPx * radioNucleoPx) {
+                const valGris = warpedGray.ucharPtr(py + dy, px + dx)[0];
+                sumaGrisNucleo += valGris;
+                totalNucleo++;
+              }
             }
           }
         }
       }
-      return { letra, ratio: total > 0 ? oscuros / total : 0, px, py };
+
+      const ratio = totalBin > 0 ? oscurosBin / totalBin : 0;
+      const brilloNucleo = totalNucleo > 0 ? sumaGrisNucleo / totalNucleo : 255;
+
+      return { letra, ratio, brilloNucleo, px, py };
     });
 
-    // Ordenar burbujas de mayor a menor densidad de tinta
-    const ordenadas = [...densidades].sort((a, b) => b.ratio - a.ratio);
-    const fondoFila = ordenadas[ordenadas.length - 1].ratio; // densidad base de círculo vacío en esa fila
+    // Referencia del círculo vacío en esta fila (el más claro / con menos tinta)
+    const fondoFilaRatio = Math.min(...densidades.map((d) => d.ratio));
+    const fondoFilaBrillo = Math.max(...densidades.map((d) => d.brilloNucleo));
 
-    // Detectar burbujas pintadas (incluye lápiz grafito suave > 0.28 y claramente sobre el fondo de la fila)
-    const marcadas = densidades.filter(
-      (d) => d.ratio > 0.28 && d.ratio - fondoFila > 0.10
-    );
+    // Doble criterio:
+    // 1) Marca oscura clásica (lápiz pasta / marcador)
+    // 2) Marca tenue en el núcleo (lápiz grafito suave: núcleo >= 18 niveles más oscuro que la burbuja vacía de la fila)
+    const marcadas = densidades.filter((d) => {
+      const marcaFuerte = d.ratio > 0.26 && d.ratio - fondoFilaRatio > 0.09;
+      const marcaTenueGrafito = d.brilloNucleo < 220 && fondoFilaBrillo - d.brilloNucleo > 18;
+      return marcaFuerte || marcaTenueGrafito;
+    });
 
     let respuestaFinal = '';
     if (marcadas.length === 1) {
