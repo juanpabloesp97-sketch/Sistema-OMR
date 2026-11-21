@@ -1,14 +1,101 @@
 import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { UserPlus, Users, BookOpen, CheckCircle2, XCircle, GraduationCap, RefreshCw } from 'lucide-react';
+import {
+  UserPlus, Users, BookOpen, CheckCircle2, XCircle,
+  GraduationCap, RefreshCw, ShieldCheck, Save, RotateCcw
+} from 'lucide-react';
 import { supabase } from './supabaseClient';
 
-export default function GestionUsuarios({ perfilActual }) {
+const PERMISOS_DEFAULT = {
+  admin: {
+    gestionar_usuarios: true,
+    configurar_cursos: true,
+    ver_todos_cursos: true,
+    editar_nominas: true,
+    eximir_estudiantes: true,
+    crear_evaluaciones: true,
+    ver_evals_colegio: true,
+    ver_evals_depto: true,
+    editar_evals_ajenas: true,
+    escanear_hojas: true,
+    corregir_manual_ajenas: true,
+    descargar_reportes: true
+  },
+  utp: {
+    gestionar_usuarios: false,
+    configurar_cursos: false,
+    ver_todos_cursos: true,
+    editar_nominas: false,
+    eximir_estudiantes: false,
+    crear_evaluaciones: true,
+    ver_evals_colegio: true,
+    ver_evals_depto: true,
+    editar_evals_ajenas: false,
+    escanear_hojas: true,
+    corregir_manual_ajenas: false,
+    descargar_reportes: true
+  },
+  jefe_depto: {
+    gestionar_usuarios: false,
+    configurar_cursos: false,
+    ver_todos_cursos: true,
+    editar_nominas: true,
+    eximir_estudiantes: true,
+    crear_evaluaciones: true,
+    ver_evals_colegio: false,
+    ver_evals_depto: true,
+    editar_evals_ajenas: false,
+    escanear_hojas: true,
+    corregir_manual_ajenas: false,
+    descargar_reportes: true
+  },
+  docente: {
+    gestionar_usuarios: false,
+    configurar_cursos: false,
+    ver_todos_cursos: false,
+    editar_nominas: true,
+    eximir_estudiantes: true,
+    crear_evaluaciones: true,
+    ver_evals_colegio: false,
+    ver_evals_depto: false,
+    editar_evals_ajenas: false,
+    escanear_hojas: true,
+    corregir_manual_ajenas: false,
+    descargar_reportes: true
+  }
+};
+
+const FILAS_PERMISOS = [
+  { key: 'gestionar_usuarios', categoria: '1. Cuentas y Permisos', label: 'Crear/suspender cuentas y asignar roles/cursos' },
+  { key: 'configurar_cursos', categoria: '2. Estructura y Nóminas', label: 'Crear o eliminar Niveles y Cursos del colegio' },
+  { key: 'ver_todos_cursos', categoria: '2. Estructura y Nóminas', label: 'Ver todos los niveles y cursos (no solo los asignados)' },
+  { key: 'editar_nominas', categoria: '2. Estructura y Nóminas', label: 'Subir Excel de estudiantes y agregar alumnos a listas' },
+  { key: 'eximir_estudiantes', categoria: '2. Estructura y Nóminas', label: 'Eximir / deseximir estudiantes en evaluaciones' },
+  { key: 'crear_evaluaciones', categoria: '3. Evaluaciones y Pautas', label: 'Crear evaluaciones propias y compartir/importar pautas' },
+  { key: 'ver_evals_colegio', categoria: '3. Evaluaciones y Pautas', label: 'Supervisar evaluaciones de TODO el colegio (todas las asignaturas)' },
+  { key: 'ver_evals_depto', categoria: '3. Evaluaciones y Pautas', label: 'Supervisar evaluaciones de su Departamento / Asignatura' },
+  { key: 'editar_evals_ajenas', categoria: '3. Evaluaciones y Pautas', label: 'Editar pauta, escala, PDF o eliminar evaluaciones de otros' },
+  { key: 'escanear_hojas', categoria: '4. Escaneo y Reportes', label: 'Imprimir hojas y escanear (cámara / PDF) en sus pruebas' },
+  { key: 'corregir_manual_ajenas', categoria: '4. Escaneo y Reportes', label: 'Corregir lectura manual (P1–P30) o borrar escaneos en pruebas ajenas' },
+  { key: 'descargar_reportes', categoria: '4. Escaneo y Reportes', label: 'Ver gráficos, visor de hoja escaneada y descargar Excel / PDFs' }
+];
+
+const ROLES_META = [
+  { id: 'admin', label: 'Administrador', color: '#1e3a8a', bg: '#dbeafe' },
+  { id: 'utp', label: 'UTP', color: '#6d28d9', bg: '#ede9fe' },
+  { id: 'jefe_depto', label: 'Jefe de Depto.', color: '#047857', bg: '#d1fae5' },
+  { id: 'docente', label: 'Docente', color: '#334155', bg: '#f1f5f9' }
+];
+
+export default function GestionUsuarios({ perfilActual, onPermisosActualizados }) {
   const [listaUsuarios, setListaUsuarios] = useState([]);
   const [niveles, setNiveles] = useState([]);
   const [cursos, setCursos] = useState([]);
   const [asignaciones, setAsignaciones] = useState([]);
   const [cargandoLista, setCargandoLista] = useState(false);
+
+  const [matrizPermisos, setMatrizPermisos] = useState(PERMISOS_DEFAULT);
+  const [guardandoPermisos, setGuardandoPermisos] = useState(false);
 
   const [nombre, setNombre] = useState('');
   const [email, setEmail] = useState('');
@@ -35,18 +122,76 @@ export default function GestionUsuarios({ perfilActual }) {
         setListaUsuarios(users);
       }
 
-      const [{ data: niv }, { data: cur }, { data: asig }] = await Promise.all([
+      const [{ data: niv }, { data: cur }, { data: asig }, { data: permsDB }] = await Promise.all([
         supabase.from('niveles').select('*').order('orden', { ascending: true }),
         supabase.from('cursos').select('*').order('nombre'),
-        supabase.from('docente_cursos').select('*')
+        supabase.from('docente_cursos').select('*'),
+        supabase.from('roles_permisos').select('*')
       ]);
 
       if (niv) setNiveles(niv);
       if (cur) setCursos(cur);
       if (asig) setAsignaciones(asig);
+
+      if (permsDB && permsDB.length > 0) {
+        const nuevaMatriz = { ...PERMISOS_DEFAULT };
+        permsDB.forEach((row) => {
+          if (nuevaMatriz[row.rol]) {
+            nuevaMatriz[row.rol] = { ...nuevaMatriz[row.rol], ...(row.permisos || {}) };
+          }
+        });
+        setMatrizPermisos(nuevaMatriz);
+      }
     } finally {
       setCargandoLista(false);
     }
+  };
+
+  const togglePermiso = (rolId, permisoKey) => {
+    // Evitar que el admin se quite a sí mismo la gestión de cuentas por accidente
+    if (rolId === 'admin' && permisoKey === 'gestionar_usuarios') return;
+
+    setMatrizPermisos((prev) => ({
+      ...prev,
+      [rolId]: {
+        ...prev[rolId],
+        [permisoKey]: !prev[rolId]?.[permisoKey]
+      }
+    }));
+  };
+
+  const guardarMatrizPermisos = async () => {
+    if (!supabase) return;
+    setGuardandoPermisos(true);
+    try {
+      const filasUpsert = ROLES_META.map((r) => ({
+        rol: r.id,
+        nombre_mostrar: r.label,
+        permisos: matrizPermisos[r.id] || PERMISOS_DEFAULT[r.id],
+        updated_at: new Date().toISOString()
+      }));
+
+      const { error } = await supabase
+        .from('roles_permisos')
+        .upsert(filasUpsert, { onConflict: 'rol' });
+
+      if (error) {
+        alert('Error al guardar permisos: ' + error.message);
+        return;
+      }
+
+      if (onPermisosActualizados) {
+        onPermisosActualizados(matrizPermisos);
+      }
+      alert('✅ Matriz de permisos por rol actualizada en la nube.');
+    } finally {
+      setGuardandoPermisos(false);
+    }
+  };
+
+  const restaurarPermisosDefault = () => {
+    if (!confirm('¿Restaurar las casillas de los 4 roles a la configuración recomendada inicial?')) return;
+    setMatrizPermisos(PERMISOS_DEFAULT);
   };
 
   const toggleCursoDocente = async (docenteId, cursoId) => {
@@ -141,14 +286,127 @@ export default function GestionUsuarios({ perfilActual }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Formulario de creación de cuenta */}
+      {/* 1. MATRIZ EDITABLE DE PERMISOS POR ROL */}
+      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: '20px', display: 'flex', alignItems: 'center', gap: '10px', color: '#0f172a' }}>
+              <ShieldCheck size={22} color="#2563eb" />
+              Matriz de Atribuciones por Rol (Editable)
+            </h2>
+            <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#64748b' }}>
+              Marca o desmarca las casillas para personalizar qué puede hacer cada perfil en el sistema.
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={restaurarPermisosDefault}
+              style={{
+                background: '#f8fafc',
+                color: '#475569',
+                border: '1px solid #cbd5e1',
+                borderRadius: '8px',
+                padding: '8px 12px',
+                fontSize: '12.5px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+            >
+              <RotateCcw size={14} /> Restaurar Base
+            </button>
+
+            <button
+              type="button"
+              onClick={guardarMatrizPermisos}
+              disabled={guardandoPermisos}
+              style={{
+                background: '#2563eb',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '8px 16px',
+                fontSize: '13px',
+                fontWeight: '700',
+                cursor: guardandoPermisos ? 'wait' : 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <Save size={15} /> {guardandoPermisos ? 'Guardando...' : 'Guardar Permisos'}
+            </button>
+          </div>
+        </div>
+
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <thead>
+              <tr style={{ background: '#f8fafc', borderBottom: '2px solid #cbd5e1' }}>
+                <th style={{ padding: '10px 12px', textAlign: 'left', color: '#0f172a' }}>Módulo / Atribución</th>
+                {ROLES_META.map((r) => (
+                  <th key={r.id} style={{ padding: '10px 8px', textAlign: 'center', minWidth: '115px' }}>
+                    <span style={{ background: r.bg, color: r.color, padding: '4px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: '800' }}>
+                      {r.label}
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {FILAS_PERMISOS.map((fila, idx) => {
+                const mostrarCategoria = idx === 0 || FILAS_PERMISOS[idx - 1].categoria !== fila.categoria;
+                return (
+                  <React.Fragment key={fila.key}>
+                    {mostrarCategoria && (
+                      <tr style={{ background: '#f1f5f9' }}>
+                        <td colSpan={5} style={{ padding: '6px 12px', fontWeight: '800', fontSize: '11.5px', color: '#334155', textTransform: 'uppercase' }}>
+                          {fila.categoria}
+                        </td>
+                      </tr>
+                    )}
+                    <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '9px 12px', color: '#1e293b', fontWeight: '500' }}>{fila.label}</td>
+                      {ROLES_META.map((r) => {
+                        const checked = Boolean(matrizPermisos[r.id]?.[fila.key]);
+                        const bloqueado = r.id === 'admin' && fila.key === 'gestionar_usuarios';
+                        return (
+                          <td
+                            key={r.id}
+                            onClick={() => !bloqueado && togglePermiso(r.id, fila.key)}
+                            style={{ padding: '9px 8px', textAlign: 'center', cursor: bloqueado ? 'not-allowed' : 'pointer' }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={bloqueado}
+                              onChange={() => {}}
+                              style={{ width: '17px', height: '17px', cursor: bloqueado ? 'not-allowed' : 'pointer', accentColor: r.color }}
+                            />
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* 2. FORMULARIO DE CREACIÓN DE CUENTA */}
       <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
         <h2 style={{ margin: '0 0 8px 0', fontSize: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <UserPlus size={22} color="#2563eb" />
-          Crear Nueva Cuenta Docente
+          Crear Nueva Cuenta de Usuario
         </h2>
         <p style={{ margin: '0 0 18px 0', fontSize: '13.5px', color: '#64748b' }}>
-          Crea las cuentas del profesorado y luego marca abajo los cursos que atiende cada uno.
+          Crea las cuentas del personal, elige su rol (Administrador, UTP, Jefe de Depto. o Docente) y marca abajo sus cursos de aula.
         </p>
 
         <form onSubmit={crearNuevaCuenta} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
@@ -165,14 +423,16 @@ export default function GestionUsuarios({ perfilActual }) {
             <input type="text" required minLength={6} placeholder="Mín. 6 caracteres" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Asignatura</label>
+            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Asignatura / Departamento</label>
             <input type="text" value={asignatura} onChange={(e) => setAsignatura(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
           </div>
           <div>
             <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Rol</label>
             <select value={rol} onChange={(e) => setRol(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box', fontWeight: '600' }}>
               <option value="docente">Docente</option>
-              <option value="admin">Admin / UTP</option>
+              <option value="jefe_depto">Jefe de Departamento</option>
+              <option value="utp">UTP</option>
+              <option value="admin">Administrador</option>
             </select>
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-end' }}>
@@ -183,12 +443,12 @@ export default function GestionUsuarios({ perfilActual }) {
         </form>
       </div>
 
-      {/* Tabla de docentes y asignación de cursos */}
+      {/* 3. LISTA DE USUARIOS Y ASIGNACIÓN DE CURSOS */}
       <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
           <h3 style={{ margin: 0, fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Users size={19} color="#0f172a" />
-            Docentes y Cursos Asignados ({listaUsuarios.length})
+            Usuarios y Cursos de Aula Asignados ({listaUsuarios.length})
           </h3>
           <button
             onClick={cargarTodo}
@@ -222,7 +482,9 @@ export default function GestionUsuarios({ perfilActual }) {
                       style={{ padding: '5px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontWeight: '700', fontSize: '12px' }}
                     >
                       <option value="docente">Docente</option>
-                      <option value="admin">Admin / UTP (Ve todos los cursos)</option>
+                      <option value="jefe_depto">Jefe de Departamento</option>
+                      <option value="utp">UTP</option>
+                      <option value="admin">Administrador</option>
                     </select>
 
                     <button
@@ -248,7 +510,7 @@ export default function GestionUsuarios({ perfilActual }) {
                 ) : (
                   <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: '10px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                      <GraduationCap size={14} /> Cursos habilitados para este docente:
+                      <GraduationCap size={14} /> Cursos de aula asignados directamente (para crear evaluaciones y listas):
                     </div>
                     {cursos.length === 0 ? (
                       <span style={{ fontSize: '12px', color: '#94a3b8' }}>Aún no hay cursos creados en Mis Cursos.</span>

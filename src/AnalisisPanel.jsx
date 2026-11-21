@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import {
-  BarChart3, Download, ArrowUpDown, ArrowUp, ArrowDown, X, FileText,
+  BarChart3, Download, ArrowUpDown, ArrowUp, ArrowDown, X,
   CheckCircle2, XCircle, MinusCircle, SlidersHorizontal, ExternalLink,
   Search, Eye, Save, ZoomIn
 } from 'lucide-react';
@@ -9,9 +9,10 @@ import {
 export default function AnalisisPanel({
   resultados = [],
   config = {},
-  onActualizarRespuesta
+  onActualizarRespuesta,
+  puedeEditar = true
 }) {
-  // --- ESTADOS DE LÍMITES DE DESEMPEÑO (ESTÁNDAR EVALUACIONES A TU ALCANCE) ---
+  // --- ESTADOS DE LÍMITES DE DESEMPEÑO ---
   const [cortes, setCortes] = useState({
     muyBueno: 85,    // 85 - 100%
     bueno: 72,       // 72 - 84%
@@ -32,9 +33,8 @@ export default function AnalisisPanel({
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
   const [zoomImagen, setZoomImagen] = useState(false);
 
-  // --- VISOR PDF DE LA PRUEBA ORIGINAL (PARA EL MODAL DE ÍTEM) ---
-  const [pdfPruebaUrl, setPdfPruebaUrl] = useState(null);
-  const [pdfPruebaNombre, setPdfPruebaNombre] = useState('');
+  // --- URL PERMANENTE DEL PDF DE LA PRUEBA (GUARDADO EN CONFIG/NUBE) ---
+  const pdfPruebaUrl = config.pdfPruebaUrl || null;
 
   // --- FILTROS Y ORDENAMIENTO ---
   const [busqueda, setBusqueda] = useState('');
@@ -232,7 +232,7 @@ export default function AnalisisPanel({
   };
 
   const guardarCambiosEstudiante = async () => {
-    if (!modalAlumno || !onActualizarRespuesta) return;
+    if (!modalAlumno || !onActualizarRespuesta || !puedeEditar) return;
     setGuardandoEdicion(true);
     const actualizado = await onActualizarRespuesta(modalAlumno.id, respuestasEditadas);
     setGuardandoEdicion(false);
@@ -330,7 +330,6 @@ export default function AnalisisPanel({
           </div>
 
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-
             <button
               onClick={() => setMostrarConfigCortes(!mostrarConfigCortes)}
               style={{
@@ -667,7 +666,7 @@ export default function AnalisisPanel({
               Nómina de Resultados Individuales
             </h3>
             <p style={{ margin: '4px 0 0 0', fontSize: '12.5px', color: '#2563eb', fontWeight: '600' }}>
-              Haz clic en el nombre de cualquier alumno para ver su hoja escaneada y editar sus respuestas
+              Haz clic en el nombre de cualquier alumno para ver su hoja escaneada y respuestas
             </p>
           </div>
 
@@ -892,7 +891,7 @@ export default function AnalisisPanel({
                       fontWeight: '600', color: '#334155', textDecoration: 'none'
                     }}
                   >
-                    <ExternalLink size={14} /> Abrir en ventana completa
+                    <ExternalLink size={14} /> Abrir PDF en ventana nueva
                   </a>
                 )}
                 <button
@@ -1005,7 +1004,7 @@ export default function AnalisisPanel({
                         : itemActivoModal.porOpcion[opcionSeleccionadaItem] || []
                       ).map((st, idx) => (
                         <div key={idx} style={{ padding: '3px 0', borderBottom: '1px solid #dbeafe' }}>
-                          • {st.nombre} ({st.curso || '-'})
+                          - {st.nombre} ({st.curso || '-'})
                         </div>
                       ))}
                     </div>
@@ -1073,7 +1072,7 @@ export default function AnalisisPanel({
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                {editandoRespuestas && (
+                {puedeEditar && editandoRespuestas && (
                   <button
                     onClick={guardarCambiosEstudiante}
                     disabled={guardandoEdicion}
@@ -1123,10 +1122,12 @@ export default function AnalisisPanel({
                 </div>
 
                 <div style={{ fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '10px' }}>
-                  Haz clic en una alternativa para corregir la lectura (clic de nuevo para dejar omitida):
+                  {puedeEditar
+                    ? 'Haz clic en una alternativa para corregir la lectura (clic de nuevo para dejar omitida):'
+                    : 'Detalle de respuestas registradas por pregunta (Modo supervisión):'}
                 </div>
 
-                {/* Grilla pregunta por pregunta editable */}
+                {/* Grilla pregunta por pregunta */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(156px, 1fr))', gap: '8px' }}>
                   {Array.from({ length: numPreguntas }, (_, i) => {
                     const p = i + 1;
@@ -1169,7 +1170,9 @@ export default function AnalisisPanel({
                             return (
                               <button
                                 key={op}
+                                disabled={!puedeEditar}
                                 onClick={() => {
+                                  if (!puedeEditar) return;
                                   const base = editandoRespuestas
                                     ? respuestasEditadas
                                     : { ...(modalAlumno.respuestas || {}) };
@@ -1183,7 +1186,7 @@ export default function AnalisisPanel({
                                   fontSize: '11px',
                                   fontWeight: '700',
                                   borderRadius: '5px',
-                                  cursor: 'pointer',
+                                  cursor: puedeEditar ? 'pointer' : 'default',
                                   border: seleccionado ? '1px solid #1d4ed8' : '1px solid #cbd5e1',
                                   background: seleccionado ? '#2563eb' : '#ffffff',
                                   color: seleccionado ? '#ffffff' : '#334155'

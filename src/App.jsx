@@ -4,7 +4,7 @@ import QRCode from 'qrcode';
 import {
   FileDown, User, CheckCircle2, Camera, CheckSquare, Square,
   Cloud, BarChart3, Printer, Clock, AlertCircle, Save, Trash2, UserPlus,
-  UserX, UserCheck, Share2, GraduationCap, Users, FolderOpen, ArrowLeft, FilePlus2, Filter, Eye, Upload
+  UserX, UserCheck, Share2, GraduationCap, Users, FolderOpen, ArrowLeft, FilePlus2, Filter, Eye, Upload, ShieldAlert
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import VisorCurso from './VisorCurso';
@@ -16,6 +16,65 @@ import CamaraOMR from './CamaraOMR';
 import { procesarHojaOMR } from './omrEngine';
 import { convertirPdfAImagenes } from './pdfToImages';
 import { supabase } from './supabaseClient';
+
+const PERMISOS_RESPALDO = {
+  admin: {
+    gestionar_usuarios: true,
+    configurar_cursos: true,
+    ver_todos_cursos: true,
+    editar_nominas: true,
+    eximir_estudiantes: true,
+    crear_evaluaciones: true,
+    ver_evals_colegio: true,
+    ver_evals_depto: true,
+    editar_evals_ajenas: true,
+    escanear_hojas: true,
+    corregir_manual_ajenas: true,
+    descargar_reportes: true
+  },
+  utp: {
+    gestionar_usuarios: false,
+    configurar_cursos: false,
+    ver_todos_cursos: true,
+    editar_nominas: false,
+    eximir_estudiantes: false,
+    crear_evaluaciones: true,
+    ver_evals_colegio: true,
+    ver_evals_depto: true,
+    editar_evals_ajenas: false,
+    escanear_hojas: true,
+    corregir_manual_ajenas: false,
+    descargar_reportes: true
+  },
+  jefe_depto: {
+    gestionar_usuarios: false,
+    configurar_cursos: false,
+    ver_todos_cursos: true,
+    editar_nominas: true,
+    eximir_estudiantes: true,
+    crear_evaluaciones: true,
+    ver_evals_colegio: false,
+    ver_evals_depto: true,
+    editar_evals_ajenas: false,
+    escanear_hojas: true,
+    corregir_manual_ajenas: false,
+    descargar_reportes: true
+  },
+  docente: {
+    gestionar_usuarios: false,
+    configurar_cursos: false,
+    ver_todos_cursos: false,
+    editar_nominas: true,
+    eximir_estudiantes: true,
+    crear_evaluaciones: true,
+    ver_evals_colegio: false,
+    ver_evals_depto: false,
+    editar_evals_ajenas: false,
+    escanear_hojas: true,
+    corregir_manual_ajenas: false,
+    descargar_reportes: true
+  }
+};
 
 export default function App() {
   const [sesion, setSesion] = useState(null);
@@ -29,6 +88,7 @@ export default function App() {
     rol: 'docente',
     activo: true
   });
+  const [permisosActivos, setPermisosActivos] = useState(PERMISOS_RESPALDO.docente);
 
   const [vistaActiva, setVistaActiva] = useState('inicio');
   const [nivelActivoId, setNivelActivoId] = useState('');
@@ -40,8 +100,9 @@ export default function App() {
 
   const [niveles, setNiveles] = useState([]);
   const [cursos, setCursos] = useState([]);
+  const [cursosAsignadosAula, setCursosAsignadosAula] = useState(new Set());
 
-  const [evaluacionesPropias, setEvaluacionesPropias] = useState([]);
+  const [evaluacionesVisibles, setEvaluacionesVisibles] = useState([]);
   const [evaluacionesCompartidas, setEvaluacionesCompartidas] = useState([]);
 
   const [config, setConfig] = useState({
@@ -59,7 +120,9 @@ export default function App() {
     notaMax: 7.0,
     notaAprob: 4.0,
     exigencia: 60,
-    pauta: {}
+    pauta: {},
+    pdfPruebaUrl: '',
+    pdfPruebaNombre: ''
   });
 
   const [subVistaEval, setSubVistaEval] = useState('avance');
@@ -77,7 +140,6 @@ export default function App() {
   const [rutExtra, setRutExtra] = useState('');
   const [nombreExtra, setNombreExtra] = useState('');
 
-  // Guardar ubicación actual para no perderla al cambiar de pestaña o recargar
   useEffect(() => {
     if (!profesor?.id) return;
     const estadoNav = {
@@ -121,6 +183,23 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  const cargarPermisosDeRol = async (rolUsuario) => {
+    const base = PERMISOS_RESPALDO[rolUsuario] || PERMISOS_RESPALDO.docente;
+    if (!supabase) {
+      setPermisosActivos(base);
+      return base;
+    }
+    const { data } = await supabase
+      .from('roles_permisos')
+      .select('permisos')
+      .eq('rol', rolUsuario)
+      .maybeSingle();
+
+    const finalPerms = data?.permisos ? { ...base, ...data.permisos } : base;
+    setPermisosActivos(finalPerms);
+    return finalPerms;
+  };
+
   const cargarPerfilUsuario = async (user) => {
     let { data: perfilDB } = await supabase
       .from('perfiles')
@@ -143,13 +222,15 @@ export default function App() {
       perfilDB = nuevoPerfil;
     }
 
+    const rolFinal = esAdminPrincipal ? 'admin' : (perfilDB?.rol || 'docente');
+
     const perfilFinal = {
       id: user.id,
       email: user.email,
       nombre: perfilDB?.nombre || (esAdminPrincipal ? 'Juan Pablo Esparza' : user.email.split('@')[0]),
       asignatura: perfilDB?.asignatura || 'Matemática',
       establecimiento: localStorage.getItem('omr_establecimiento') || 'Colegio / Liceo',
-      rol: esAdminPrincipal ? 'admin' : (perfilDB?.rol || 'docente'),
+      rol: rolFinal,
       activo: perfilDB?.activo !== false
     };
 
@@ -161,6 +242,8 @@ export default function App() {
     }
 
     setProfesor(perfilFinal);
+    const permsUsuario = await cargarPermisosDeRol(rolFinal);
+
     setConfig((prev) => ({
       ...prev,
       docenteId: perfilFinal.id,
@@ -169,8 +252,8 @@ export default function App() {
     }));
     setCargandoSesion(false);
 
-    const { nivelesVisibles, cursosVisibles } = await cargarEstructuraEscolar(perfilFinal);
-    const { propias } = await cargarEvaluacionesNube(perfilFinal);
+    const { nivelesVisibles, cursosVisibles } = await cargarEstructuraEscolar(perfilFinal, permsUsuario);
+    const { visibles } = await cargarEvaluacionesNube(perfilFinal, permsUsuario);
 
     let restaurado = false;
     try {
@@ -188,7 +271,7 @@ export default function App() {
         }
 
         if (nav.vistaActiva === 'detalle-evaluacion' && nav.evalId) {
-          const evEncontrada = (propias || []).find((e) => String(e.id) === String(nav.evalId));
+          const evEncontrada = (visibles || []).find((e) => String(e.id) === String(nav.evalId));
           if (evEncontrada) {
             abrirEvaluacion(evEncontrada, nav.cursoActivoId || '', nav.contextoAperturaEval || 'curso');
             if (nav.subVistaEval) setSubVistaEval(nav.subVistaEval);
@@ -296,25 +379,26 @@ export default function App() {
     }
   };
 
-  const cargarEstructuraEscolar = async (perfilUsuario = profesor) => {
+  const cargarEstructuraEscolar = async (perfilUsuario = profesor, permsUsuario = permisosActivos) => {
     if (!supabase) return { nivelesVisibles: [], cursosVisibles: [] };
-    const [{ data: niv }, { data: cur }] = await Promise.all([
+    const [{ data: niv }, { data: cur }, { data: asig }] = await Promise.all([
       supabase.from('niveles').select('*').order('orden', { ascending: true }).order('nombre'),
-      supabase.from('cursos').select('*').order('nombre')
+      supabase.from('cursos').select('*').order('nombre'),
+      perfilUsuario?.id
+        ? supabase.from('docente_cursos').select('curso_id').eq('docente_id', perfilUsuario.id)
+        : Promise.resolve({ data: [] })
     ]);
+
+    const idsAula = new Set((asig || []).map((a) => a.curso_id));
+    setCursosAsignadosAula(idsAula);
 
     let cursosVisibles = cur || [];
     let nivelesVisibles = niv || [];
 
-    if (perfilUsuario && perfilUsuario.rol !== 'admin' && perfilUsuario.id) {
-      const { data: asig } = await supabase
-        .from('docente_cursos')
-        .select('curso_id')
-        .eq('docente_id', perfilUsuario.id);
+    const veTodo = perfilUsuario?.rol === 'admin' || Boolean(permsUsuario?.ver_todos_cursos);
 
-      const idsPermitidos = new Set((asig || []).map((a) => a.curso_id));
-      cursosVisibles = cursosVisibles.filter((c) => idsPermitidos.has(c.id));
-
+    if (!veTodo && perfilUsuario?.id) {
+      cursosVisibles = cursosVisibles.filter((c) => idsAula.has(c.id));
       const nivelesConCurso = new Set(cursosVisibles.map((c) => c.nivel_id));
       nivelesVisibles = nivelesVisibles.filter((n) => nivelesConCurso.has(n.id));
     }
@@ -324,14 +408,13 @@ export default function App() {
     return { nivelesVisibles, cursosVisibles };
   };
 
-  const cargarEvaluacionesNube = async (perfilUsuario = profesor) => {
-    if (!supabase || !perfilUsuario?.id) return { propias: [], compartidas: [] };
+  const cargarEvaluacionesNube = async (perfilUsuario = profesor, permsUsuario = permisosActivos) => {
+    if (!supabase || !perfilUsuario?.id) return { visibles: [], compartidas: [] };
 
-    const [{ data: propias }, { data: compartidas }] = await Promise.all([
+    const [{ data: todasEvals }, { data: compartidas }] = await Promise.all([
       supabase
         .from('evaluaciones')
         .select('*')
-        .eq('docente_id', perfilUsuario.id)
         .order('created_at', { ascending: false }),
       supabase
         .from('evaluaciones')
@@ -341,9 +424,24 @@ export default function App() {
         .order('created_at', { ascending: false })
     ]);
 
-    setEvaluacionesPropias(propias || []);
+    const asigUsuario = (perfilUsuario.asignatura || '').trim().toLowerCase();
+
+    const filtradas = (todasEvals || []).filter((ev) => {
+      // 1. Siempre ve sus propias evaluaciones
+      if (ev.docente_id === perfilUsuario.id) return true;
+      // 2. Si tiene permiso de ver todo el colegio (Admin / UTP)
+      if (perfilUsuario.rol === 'admin' || permsUsuario?.ver_evals_colegio) return true;
+      // 3. Si es Jefe de Departamento (permiso ver_evals_depto): ve las de su misma asignatura
+      if (permsUsuario?.ver_evals_depto && asigUsuario) {
+        const asigEval = (ev.asignatura || '').trim().toLowerCase();
+        return asigEval === asigUsuario;
+      }
+      return false;
+    });
+
+    setEvaluacionesVisibles(filtradas);
     setEvaluacionesCompartidas(compartidas || []);
-    return { propias: propias || [], compartidas: compartidas || [] };
+    return { visibles: filtradas, compartidas: compartidas || [] };
   };
 
   const cargarEstudiantesParaEval = async (cursoId, nivelId) => {
@@ -436,7 +534,9 @@ export default function App() {
       notaMax: ev.nota_max ?? 7.0,
       notaAprob: ev.nota_aprob ?? 4.0,
       exigencia: ev.exigencia ?? 60,
-      pauta: ev.pauta || {}
+      pauta: ev.pauta || {},
+      pdfPruebaUrl: ev.pdf_prueba_url || '',
+      pdfPruebaNombre: ev.pdf_prueba_nombre || ''
     });
 
     setContextoAperturaEval(contexto);
@@ -447,7 +547,11 @@ export default function App() {
       setCursoActivoId('');
     }
     setEximidosRuts(Array.isArray(ev.eximidos) ? ev.eximidos : []);
-    setSubVistaEval('avance');
+
+    // Si entra en modo supervisión de una prueba ajena, abrir directo en Análisis y Reportes
+    const esPropia = ev.docente_id === profesor.id;
+    const puedeEditarAjena = profesor.rol === 'admin' || Boolean(permisosActivos?.editar_evals_ajenas);
+    setSubVistaEval(esPropia || puedeEditarAjena ? 'avance' : 'analisis');
     setVistaActiva('detalle-evaluacion');
   };
 
@@ -468,7 +572,9 @@ export default function App() {
       notaMax: 7.0,
       notaAprob: 4.0,
       exigencia: 60,
-      pauta: {}
+      pauta: {},
+      pdfPruebaUrl: '',
+      pdfPruebaNombre: ''
     });
     setVistaActiva('crear-evaluacion');
   };
@@ -496,7 +602,9 @@ export default function App() {
       exigencia: Number(config.exigencia),
       pauta: config.pauta,
       eximidos: eximidosRuts,
-      compartida: Boolean(config.compartida)
+      compartida: Boolean(config.compartida),
+      pdf_prueba_url: config.pdfPruebaUrl || null,
+      pdf_prueba_nombre: config.pdfPruebaNombre || null
     };
 
     if (config.id) {
@@ -509,7 +617,7 @@ export default function App() {
         alert('Error al guardar cambios: ' + error.message);
       } else {
         alert('✅ Cambios guardados en la nube.');
-        await cargarEvaluacionesNube(profesor);
+        await cargarEvaluacionesNube(profesor, permisosActivos);
       }
     } else {
       const { data, error } = await supabase
@@ -528,7 +636,7 @@ export default function App() {
         alert('Error al crear evaluación: ' + error.message);
       } else if (data) {
         alert('✅ Evaluación creada correctamente.');
-        await cargarEvaluacionesNube(profesor);
+        await cargarEvaluacionesNube(profesor, permisosActivos);
         if (data.curso_id) {
           abrirEvaluacion(data, data.curso_id, 'curso');
         } else {
@@ -548,7 +656,7 @@ export default function App() {
 
     if (!error) {
       setConfig((prev) => ({ ...prev, compartida: nuevoEstado }));
-      cargarEvaluacionesNube(profesor);
+      cargarEvaluacionesNube(profesor, permisosActivos);
     }
   };
 
@@ -568,7 +676,9 @@ export default function App() {
       notaMax: evCompartida.nota_max ?? 7.0,
       notaAprob: evCompartida.nota_aprob ?? 4.0,
       exigencia: evCompartida.exigencia ?? 60,
-      pauta: evCompartida.pauta || {}
+      pauta: evCompartida.pauta || {},
+      pdfPruebaUrl: evCompartida.pdf_prueba_url || '',
+      pdfPruebaNombre: evCompartida.pdf_prueba_nombre || ''
     });
     alert(`✅ Pauta "${evCompartida.titulo}" cargada. Elige tu curso o nivel y presiona Guardar Evaluación.`);
   };
@@ -590,7 +700,7 @@ export default function App() {
     }
 
     setUltimoResultado(null);
-    await cargarEvaluacionesNube(profesor);
+    await cargarEvaluacionesNube(profesor, permisosActivos);
     if (cursoActivoId) setVistaActiva('panel-curso');
     else if (nivelActivoId) setVistaActiva('panel-nivel');
     else setVistaActiva('inicio');
@@ -1002,6 +1112,17 @@ export default function App() {
     return <Login />;
   }
 
+  // Permisos efectivos sobre la evaluación actualmente abierta
+  const esEvaluacionPropia = !config.docenteId || config.docenteId === profesor.id;
+  const esSuperAdmin = profesor.rol === 'admin';
+  const puedeEditarEvalActual = esSuperAdmin || esEvaluacionPropia || Boolean(permisosActivos?.editar_evals_ajenas);
+  const puedeEscanearEvalActual = esSuperAdmin || (esEvaluacionPropia && permisosActivos?.escanear_hojas !== false) || Boolean(permisosActivos?.editar_evals_ajenas);
+  const puedeCorregirManualActual = esSuperAdmin || esEvaluacionPropia || Boolean(permisosActivos?.corregir_manual_ajenas);
+  const puedeEximirActual = esSuperAdmin || (esEvaluacionPropia && permisosActivos?.eximir_estudiantes !== false) || Boolean(permisosActivos?.editar_evals_ajenas);
+  const puedeEditarNominasActual = esSuperAdmin || Boolean(permisosActivos?.editar_nominas);
+  const puedeGestionarUsuarios = esSuperAdmin || Boolean(permisosActivos?.gestionar_usuarios);
+  const puedeCrearEvaluaciones = esSuperAdmin || permisosActivos?.crear_evaluaciones !== false;
+
   const nivelActualObj = niveles.find((n) => n.id === nivelActivoId);
   const cursoActualObj = cursos.find((c) => c.id === cursoActivoId);
   const cursosDelNivelActivo = cursos.filter((c) => c.nivel_id === (config.nivelId || nivelActivoId));
@@ -1045,6 +1166,14 @@ export default function App() {
   const nivelActivoNombre = obtenerNombreNivelActivo();
   const tieneDestinoAsignado = Boolean(config.cursoId || config.nivelId);
 
+  const pestanasEvalDisponibles = [
+    { id: 'avance', label: 'Avance y Pendientes', icon: Clock, visible: true },
+    { id: 'imprimir', label: 'Imprimir / Nómina Alumnos', icon: Printer, visible: true },
+    { id: 'escanear', label: `Escanear Hojas (${resultadosVisiblesEval.length})`, icon: Camera, visible: puedeEscanearEvalActual },
+    { id: 'pauta', label: 'Editar Pauta y Escala', icon: CheckSquare, visible: puedeEditarEvalActual },
+    { id: 'analisis', label: 'Análisis y Reportes', icon: BarChart3, visible: true }
+  ].filter((t) => t.visible);
+
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#1e293b' }}>
       <Sidebar
@@ -1056,7 +1185,7 @@ export default function App() {
         }}
         niveles={niveles}
         cursos={cursos}
-        evaluaciones={evaluacionesPropias}
+        evaluaciones={evaluacionesVisibles}
         nivelActivoId={nivelActivoId}
         setNivelActivoId={(id) => {
           setNivelActivoId(id);
@@ -1069,14 +1198,14 @@ export default function App() {
         }}
         onAbrirEvaluacion={(ev, cId) => abrirEvaluacion(ev, cId, cId ? 'curso' : 'nivel')}
         profesor={profesor}
+        permisos={permisosActivos}
         onCerrarSesion={cerrarSesion}
       />
 
       <main style={{ flex: 1, padding: '24px', maxWidth: '1100px', margin: '0 auto', boxSizing: 'border-box' }}>
-        {/* VISTA INICIO: PANEL PRINCIPAL DEL DOCENTE */}
+        {/* VISTA INICIO: PANEL PRINCIPAL */}
         {vistaActiva === 'inicio' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            {/* Cabecera de bienvenida */}
             <div
               style={{
                 background: 'linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)',
@@ -1098,40 +1227,42 @@ export default function App() {
                   Hola, {profesor.nombre}
                 </h1>
                 <p style={{ margin: 0, fontSize: '14px', opacity: 0.9 }}>
-                  Tienes {niveles.length} nivel(es) y {evaluacionesPropias.length} evaluación(es) creadas en tu cuenta.
+                  Tienes {niveles.length} nivel(es) y {evaluacionesVisibles.length} evaluación(es) disponibles en tu panel.
                 </p>
               </div>
 
-              <button
-                onClick={() => iniciarNuevaEvaluacion()}
-                style={{
-                  background: '#ffffff',
-                  color: '#1e3a8a',
-                  border: 'none',
-                  borderRadius: '10px',
-                  padding: '12px 18px',
-                  fontWeight: '800',
-                  fontSize: '14px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.12)'
-                }}
-              >
-                <FilePlus2 size={18} /> Crear Nueva Evaluación
-              </button>
+              {puedeCrearEvaluaciones && (
+                <button
+                  onClick={() => iniciarNuevaEvaluacion()}
+                  style={{
+                    background: '#ffffff',
+                    color: '#1e3a8a',
+                    border: 'none',
+                    borderRadius: '10px',
+                    padding: '12px 18px',
+                    fontWeight: '800',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.12)'
+                  }}
+                >
+                  <FilePlus2 size={18} /> Crear Nueva Evaluación
+                </button>
+              )}
             </div>
 
             {/* Accesos directos a Niveles y Cursos */}
             <div>
               <h2 style={{ margin: '0 0 12px 0', fontSize: '17px', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <GraduationCap size={20} color="#2563eb" /> Mis Niveles y Cursos
+                <GraduationCap size={20} color="#2563eb" /> Niveles y Cursos Disponibles
               </h2>
 
               {niveles.length === 0 ? (
                 <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #cbd5e1', fontSize: '14px', color: '#64748b' }}>
-                  Aún no tienes cursos asignados. Si eres administrador, configúralos en <strong>Mis Cursos → Configurar Niveles y Cursos</strong>.
+                  Aún no tienes cursos asignados.
                 </div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: '14px' }}>
@@ -1176,27 +1307,29 @@ export default function App() {
               )}
             </div>
 
-            {/* Evaluaciones Recientes */}
+            {/* Evaluaciones Recientes (Propias + Supervisión Depto / UTP) */}
             <div style={{ background: '#ffffff', padding: '20px', borderRadius: '14px', border: '1px solid #cbd5e1' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                 <h2 style={{ margin: 0, fontSize: '17px', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <FolderOpen size={20} color="#16a34a" /> Mis Evaluaciones Recientes
+                  <FolderOpen size={20} color="#16a34a" /> Evaluaciones Recientes
                 </h2>
               </div>
 
-              {evaluacionesPropias.length === 0 ? (
+              {evaluacionesVisibles.length === 0 ? (
                 <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '9px', fontSize: '14px', color: '#64748b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                  <span>Aún no has creado ninguna evaluación.</span>
-                  <button
-                    onClick={() => iniciarNuevaEvaluacion()}
-                    style={{ background: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontWeight: '700', fontSize: '13px', cursor: 'pointer' }}
-                  >
-                    + Crear mi primera evaluación
-                  </button>
+                  <span>Aún no hay evaluaciones registradas en tu vista.</span>
+                  {puedeCrearEvaluaciones && (
+                    <button
+                      onClick={() => iniciarNuevaEvaluacion()}
+                      style={{ background: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontWeight: '700', fontSize: '13px', cursor: 'pointer' }}
+                    >
+                      + Crear evaluación
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {evaluacionesPropias.slice(0, 6).map((ev) => {
+                  {evaluacionesVisibles.slice(0, 8).map((ev) => {
                     const cObj = cursos.find((c) => c.id === ev.curso_id);
                     const nObj = niveles.find((n) => n.id === ev.nivel_id);
                     const etiquetaDestino = cObj
@@ -1204,6 +1337,7 @@ export default function App() {
                       : nObj
                       ? `Nivel Completo: ${nObj.nombre}`
                       : 'Sin asignar';
+                    const esPropia = ev.docente_id === profesor.id;
 
                     return (
                       <div
@@ -1229,13 +1363,20 @@ export default function App() {
                         }}
                       >
                         <div>
-                          <div style={{ fontWeight: '700', fontSize: '15px', color: '#0f172a' }}>{ev.titulo}</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <strong style={{ fontSize: '15px', color: '#0f172a' }}>{ev.titulo}</strong>
+                            {!esPropia && (
+                              <span style={{ background: '#fef3c7', color: '#92400e', fontSize: '11px', fontWeight: '700', padding: '2px 8px', borderRadius: '999px' }}>
+                                Supervisión • Prof. {ev.docente_nombre || 'Docente'}
+                              </span>
+                            )}
+                          </div>
                           <div style={{ fontSize: '12.5px', color: '#64748b', marginTop: '2px' }}>
                             {etiquetaDestino} • {ev.asignatura} • {ev.num_preguntas} preguntas
                           </div>
                         </div>
                         <span style={{ background: '#eff6ff', color: '#1d4ed8', padding: '6px 12px', borderRadius: '8px', fontWeight: '700', fontSize: '12.5px' }}>
-                          Abrir Evaluación →
+                          {esPropia || puedeEditarEvalActual ? 'Gestionar →' : 'Ver Resultados →'}
                         </span>
                       </div>
                     );
@@ -1257,23 +1398,25 @@ export default function App() {
                 </h1>
               </div>
 
-              <button
-                onClick={() => iniciarNuevaEvaluacion('', nivelActivoId)}
-                style={{
-                  background: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '9px',
-                  padding: '10px 16px', fontWeight: '700', fontSize: '13.5px', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', gap: '7px'
-                }}
-              >
-                <FilePlus2 size={17} /> Nueva Evaluación de Nivel ({nivelActualObj?.nombre})
-              </button>
+              {puedeCrearEvaluaciones && (
+                <button
+                  onClick={() => iniciarNuevaEvaluacion('', nivelActivoId)}
+                  style={{
+                    background: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '9px',
+                    padding: '10px 16px', fontWeight: '700', fontSize: '13.5px', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: '7px'
+                  }}
+                >
+                  <FilePlus2 size={17} /> Nueva Evaluación de Nivel ({nivelActualObj?.nombre})
+                </button>
+              )}
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '16px' }}>
               {cursos
                 .filter((c) => c.nivel_id === nivelActivoId)
                 .map((curso) => {
-                  const cantEvalsCurso = evaluacionesPropias.filter(
+                  const cantEvalsCurso = evaluacionesVisibles.filter(
                     (ev) => ev.curso_id === curso.id || (!ev.curso_id && ev.nivel_id === nivelActivoId)
                   ).length;
 
@@ -1356,35 +1499,38 @@ export default function App() {
                 </h3>
                 {(() => {
                   const idsCursosNivel = new Set(cursos.filter((c) => c.nivel_id === nivelActivoId).map((c) => c.id));
-                  const evalsNivel = evaluacionesPropias.filter(
+                  const evalsNivel = evaluacionesVisibles.filter(
                     (ev) => ev.nivel_id === nivelActivoId || idsCursosNivel.has(ev.curso_id)
                   );
                   if (evalsNivel.length === 0) {
-                    return <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Aún no tienes evaluaciones creadas en este nivel.</p>;
+                    return <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Aún no hay evaluaciones registradas en este nivel.</p>;
                   }
                   return (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {evalsNivel.map((ev) => (
-                        <div
-                          key={ev.id}
-                          onClick={() => abrirEvaluacion(ev, '', 'nivel')}
-                          style={{
-                            padding: '12px 16px', borderRadius: '9px', border: '1px solid #e2e8f0',
-                            background: '#f8fafc', cursor: 'pointer', display: 'flex',
-                            justifyContent: 'space-between', alignItems: 'center'
-                          }}
-                        >
-                          <div>
-                            <strong style={{ fontSize: '15px', color: '#0f172a' }}>{ev.titulo}</strong>
-                            <div style={{ fontSize: '12.5px', color: '#64748b' }}>
-                              {ev.asignatura} • {ev.num_preguntas} preguntas
+                      {evalsNivel.map((ev) => {
+                        const esPropia = ev.docente_id === profesor.id;
+                        return (
+                          <div
+                            key={ev.id}
+                            onClick={() => abrirEvaluacion(ev, '', 'nivel')}
+                            style={{
+                              padding: '12px 16px', borderRadius: '9px', border: '1px solid #e2e8f0',
+                              background: '#f8fafc', cursor: 'pointer', display: 'flex',
+                              justifyContent: 'space-between', alignItems: 'center'
+                            }}
+                          >
+                            <div>
+                              <strong style={{ fontSize: '15px', color: '#0f172a' }}>{ev.titulo}</strong>
+                              <div style={{ fontSize: '12.5px', color: '#64748b' }}>
+                                {ev.asignatura} • {ev.num_preguntas} preguntas {!esPropia && `• Prof. ${ev.docente_nombre || 'Docente'}`}
+                              </div>
                             </div>
+                            <span style={{ color: '#2563eb', fontWeight: '700', fontSize: '13px' }}>
+                              Ver Resultados del Nivel →
+                            </span>
                           </div>
-                          <span style={{ color: '#2563eb', fontWeight: '700', fontSize: '13px' }}>
-                            Ver Resultados del Nivel →
-                          </span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   );
                 })()}
@@ -1433,7 +1579,7 @@ export default function App() {
                   <div>
                     <h2 style={{ margin: 0, fontSize: '19px', color: '#0f172a' }}>Lista de Curso</h2>
                     <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#64748b' }}>
-                      Nómina de estudiantes de {cursoActualObj?.nombre}, subir Excel o agregar alumnos
+                      Nómina de estudiantes de {cursoActualObj?.nombre}
                     </p>
                   </div>
                 </div>
@@ -1456,20 +1602,22 @@ export default function App() {
                       </p>
                     </div>
                   </div>
-                  <button
-                    onClick={() => iniciarNuevaEvaluacion(cursoActivoId, nivelActivoId)}
-                    style={{
-                      background: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px',
-                      padding: '8px 12px', fontSize: '12.5px', fontWeight: '700', cursor: 'pointer',
-                      display: 'flex', alignItems: 'center', gap: '5px'
-                    }}
-                  >
-                    <FilePlus2 size={15} /> Crear
-                  </button>
+                  {puedeCrearEvaluaciones && (
+                    <button
+                      onClick={() => iniciarNuevaEvaluacion(cursoActivoId, nivelActivoId)}
+                      style={{
+                        background: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px',
+                        padding: '8px 12px', fontSize: '12.5px', fontWeight: '700', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', gap: '5px'
+                      }}
+                    >
+                      <FilePlus2 size={15} /> Crear
+                    </button>
+                  )}
                 </div>
 
                 {(() => {
-                  const evalsCurso = evaluacionesPropias.filter(
+                  const evalsCurso = evaluacionesVisibles.filter(
                     (ev) => ev.curso_id === cursoActivoId || (!ev.curso_id && ev.nivel_id === nivelActivoId)
                   );
                   if (evalsCurso.length === 0) {
@@ -1481,23 +1629,28 @@ export default function App() {
                   }
                   return (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {evalsCurso.map((ev) => (
-                        <div
-                          key={ev.id}
-                          onClick={() => abrirEvaluacion(ev, cursoActivoId, 'curso')}
-                          style={{
-                            padding: '12px 14px', borderRadius: '9px', border: '1px solid #e2e8f0',
-                            background: '#f8fafc', cursor: 'pointer', display: 'flex',
-                            justifyContent: 'space-between', alignItems: 'center'
-                          }}
-                        >
-                          <div>
-                            <div style={{ fontWeight: '700', fontSize: '14.5px', color: '#0f172a' }}>{ev.titulo}</div>
-                            <div style={{ fontSize: '12px', color: '#64748b' }}>{ev.asignatura} • {ev.num_preguntas} preg.</div>
+                      {evalsCurso.map((ev) => {
+                        const esPropia = ev.docente_id === profesor.id;
+                        return (
+                          <div
+                            key={ev.id}
+                            onClick={() => abrirEvaluacion(ev, cursoActivoId, 'curso')}
+                            style={{
+                              padding: '12px 14px', borderRadius: '9px', border: '1px solid #e2e8f0',
+                              background: '#f8fafc', cursor: 'pointer', display: 'flex',
+                              justifyContent: 'space-between', alignItems: 'center'
+                            }}
+                          >
+                            <div>
+                              <div style={{ fontWeight: '700', fontSize: '14.5px', color: '#0f172a' }}>{ev.titulo}</div>
+                              <div style={{ fontSize: '12px', color: '#64748b' }}>
+                                {ev.asignatura} • {ev.num_preguntas} preg. {!esPropia && `• Prof. ${ev.docente_nombre || 'Docente'}`}
+                              </div>
+                            </div>
+                            <span style={{ color: '#2563eb', fontWeight: '700', fontSize: '13px' }}>Entrar →</span>
                           </div>
-                          <span style={{ color: '#2563eb', fontWeight: '700', fontSize: '13px' }}>Entrar →</span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   );
                 })()}
@@ -1511,7 +1664,7 @@ export default function App() {
           <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', maxWidth: '600px' }}>
             <h2 style={{ margin: '0 0 16px 0', fontSize: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <User size={24} color="#2563eb" />
-              Mi Perfil Docente
+              Mi Perfil
             </h2>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -1521,12 +1674,12 @@ export default function App() {
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Nombre del Profesor(a)</label>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Nombre Completo</label>
                 <input type="text" value={profesor.nombre} onChange={(e) => setProfesor({ ...profesor, nombre: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Asignatura Principal</label>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Asignatura / Departamento Principal</label>
                 <input type="text" value={profesor.asignatura} onChange={(e) => setProfesor({ ...profesor, asignatura: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
               </div>
 
@@ -1537,6 +1690,7 @@ export default function App() {
                       .from('perfiles')
                       .update({ nombre: profesor.nombre, asignatura: profesor.asignatura })
                       .eq('id', profesor.id);
+                    await cargarEvaluacionesNube(profesor, permisosActivos);
                     alert('✅ Perfil actualizado correctamente.');
                   }
                 }}
@@ -1552,9 +1706,16 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA 1B: GESTIÓN DE USUARIOS */}
-        {vistaActiva === 'usuarios' && profesor.rol === 'admin' && (
-          <GestionUsuarios perfilActual={profesor} />
+        {/* VISTA 1B: GESTIÓN DE USUARIOS Y MATRIZ DE PERMISOS */}
+        {vistaActiva === 'usuarios' && puedeGestionarUsuarios && (
+          <GestionUsuarios
+            perfilActual={profesor}
+            onPermisosActualizados={(nuevaMatriz) => {
+              if (nuevaMatriz[profesor.rol]) {
+                setPermisosActivos(nuevaMatriz[profesor.rol]);
+              }
+            }}
+          />
         )}
 
         {/* VISTA 2: LISTA DE CURSO / CONFIGURAR NIVELES */}
@@ -1579,13 +1740,13 @@ export default function App() {
               cursos={cursos}
               cursoActivoId={cursoActivoId}
               setCursoActivoId={setCursoActivoId}
-              onRecargarEstructura={() => cargarEstructuraEscolar(profesor)}
+              onRecargarEstructura={() => cargarEstructuraEscolar(profesor, permisosActivos)}
             />
           </div>
         )}
 
         {/* VISTA 3: CREAR EVALUACIÓN */}
-        {vistaActiva === 'crear-evaluacion' && (
+        {vistaActiva === 'crear-evaluacion' && puedeCrearEvaluaciones && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
@@ -1727,6 +1888,16 @@ export default function App() {
         {/* VISTA 4: DETALLE DE EVALUACIÓN */}
         {vistaActiva === 'detalle-evaluacion' && config.id && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Banner de Modo Supervisión si está viendo una prueba de otro colega */}
+            {!puedeEditarEvalActual && (
+              <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e', padding: '12px 16px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13.5px' }}>
+                <ShieldAlert size={18} color="#d97706" />
+                <span>
+                  <strong>Modo Supervisión (Solo Lectura):</strong> Esta evaluación fue creada por <strong>{config.docenteNombre || 'otro docente'}</strong>. Puedes revisar todos los reportes, gráficos, hojas escaneadas y descargar PDF/Excel.
+                </span>
+              </div>
+            )}
+
             <div style={{ background: '#ffffff', padding: '18px 20px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -1785,43 +1956,41 @@ export default function App() {
                     Imprimir ({estudiantesActivos.length})
                   </button>
 
-                  <button
-                    onClick={toggleCompartirEvaluacion}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: '6px',
-                      padding: '8px 12px', borderRadius: '8px',
-                      border: `1px solid ${config.compartida ? '#86efac' : '#cbd5e1'}`,
-                      background: config.compartida ? '#dcfce7' : '#ffffff',
-                      color: config.compartida ? '#166534' : '#475569',
-                      fontWeight: '700', cursor: 'pointer', fontSize: '13px'
-                    }}
-                  >
-                    <Share2 size={15} />
-                    {config.compartida ? 'Compartida' : 'Compartir'}
-                  </button>
+                  {puedeEditarEvalActual && (
+                    <>
+                      <button
+                        onClick={toggleCompartirEvaluacion}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '6px',
+                          padding: '8px 12px', borderRadius: '8px',
+                          border: `1px solid ${config.compartida ? '#86efac' : '#cbd5e1'}`,
+                          background: config.compartida ? '#dcfce7' : '#ffffff',
+                          color: config.compartida ? '#166534' : '#475569',
+                          fontWeight: '700', cursor: 'pointer', fontSize: '13px'
+                        }}
+                      >
+                        <Share2 size={15} />
+                        {config.compartida ? 'Compartida' : 'Compartir'}
+                      </button>
 
-                  <button
-                    onClick={eliminarEvaluacion}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: '6px',
-                      padding: '8px 10px', borderRadius: '8px', border: '1px solid #fecaca',
-                      background: '#fef2f2', color: '#dc2626', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
-                    }}
-                  >
-                    <Trash2 size={15} />
-                  </button>
+                      <button
+                        onClick={eliminarEvaluacion}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '6px',
+                          padding: '8px 10px', borderRadius: '8px', border: '1px solid #fecaca',
+                          background: '#fef2f2', color: '#dc2626', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
+                        }}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
 
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              {[
-                { id: 'avance', label: 'Avance y Pendientes', icon: Clock },
-                { id: 'imprimir', label: 'Imprimir / Nómina Alumnos', icon: Printer },
-                { id: 'escanear', label: `Escanear Hojas (${resultadosVisiblesEval.length})`, icon: Camera },
-                { id: 'pauta', label: 'Editar Pauta y Escala', icon: CheckSquare },
-                { id: 'analisis', label: 'Análisis y Reportes', icon: BarChart3 }
-              ].map((tab) => {
+              {pestanasEvalDisponibles.map((tab) => {
                 const Icono = tab.icon;
                 const activo = subVistaEval === tab.id;
                 return (
@@ -1944,12 +2113,14 @@ export default function App() {
                                     <td style={{ padding: '9px 10px', fontWeight: '600' }}>{est.nombre}</td>
                                     <td style={{ padding: '9px 10px', color: '#64748b' }}>{est.curso_nombre || '-'}</td>
                                     <td style={{ padding: '9px 10px', textAlign: 'right', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                                      <button
-                                        onClick={() => toggleEximirEstudiante(est.rut)}
-                                        style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                                      >
-                                        <UserX size={14} /> Eximir
-                                      </button>
+                                      {puedeEximirActual && (
+                                        <button
+                                          onClick={() => toggleEximirEstudiante(est.rut)}
+                                          style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                        >
+                                          <UserX size={14} /> Eximir
+                                        </button>
+                                      )}
                                       <button
                                         onClick={() => imprimirHojasPDF([est], `_${est.rut}`)}
                                         style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
@@ -1976,12 +2147,14 @@ export default function App() {
                                     <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: '#64748b' }}>{est.rut}</td>
                                     <td style={{ padding: '8px 10px', color: '#64748b', textDecoration: 'line-through' }}>{est.nombre}</td>
                                     <td style={{ padding: '8px 10px', textAlign: 'right' }}>
-                                      <button
-                                        onClick={() => toggleEximirEstudiante(est.rut)}
-                                        style={{ background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                                      >
-                                        <UserCheck size={14} /> Deseximir
-                                      </button>
+                                      {puedeEximirActual && (
+                                        <button
+                                          onClick={() => toggleEximirEstudiante(est.rut)}
+                                          style={{ background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                        >
+                                          <UserCheck size={14} /> Deseximir
+                                        </button>
+                                      )}
                                     </td>
                                   </tr>
                                 ))}
@@ -2012,13 +2185,15 @@ export default function App() {
                   </button>
                 </div>
 
-                <form onSubmit={agregarEstudianteAEvaluacion} style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
-                  <input type="text" placeholder="RUT alumno nuevo" value={rutExtra} onChange={(e) => setRutExtra(e.target.value)} style={{ width: '170px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
-                  <input type="text" placeholder="Nombre completo" value={nombreExtra} onChange={(e) => setNombreExtra(e.target.value)} style={{ flex: 1, minWidth: '200px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
-                  <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 14px', cursor: 'pointer', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <UserPlus size={16} /> Agregar al Curso
-                  </button>
-                </form>
+                {puedeEditarNominasActual && (
+                  <form onSubmit={agregarEstudianteAEvaluacion} style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
+                    <input type="text" placeholder="RUT alumno nuevo" value={rutExtra} onChange={(e) => setRutExtra(e.target.value)} style={{ width: '170px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
+                    <input type="text" placeholder="Nombre completo" value={nombreExtra} onChange={(e) => setNombreExtra(e.target.value)} style={{ flex: 1, minWidth: '200px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
+                    <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 14px', cursor: 'pointer', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <UserPlus size={16} /> Agregar al Curso
+                    </button>
+                  </form>
+                )}
 
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                   <thead style={{ background: '#f1f5f9' }}>
@@ -2042,8 +2217,8 @@ export default function App() {
                       <th style={{ padding: '10px', textAlign: 'left' }}>Estudiante</th>
                       <th style={{ padding: '10px', textAlign: 'left' }}>Curso</th>
                       <th style={{ padding: '10px', textAlign: 'center' }}>Estado</th>
-                      <th style={{ padding: '10px', textAlign: 'center' }}>Eximir</th>
-                      <th style={{ padding: '10px', textAlign: 'center' }}>Quitar</th>
+                      {puedeEximirActual && <th style={{ padding: '10px', textAlign: 'center' }}>Eximir</th>}
+                      {puedeEditarEvalActual && <th style={{ padding: '10px', textAlign: 'center' }}>Quitar</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -2066,16 +2241,20 @@ export default function App() {
                               {esEximido ? 'Eximido' : yaRindio ? 'Rindió' : 'Pendiente'}
                             </span>
                           </td>
-                          <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                            <button onClick={() => toggleEximirEstudiante(est.rut)} style={{ background: 'transparent', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '3px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>
-                              {esEximido ? 'Deseximir' : 'Eximir'}
-                            </button>
-                          </td>
-                          <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                            <button onClick={() => quitarEstudianteDeEvaluacion(est.rut)} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
-                              <Trash2 size={15} />
-                            </button>
-                          </td>
+                          {puedeEximirActual && (
+                            <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                              <button onClick={() => toggleEximirEstudiante(est.rut)} style={{ background: 'transparent', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '3px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>
+                                {esEximido ? 'Deseximir' : 'Eximir'}
+                              </button>
+                            </td>
+                          )}
+                          {puedeEditarEvalActual && (
+                            <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                              <button onClick={() => quitarEstudianteDeEvaluacion(est.rut)} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
+                                <Trash2 size={15} />
+                              </button>
+                            </td>
+                          )}
                         </tr>
                       );
                     })}
@@ -2085,7 +2264,7 @@ export default function App() {
             )}
 
             {/* SUBVISTA C: ESCANEAR */}
-            {subVistaEval === 'escanear' && (
+            {subVistaEval === 'escanear' && puedeEscanearEvalActual && (
               <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
                   <h3 style={{ margin: 0, fontSize: '18px' }}>Escanear Hoja de Respuestas o Subir PDF</h3>
@@ -2200,7 +2379,7 @@ export default function App() {
             )}
 
             {/* SUBVISTA D: EDITAR PAUTA */}
-            {subVistaEval === 'pauta' && (
+            {subVistaEval === 'pauta' && puedeEditarEvalActual && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 <PautaEditor config={config} setConfig={setConfig} nivelNombre={nivelActivoNombre} />
                 <button
@@ -2218,6 +2397,7 @@ export default function App() {
                 <AnalisisPanel
                   resultados={resultadosVisiblesEval}
                   config={config}
+                  puedeEditar={puedeCorregirManualActual}
                   onActualizarRespuesta={async (resultadoId, nuevasRespuestas) => {
                     const totalPreg = Number(config.numPreguntas);
                     let puntosObtenidos = 0;
@@ -2320,9 +2500,11 @@ export default function App() {
                                 >
                                   <FileDown size={14} /> PDF Alumno
                                 </button>
-                                <button onClick={() => eliminarResultadoEscaneo(res)} style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                  <Trash2 size={14} />
-                                </button>
+                                {puedeCorregirManualActual && (
+                                  <button onClick={() => eliminarResultadoEscaneo(res)} style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                    <Trash2 size={14} />
+                                  </button>
+                                )}
                               </td>
                             </tr>
                           ))}

@@ -4,6 +4,13 @@ import {
   ChevronDown, ChevronRight, Menu, X, CheckSquare, Users, LogOut
 } from 'lucide-react';
 
+const ETIQUETAS_ROL = {
+  admin: 'Administrador',
+  utp: 'UTP',
+  jefe_depto: 'Jefe de Depto.',
+  docente: 'Docente'
+};
+
 export default function Sidebar({
   vistaActiva,
   setVistaActiva,
@@ -16,6 +23,7 @@ export default function Sidebar({
   setCursoActivoId,
   onAbrirEvaluacion,
   profesor,
+  permisos = {},
   onCerrarSesion
 }) {
   const [colapsado, setColapsado] = useState(false);
@@ -57,7 +65,10 @@ export default function Sidebar({
     transition: 'all 0.15s'
   });
 
-  const esAdmin = profesor?.rol === 'admin';
+  const puedeGestionarUsuarios = profesor?.rol === 'admin' || Boolean(permisos.gestionar_usuarios);
+  const puedeConfigurarCursos = profesor?.rol === 'admin' || Boolean(permisos.configurar_cursos);
+  const puedeCrearEvaluaciones = profesor?.rol === 'admin' || permisos.crear_evaluaciones !== false;
+  const etiquetaRolActual = ETIQUETAS_ROL[profesor?.rol] || 'Docente';
 
   return (
     <aside
@@ -117,7 +128,6 @@ export default function Sidebar({
 
       {/* Navegación */}
       <nav style={{ padding: '12px 10px', flex: 1, display: 'flex', flexDirection: 'column', gap: '4px', overflowY: 'auto' }}>
-        {/* 0. Inicio */}
         <button
           onClick={() => setVistaActiva('inicio')}
           style={estiloBotonMenu(vistaActiva === 'inicio')}
@@ -129,7 +139,6 @@ export default function Sidebar({
           </span>
         </button>
 
-        {/* 1. Mi Perfil */}
         <button
           onClick={() => setVistaActiva('perfil')}
           style={estiloBotonMenu(vistaActiva === 'perfil')}
@@ -141,21 +150,20 @@ export default function Sidebar({
           </span>
         </button>
 
-        {/* 2. Cuentas Docentes (Solo Admin / UTP) */}
-        {esAdmin && (
+        {puedeGestionarUsuarios && (
           <button
             onClick={() => setVistaActiva('usuarios')}
             style={estiloBotonMenu(vistaActiva === 'usuarios')}
-            title="Administrar Cuentas Docentes"
+            title="Administrar Cuentas y Roles"
           >
             <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <Users size={18} />
-              {!colapsado && <span>Cuentas Docentes</span>}
+              {!colapsado && <span>Cuentas y Roles</span>}
             </span>
           </button>
         )}
 
-        {/* 3. Mis Cursos */}
+        {/* Mis Cursos */}
         <div style={{ marginTop: '4px' }}>
           <button
             onClick={() => {
@@ -183,20 +191,22 @@ export default function Sidebar({
 
           {!colapsado && menuCursosAbierto && (
             <div style={{ paddingLeft: '10px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              <button
-                onClick={() => {
-                  setCursoActivoId('');
-                  setVistaActiva('visor-curso');
-                }}
-                style={{
-                  ...estiloBotonMenu(vistaActiva === 'visor-curso' && !cursoActivoId),
-                  fontSize: '12.5px',
-                  padding: '7px 10px',
-                  color: '#475569'
-                }}
-              >
-                <span>⚙️ Configurar Niveles y Cursos</span>
-              </button>
+              {puedeConfigurarCursos && (
+                <button
+                  onClick={() => {
+                    setCursoActivoId('');
+                    setVistaActiva('visor-curso');
+                  }}
+                  style={{
+                    ...estiloBotonMenu(vistaActiva === 'visor-curso' && !cursoActivoId),
+                    fontSize: '12.5px',
+                    padding: '7px 10px',
+                    color: '#475569'
+                  }}
+                >
+                  <span>⚙️ Configurar Niveles y Cursos</span>
+                </button>
+              )}
 
               {niveles.map((nivel) => {
                 const cursosDelNivel = cursos.filter((c) => c.nivel_id === nivel.id);
@@ -353,23 +363,25 @@ export default function Sidebar({
           )}
         </div>
 
-        {/* 4. Crear Evaluación */}
-        <button
-          onClick={() => setVistaActiva('crear-evaluacion')}
-          style={{
-            ...estiloBotonMenu(vistaActiva === 'crear-evaluacion'),
-            marginTop: '6px',
-            background: vistaActiva === 'crear-evaluacion' ? '#2563eb' : '#f1f5f9',
-            color: vistaActiva === 'crear-evaluacion' ? '#ffffff' : '#0f172a',
-            fontWeight: '700'
-          }}
-          title="Crear Nueva Evaluación"
-        >
-          <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <FilePlus2 size={18} />
-            {!colapsado && <span>Crear Evaluación</span>}
-          </span>
-        </button>
+        {/* Crear Evaluación */}
+        {puedeCrearEvaluaciones && (
+          <button
+            onClick={() => setVistaActiva('crear-evaluacion')}
+            style={{
+              ...estiloBotonMenu(vistaActiva === 'crear-evaluacion'),
+              marginTop: '6px',
+              background: vistaActiva === 'crear-evaluacion' ? '#2563eb' : '#f1f5f9',
+              color: vistaActiva === 'crear-evaluacion' ? '#ffffff' : '#0f172a',
+              fontWeight: '700'
+            }}
+            title="Crear Nueva Evaluación"
+          >
+            <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <FilePlus2 size={18} />
+              {!colapsado && <span>Crear Evaluación</span>}
+            </span>
+          </button>
+        )}
       </nav>
 
       {/* Pie de barra lateral */}
@@ -381,8 +393,8 @@ export default function Sidebar({
                 width: '34px',
                 height: '34px',
                 borderRadius: '999px',
-                background: esAdmin ? '#dbeafe' : '#e2e8f0',
-                color: esAdmin ? '#1d4ed8' : '#334155',
+                background: profesor?.rol === 'admin' ? '#dbeafe' : profesor?.rol === 'utp' ? '#ede9fe' : profesor?.rol === 'jefe_depto' ? '#d1fae5' : '#e2e8f0',
+                color: profesor?.rol === 'admin' ? '#1d4ed8' : profesor?.rol === 'utp' ? '#6d28d9' : profesor?.rol === 'jefe_depto' ? '#047857' : '#334155',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -398,7 +410,7 @@ export default function Sidebar({
                 {profesor?.nombre || 'Docente'}
               </div>
               <div style={{ fontSize: '11px', color: '#64748b' }}>
-                {esAdmin ? 'Admin / UTP' : 'Docente'} • {profesor?.asignatura || 'Matemática'}
+                {etiquetaRolActual} • {profesor?.asignatura || 'Matemática'}
               </div>
             </div>
           </div>
