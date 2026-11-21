@@ -224,8 +224,9 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '7px',
-                  background: subiendoPdf ? '#94a3b8' : '#0f172a',
-                  color: '#ffffff',
+                  background: subiendoPdf ? '#e2e8f0' : '#eff6ff',
+                  color: '#1e40af',
+                  border: '1px solid #93c5fd',
                   padding: '8px 14px',
                   borderRadius: '8px',
                   fontSize: '12.5px',
@@ -233,9 +234,17 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
                   cursor: subiendoPdf ? 'wait' : 'pointer'
                 }}
               >
-                <Upload size={15} />
-                {subiendoPdf ? 'Subiendo PDF...' : 'Subir Prueba en PDF'}
-                <input type="file" accept="application/pdf" onChange={manejarSubidaPdfNube} disabled={subiendoPdf} style={{ display: 'none' }} />
+                <Upload size={15} color="#1e40af" />
+                <span style={{ color: '#1e40af' }}>
+                  {subiendoPdf ? 'Subiendo PDF...' : 'Subir Prueba en PDF'}
+                </span>
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  onChange={manejarSubidaPdfNube}
+                  disabled={subiendoPdf}
+                  style={{ display: 'none' }}
+                />
               </label>
             )}
           </div>
