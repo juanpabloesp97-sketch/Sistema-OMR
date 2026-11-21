@@ -144,6 +144,33 @@ export default function App() {
   const [rutExtra, setRutExtra] = useState('');
   const [nombreExtra, setNombreExtra] = useState('');
 
+  // Verifica si una evaluación corresponde al aula del docente (autor directo o curso/nivel asignado en su asignatura)
+  const esEvaluacionDeSuAula = (
+    ev,
+    perfilUsuario = profesor,
+    idsCursosProfe = cursosAsignadosAula,
+    listaCursos = cursos
+  ) => {
+    if (!ev) return true;
+    if (ev.docente_id === perfilUsuario?.id) return true;
+
+    const asigUsuario = (perfilUsuario?.asignatura || '').trim().toLowerCase();
+    const asigEval = (ev.asignatura || '').trim().toLowerCase();
+    const asigCoincide = !asigUsuario || asigEval === asigUsuario;
+    if (!asigCoincide) return false;
+
+    if (ev.curso_id && idsCursosProfe.has(ev.curso_id)) return true;
+
+    if (!ev.curso_id && ev.nivel_id) {
+      const nivelesAula = new Set(
+        listaCursos.filter((c) => idsCursosProfe.has(c.id)).map((c) => c.nivel_id)
+      );
+      if (nivelesAula.has(ev.nivel_id)) return true;
+    }
+
+    return false;
+  };
+
   useEffect(() => {
     if (!profesor?.id) return;
     const estadoNav = {
@@ -256,8 +283,8 @@ export default function App() {
     }));
     setCargandoSesion(false);
 
-    const { nivelesVisibles, cursosVisibles } = await cargarEstructuraEscolar(perfilFinal, permsUsuario);
-    const { visibles } = await cargarEvaluacionesNube(perfilFinal, permsUsuario);
+    const { nivelesVisibles, cursosVisibles, idsAula } = await cargarEstructuraEscolar(perfilFinal, permsUsuario);
+    const { visibles } = await cargarEvaluacionesNube(perfilFinal, permsUsuario, idsAula, cursosVisibles);
 
     let restaurado = false;
     try {
@@ -277,7 +304,15 @@ export default function App() {
         if (nav.vistaActiva === 'detalle-evaluacion' && nav.evalId) {
           const evEncontrada = (visibles || []).find((e) => String(e.id) === String(nav.evalId));
           if (evEncontrada) {
-            abrirEvaluacion(evEncontrada, nav.cursoActivoId || '', nav.contextoAperturaEval || 'curso');
+            abrirEvaluacion(
+              evEncontrada,
+              nav.cursoActivoId || '',
+              nav.contextoAperturaEval || 'curso',
+              perfilFinal,
+              permsUsuario,
+              idsAula,
+              cursosVisibles
+            );
             if (nav.subVistaEval) setSubVistaEval(nav.subVistaEval);
             if (nav.filtroCursoEnNivel) setFiltroCursoEnNivel(nav.filtroCursoEnNivel);
             restaurado = true;
@@ -384,7 +419,7 @@ export default function App() {
   };
 
   const cargarEstructuraEscolar = async (perfilUsuario = profesor, permsUsuario = permisosActivos) => {
-    if (!supabase) return { nivelesVisibles: [], cursosVisibles: [] };
+    if (!supabase) return { nivelesVisibles: [], cursosVisibles: [], idsAula: new Set() };
     const [{ data: niv }, { data: cur }, { data: asig }] = await Promise.all([
       supabase.from('niveles').select('*').order('orden', { ascending: true }).order('nombre'),
       supabase.from('cursos').select('*').order('nombre'),
@@ -409,10 +444,15 @@ export default function App() {
 
     setNiveles(nivelesVisibles);
     setCursos(cursosVisibles);
-    return { nivelesVisibles, cursosVisibles };
+    return { nivelesVisibles, cursosVisibles, idsAula };
   };
 
-  const cargarEvaluacionesNube = async (perfilUsuario = profesor, permsUsuario = permisosActivos) => {
+  const cargarEvaluacionesNube = async (
+    perfilUsuario = profesor,
+    permsUsuario = permisosActivos,
+    idsCursosProfe = cursosAsignadosAula,
+    listaCursos = cursos
+  ) => {
     if (!supabase || !perfilUsuario?.id) return { visibles: [], compartidas: [] };
 
     const [{ data: todasEvals }, { data: compartidas }] = await Promise.all([
@@ -431,8 +471,11 @@ export default function App() {
     const asigUsuario = (perfilUsuario.asignatura || '').trim().toLowerCase();
 
     const filtradas = (todasEvals || []).filter((ev) => {
-      if (ev.docente_id === perfilUsuario.id) return true;
+      // 1. Evaluaciones propias o de sus cursos/niveles asignados en su asignatura
+      if (esEvaluacionDeSuAula(ev, perfilUsuario, idsCursosProfe, listaCursos)) return true;
+      // 2. Admin o UTP (ver todo el colegio)
       if (perfilUsuario.rol === 'admin' || permsUsuario?.ver_evals_colegio) return true;
+      // 3. Jefe de Depto (ver toda su asignatura en otros niveles)
       if (permsUsuario?.ver_evals_depto && asigUsuario) {
         const asigEval = (ev.asignatura || '').trim().toLowerCase();
         return asigEval === asigUsuario;
@@ -519,7 +562,15 @@ export default function App() {
     }
   };
 
-  const abrirEvaluacion = (ev, cursoFiltradoId = '', contexto = 'curso') => {
+  const abrirEvaluacion = (
+    ev,
+    cursoFiltradoId = '',
+    contexto = 'curso',
+    perfilUsuario = profesor,
+    permsUsuario = permisosActivos,
+    idsCursosProfe = cursosAsignadosAula,
+    listaCursos = cursos
+  ) => {
     setConfig({
       id: ev.id,
       docenteId: ev.docente_id || null,
@@ -549,9 +600,9 @@ export default function App() {
     }
     setEximidosRuts(Array.isArray(ev.eximidos) ? ev.eximidos : []);
 
-    const esPropia = ev.docente_id === profesor.id;
-    const puedeEditarAjena = profesor.rol === 'admin' || Boolean(permisosActivos?.editar_evals_ajenas);
-    setSubVistaEval(esPropia || puedeEditarAjena ? 'avance' : 'analisis');
+    const deSuAula = esEvaluacionDeSuAula(ev, perfilUsuario, idsCursosProfe, listaCursos);
+    const puedeEditarAjena = perfilUsuario?.rol === 'admin' || Boolean(permsUsuario?.editar_evals_ajenas);
+    setSubVistaEval(deSuAula || puedeEditarAjena ? 'avance' : 'analisis');
     setVistaActiva('detalle-evaluacion');
   };
 
@@ -1113,7 +1164,7 @@ export default function App() {
   }
 
   // Permisos efectivos sobre la evaluación actualmente abierta
-  const esEvaluacionPropia = !config.docenteId || config.docenteId === profesor.id;
+  const esEvaluacionPropia = esEvaluacionDeSuAula(config, profesor, cursosAsignadosAula, cursos);
   const esSuperAdmin = profesor.rol === 'admin';
   const puedeEditarEvalActual = esSuperAdmin || esEvaluacionPropia || Boolean(permisosActivos?.editar_evals_ajenas);
   const puedeEscanearEvalActual = esSuperAdmin || (esEvaluacionPropia && permisosActivos?.escanear_hojas !== false) || Boolean(permisosActivos?.editar_evals_ajenas);
@@ -1310,7 +1361,7 @@ export default function App() {
               )}
             </div>
 
-            {/* Evaluaciones Recientes (Propias + Supervisión Depto / UTP) */}
+            {/* Evaluaciones Recientes */}
             <div style={{ background: '#ffffff', padding: '20px', borderRadius: '14px', border: '1px solid #cbd5e1' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                 <h2 style={{ margin: 0, fontSize: '17px', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1340,7 +1391,7 @@ export default function App() {
                       : nObj
                       ? `Nivel Completo: ${nObj.nombre}`
                       : 'Sin asignar';
-                    const esPropia = ev.docente_id === profesor.id;
+                    const deSuAula = esEvaluacionDeSuAula(ev);
 
                     return (
                       <div
@@ -1368,7 +1419,7 @@ export default function App() {
                         <div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                             <strong style={{ fontSize: '15px', color: '#0f172a' }}>{ev.titulo}</strong>
-                            {!esPropia && (
+                            {!deSuAula && (
                               <span style={{ background: '#fef3c7', color: '#92400e', fontSize: '11px', fontWeight: '700', padding: '2px 8px', borderRadius: '999px' }}>
                                 Supervisión • Prof. {ev.docente_nombre || 'Docente'}
                               </span>
@@ -1379,7 +1430,7 @@ export default function App() {
                           </div>
                         </div>
                         <span style={{ background: '#eff6ff', color: '#1d4ed8', padding: '6px 12px', borderRadius: '8px', fontWeight: '700', fontSize: '12.5px' }}>
-                          {esPropia || puedeEditarEvalActual ? 'Gestionar →' : 'Ver Resultados →'}
+                          {deSuAula || puedeEditarEvalActual ? 'Gestionar →' : 'Ver Resultados →'}
                         </span>
                       </div>
                     );
@@ -1511,7 +1562,7 @@ export default function App() {
                   return (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       {evalsNivel.map((ev) => {
-                        const esPropia = ev.docente_id === profesor.id;
+                        const deSuAula = esEvaluacionDeSuAula(ev);
                         return (
                           <div
                             key={ev.id}
@@ -1525,7 +1576,7 @@ export default function App() {
                             <div>
                               <strong style={{ fontSize: '15px', color: '#0f172a' }}>{ev.titulo}</strong>
                               <div style={{ fontSize: '12.5px', color: '#64748b' }}>
-                                {ev.asignatura} • {ev.num_preguntas} preguntas {!esPropia && `• Prof. ${ev.docente_nombre || 'Docente'}`}
+                                {ev.asignatura} • {ev.num_preguntas} preguntas {!deSuAula && `• Prof. ${ev.docente_nombre || 'Docente'}`}
                               </div>
                             </div>
                             <span style={{ color: '#2563eb', fontWeight: '700', fontSize: '13px' }}>
@@ -1633,7 +1684,7 @@ export default function App() {
                   return (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       {evalsCurso.map((ev) => {
-                        const esPropia = ev.docente_id === profesor.id;
+                        const deSuAula = esEvaluacionDeSuAula(ev);
                         return (
                           <div
                             key={ev.id}
@@ -1647,7 +1698,7 @@ export default function App() {
                             <div>
                               <div style={{ fontWeight: '700', fontSize: '14.5px', color: '#0f172a' }}>{ev.titulo}</div>
                               <div style={{ fontSize: '12px', color: '#64748b' }}>
-                                {ev.asignatura} • {ev.num_preguntas} preg. {!esPropia && `• Prof. ${ev.docente_nombre || 'Docente'}`}
+                                {ev.asignatura} • {ev.num_preguntas} preg. {!deSuAula && `• Prof. ${ev.docente_nombre || 'Docente'}`}
                               </div>
                             </div>
                             <span style={{ color: '#2563eb', fontWeight: '700', fontSize: '13px' }}>Entrar →</span>
@@ -1891,7 +1942,7 @@ export default function App() {
         {/* VISTA 4: DETALLE DE EVALUACIÓN */}
         {vistaActiva === 'detalle-evaluacion' && config.id && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Banner de Modo Supervisión si está viendo una prueba de otro colega */}
+            {/* Banner de Modo Supervisión solo si está viendo una prueba de otro curso/colega fuera de su aula */}
             {!puedeEditarEvalActual && (
               <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e', padding: '12px 16px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13.5px' }}>
                 <ShieldAlert size={18} color="#d97706" />
