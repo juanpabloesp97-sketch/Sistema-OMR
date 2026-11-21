@@ -228,6 +228,27 @@ export default function AnalisisPanel({
     return copia.sort((a, b) => a.numero - b.numero);
   }, [analisisPreguntas, ordenItems]);
 
+  // --- DATOS ORDENADOS PARA EL TABLERO MAESTRO (DE MAYOR A MENOR EN AMBOS EJES) ---
+  const { preguntasTableroMaestro, alumnosTableroMaestro } = useMemo(() => {
+    const colsOrdenadas = [...analisisPreguntas].sort((a, b) => {
+      if (b.pctLogro !== a.pctLogro) return b.pctLogro - a.pctLogro;
+      return a.numero - b.numero;
+    });
+
+    const filasOrdenadas = [...resultados].sort((a, b) => {
+      const diffPct = Number(b.porcentaje || 0) - Number(a.porcentaje || 0);
+      if (diffPct !== 0) return diffPct;
+      const diffPts = Number(b.puntaje || 0) - Number(a.puntaje || 0);
+      if (diffPts !== 0) return diffPts;
+      return (a.nombre || '').localeCompare(b.nombre || '', 'es', { sensitivity: 'base' });
+    });
+
+    return {
+      preguntasTableroMaestro: colsOrdenadas,
+      alumnosTableroMaestro: filasOrdenadas
+    };
+  }, [analisisPreguntas, resultados]);
+
   // --- CALCULAR % LOGRO POR CADA OA PARA CADA ESTUDIANTE ---
   const calcularLogroAlumnoEnOA = (alumno, oaObj, respuestasOverride = null) => {
     const mapaResp = respuestasOverride || alumno.respuestas || {};
@@ -939,7 +960,7 @@ export default function AnalisisPanel({
       </div>
 
       {/* ===================================================================== */}
-      {/* MODAL TABLERO MAESTRO (MATRIZ COMPLETA ESTUDIANTES x PREGUNTAS)        */}
+      {/* MODAL TABLERO MAESTRO (ORDENADO MAYOR A MENOR EN AMBOS EJES)          */}
       {/* ===================================================================== */}
       {modalTableroMaestro && (
         <div
@@ -962,12 +983,13 @@ export default function AnalisisPanel({
               <div>
                 <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Table2 size={20} color="#1e3a8a" />
-                  Tablero Maestro — {config.tituloPrueba}
+                  Tablero Maestro (Ordenado por Logro) — {config.tituloPrueba}
                 </h3>
                 <div style={{ fontSize: '12.5px', color: '#64748b', marginTop: '2px', display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
-                  <span><strong>{totalAlumnos}</strong> estudiantes</span>
+                  <span><strong>{totalAlumnos}</strong> estudiantes (Mayor a menor logro ↓)</span>
+                  <span>Preguntas (Mayor a menor logro →)</span>
                   <span style={{ color: '#16a34a', fontWeight: '700' }}>■ Correcta</span>
-                  <span style={{ color: '#dc2626', fontWeight: '700' }}>■ Incorrecta (letra marcada)</span>
+                  <span style={{ color: '#dc2626', fontWeight: '700' }}>■ Incorrecta</span>
                   <span style={{ color: '#64748b', fontWeight: '700' }}>■ Omitida (-)</span>
                   <span style={{ color: '#d97706', fontWeight: '700' }}>■ Doble</span>
                 </div>
@@ -997,19 +1019,19 @@ export default function AnalisisPanel({
             <div style={{ overflow: 'auto', flex: 1 }}>
               <table style={{ borderCollapse: 'collapse', fontSize: '12px', width: '100%' }}>
                 <thead>
-                  {/* Fila 1: Número de pregunta y Clave */}
+                  {/* Fila 1: Número de pregunta y Clave (ordenadas de mayor a menor % logro de izq a der) */}
                   <tr style={{ background: '#0f172a', color: '#ffffff', position: 'sticky', top: 0, zIndex: 3 }}>
-                    <th style={{ padding: '10px 12px', textAlign: 'left', position: 'sticky', left: 0, background: '#0f172a', zIndex: 4, minWidth: '210px', borderRight: '1px solid #334155' }}>
-                      Estudiante
+                    <th style={{ padding: '10px 12px', textAlign: 'left', position: 'sticky', left: 0, background: '#0f172a', zIndex: 4, minWidth: '215px', borderRight: '1px solid #334155' }}>
+                      Estudiante (Mayor a Menor Logro)
                     </th>
                     <th style={{ padding: '8px 6px', textAlign: 'center', minWidth: '52px', borderRight: '1px solid #334155' }}>Pts</th>
                     <th style={{ padding: '8px 6px', textAlign: 'center', minWidth: '52px', borderRight: '1px solid #334155' }}>%</th>
                     <th style={{ padding: '8px 6px', textAlign: 'center', minWidth: '52px', borderRight: '1px solid #334155' }}>Nota</th>
-                    {analisisPreguntas.map((it) => (
+                    {preguntasTableroMaestro.map((it) => (
                       <th
                         key={it.numero}
-                        style={{ padding: '6px 4px', textAlign: 'center', minWidth: '34px', borderLeft: '1px solid #1e293b' }}
-                        title={`P${it.numero} • Clave: ${it.correcta} • ${it.oa}`}
+                        style={{ padding: '6px 4px', textAlign: 'center', minWidth: '36px', borderLeft: '1px solid #1e293b' }}
+                        title={`P${it.numero} • Logro: ${it.pctLogro}% • Clave: ${it.correcta} • ${it.oa}`}
                       >
                         <div style={{ fontWeight: '800' }}>P{it.numero}</div>
                         <div style={{ fontSize: '10px', color: '#93c5fd' }}>{it.correcta}</div>
@@ -1020,12 +1042,12 @@ export default function AnalisisPanel({
                   {/* Fila 2: % de logro por pregunta */}
                   <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #cbd5e1', position: 'sticky', top: '43px', zIndex: 2 }}>
                     <td style={{ padding: '6px 12px', fontWeight: '800', color: '#334155', position: 'sticky', left: 0, background: '#f1f5f9', zIndex: 3, borderRight: '1px solid #cbd5e1' }}>
-                      % Logro Ítem
+                      % Logro Ítem (Mayor a Menor →)
                     </td>
                     <td style={{ padding: '6px', textAlign: 'center', fontWeight: '700', color: '#475569', borderRight: '1px solid #cbd5e1' }}>-</td>
                     <td style={{ padding: '6px', textAlign: 'center', fontWeight: '800', color: '#2563eb', borderRight: '1px solid #cbd5e1' }}>{promedioLogro}%</td>
                     <td style={{ padding: '6px', textAlign: 'center', fontWeight: '800', color: '#0f172a', borderRight: '1px solid #cbd5e1' }}>{promedioNota}</td>
-                    {analisisPreguntas.map((it) => (
+                    {preguntasTableroMaestro.map((it) => (
                       <td
                         key={it.numero}
                         style={{
@@ -1045,7 +1067,7 @@ export default function AnalisisPanel({
                 </thead>
 
                 <tbody>
-                  {alumnosFiltradosYOrdenados.map((al, idx) => {
+                  {alumnosTableroMaestro.map((al, idx) => {
                     const notaNum = Number(al.nota || 1.0);
                     return (
                       <tr key={al.id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
@@ -1065,20 +1087,21 @@ export default function AnalisisPanel({
                           }}
                           title="Clic para abrir hoja escaneada y detalle"
                         >
+                          <span style={{ color: '#94a3b8', fontSize: '11px', marginRight: '6px' }}>{idx + 1}.</span>
                           {al.nombre}
                           {al.curso && <span style={{ fontSize: '10.5px', color: '#64748b', fontWeight: '500', marginLeft: '6px' }}>({al.curso})</span>}
                         </td>
                         <td style={{ padding: '6px', textAlign: 'center', fontWeight: '600', borderRight: '1px solid #f1f5f9' }}>
                           {al.puntaje}/{al.total}
                         </td>
-                        <td style={{ padding: '6px', textAlign: 'center', fontWeight: '700', borderRight: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '6px', textAlign: 'center', fontWeight: '800', color: '#0f172a', borderRight: '1px solid #f1f5f9' }}>
                           {Math.round(al.porcentaje)}%
                         </td>
                         <td style={{ padding: '6px', textAlign: 'center', fontWeight: '800', color: notaNum >= notaAprob ? '#16a34a' : '#dc2626', borderRight: '1px solid #cbd5e1' }}>
                           {notaNum.toFixed(1)}
                         </td>
 
-                        {analisisPreguntas.map((it) => {
+                        {preguntasTableroMaestro.map((it) => {
                           const resp = (al.respuestas && al.respuestas[it.numero]) || '';
                           const esBuena = it.correcta !== '-' && resp === it.correcta;
                           const esOmitida = resp === '' || resp === '-';
