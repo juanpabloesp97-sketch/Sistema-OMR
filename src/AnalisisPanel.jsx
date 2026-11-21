@@ -3,14 +3,15 @@ import * as XLSX from 'xlsx';
 import {
   BarChart3, Download, ArrowUpDown, ArrowUp, ArrowDown, X,
   CheckCircle2, XCircle, MinusCircle, SlidersHorizontal, ExternalLink,
-  Search, Eye, Save, ZoomIn
+  Search, Eye, Save, ZoomIn, Table2
 } from 'lucide-react';
 
 export default function AnalisisPanel({
   resultados = [],
   config = {},
   onActualizarRespuesta,
-  puedeEditar = true
+  puedeEditar = true,
+  esVistaNivelCompleto = false
 }) {
   // --- ESTADOS DE LÍMITES DE DESEMPEÑO ---
   const [cortes, setCortes] = useState({
@@ -26,6 +27,7 @@ export default function AnalisisPanel({
   const [modalItemNum, setModalItemNum] = useState(null);
   const [opcionSeleccionadaItem, setOpcionSeleccionadaItem] = useState(null);
   const [modalAlumno, setModalAlumno] = useState(null);
+  const [modalTableroMaestro, setModalTableroMaestro] = useState(false);
 
   // --- EDICIÓN DE RESPUESTAS Y ZOOM DE HOJA EN MODAL DE ALUMNO ---
   const [editandoRespuestas, setEditandoRespuestas] = useState(false);
@@ -33,7 +35,7 @@ export default function AnalisisPanel({
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
   const [zoomImagen, setZoomImagen] = useState(false);
 
-  // --- URL PERMANENTE DEL PDF DE LA PRUEBA (GUARDADO EN CONFIG/NUBE) ---
+  // --- URL PERMANENTE DEL PDF DE LA PRUEBA ---
   const pdfPruebaUrl = config.pdfPruebaUrl || null;
 
   // --- FILTROS Y ORDENAMIENTO ---
@@ -93,6 +95,60 @@ export default function AnalisisPanel({
   }, [resultados, cortes]);
 
   const maxAlumnosGrupo = Math.max(1, ...gruposDesempeno.map((g) => g.estudiantes.length));
+
+  // --- COMPARATIVO DE CURSOS (BARRAS APILADAS HORIZONTALES PARA NIVEL COMPLETO) ---
+  const comparativoCursos = useMemo(() => {
+    const mapaCursos = {};
+    resultados.forEach((r) => {
+      const nombreCurso = (r.curso || 'Sin Curso').trim();
+      if (!mapaCursos[nombreCurso]) {
+        mapaCursos[nombreCurso] = [];
+      }
+      mapaCursos[nombreCurso].push(r);
+    });
+
+    const nombresOrdenados = Object.keys(mapaCursos).sort((a, b) =>
+      a.localeCompare(b, 'es', { numeric: true, sensitivity: 'base' })
+    );
+
+    const calcularFilaBarra = (titulo, lista) => {
+      const total = lista.length;
+      const conteos = {
+        muy_insuficiente: 0,
+        insuficiente: 0,
+        aceptable: 0,
+        bueno: 0,
+        muy_bueno: 0
+      };
+      lista.forEach((al) => {
+        const gId = clasificarDesempeno(al.porcentaje).id;
+        conteos[gId] = (conteos[gId] || 0) + 1;
+      });
+
+      const segmentos = [
+        { id: 'muy_insuficiente', label: 'Muy Insuficiente', color: '#ec4899', textColor: '#ffffff' },
+        { id: 'insuficiente', label: 'Insuficiente', color: '#fca5a5', textColor: '#7f1d1d' },
+        { id: 'aceptable', label: 'Aceptable', color: '#facc15', textColor: '#713f12' },
+        { id: 'bueno', label: 'Bueno', color: '#86efac', textColor: '#14532d' },
+        { id: 'muy_bueno', label: 'Muy Bueno', color: '#059669', textColor: '#ffffff' }
+      ].map((seg) => {
+        const cant = conteos[seg.id] || 0;
+        const pct = total > 0 ? Number(((cant / total) * 100).toFixed(1)) : 0;
+        return { ...seg, cant, pct };
+      });
+
+      return { titulo, total, segmentos };
+    };
+
+    const filasCursos = nombresOrdenados.map((cNom) => calcularFilaBarra(cNom, mapaCursos[cNom]));
+    const filaConsolidada = calcularFilaBarra(`Consolidado Nivel (${nombresOrdenados.length} cursos)`, resultados);
+
+    return {
+      cantidadCursos: nombresOrdenados.length,
+      filas: filasCursos,
+      consolidado: filaConsolidada
+    };
+  }, [resultados, cortes]);
 
   // --- PROCESAMIENTO DE OBJETIVOS DE APRENDIZAJE (OAS) Y PREGUNTAS ---
   const { listaOAs, analisisPreguntas } = useMemo(() => {
@@ -315,6 +371,57 @@ export default function AnalisisPanel({
     return ordenTabla.dir === 'asc' ? <ArrowUp size={12} color="#2563eb" /> : <ArrowDown size={12} color="#2563eb" />;
   };
 
+  // Helper para renderizar una fila de barra apilada al 100%
+  const renderFilaBarraApilada = (fila, destacar = false) => (
+    <div key={fila.titulo} style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: '14px', fontWeight: destacar ? '800' : '700', color: '#0f172a' }}>
+          {fila.titulo}
+        </span>
+        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '600' }}>
+          {fila.total} estudiante{fila.total === 1 ? '' : 's'}
+        </span>
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          width: '100%',
+          height: '32px',
+          borderRadius: '8px',
+          overflow: 'hidden',
+          background: '#f1f5f9',
+          boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.06)'
+        }}
+      >
+        {fila.segmentos.map((seg) => {
+          if (seg.cant === 0) return null;
+          return (
+            <div
+              key={seg.id}
+              style={{
+                width: `${seg.pct}%`,
+                background: seg.color,
+                color: seg.textColor,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '11.5px',
+                fontWeight: '800',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                padding: '0 4px',
+                transition: 'width 0.3s ease'
+              }}
+              title={`${seg.label}: ${seg.pct}% (${seg.cant} estudiantes)`}
+            >
+              {seg.pct >= 8 ? `${seg.pct}% (${seg.cant})` : seg.pct >= 4 ? `${seg.cant}` : ''}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
       {/* 1. CABECERA CONSOLIDADA Y 3 TARJETAS SUPERIORES */}
@@ -426,6 +533,44 @@ export default function AnalisisPanel({
           </div>
         </div>
       </div>
+
+      {/* 1B. GRÁFICO COMPARATIVO DE CURSOS (SOLO EN CONSOLIDADO DE NIVEL COMPLETO) */}
+      {esVistaNivelCompleto && comparativoCursos.cantidadCursos > 1 && (
+        <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '18px' }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase' }}>
+                Comparativo de Desempeño por Curso
+              </h3>
+              <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#64748b' }}>
+                Distribución porcentual y cantidad de estudiantes por nivel de logro en cada curso
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', fontSize: '11.5px' }}>
+              {[
+                { label: 'Muy Insuficiente', color: '#ec4899' },
+                { label: 'Insuficiente', color: '#fca5a5' },
+                { label: 'Aceptable', color: '#facc15' },
+                { label: 'Bueno', color: '#86efac' },
+                { label: 'Muy Bueno', color: '#059669' }
+              ].map((ley) => (
+                <span key={ley.label} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontWeight: '600', color: '#334155' }}>
+                  <span style={{ width: '11px', height: '11px', borderRadius: '3px', background: ley.color }} />
+                  {ley.label}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {comparativoCursos.filas.map((fila) => renderFilaBarraApilada(fila, false))}
+            <div style={{ borderTop: '2px dashed #cbd5e1', paddingTop: '12px', marginTop: '4px' }}>
+              {renderFilaBarraApilada(comparativoCursos.consolidado, true)}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 2. PORCENTAJE DE LOGRO POR OBJETIVO DE APRENDIZAJE (OA) + COMPARATIVO DE BARRAS */}
       <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
@@ -563,7 +708,7 @@ export default function AnalisisPanel({
         </div>
       </div>
 
-      {/* 4. PORCENTAJE DE LOGRO POR PREGUNTA */}
+      {/* 4. PORCENTAJE DE LOGRO POR PREGUNTA + BOTÓN VER TABLERO MAESTRO */}
       <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
           <div>
@@ -575,31 +720,54 @@ export default function AnalisisPanel({
             </p>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', padding: '4px', borderRadius: '10px' }}>
-            <span style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', padding: '0 8px' }}>Ordenar preguntas:</span>
-            {[
-              { id: 'numero', label: 'N° Pregunta' },
-              { id: 'asc', label: 'Menor a Mayor' },
-              { id: 'desc', label: 'Mayor a Menor' }
-            ].map((btn) => (
-              <button
-                key={btn.id}
-                onClick={() => setOrdenItems(btn.id)}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: '8px',
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontSize: '12.5px',
-                  fontWeight: '700',
-                  background: ordenItems === btn.id ? '#ffffff' : 'transparent',
-                  color: ordenItems === btn.id ? '#2563eb' : '#475569',
-                  boxShadow: ordenItems === btn.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
-                }}
-              >
-                {btn.label}
-              </button>
-            ))}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <button
+              onClick={() => setModalTableroMaestro(true)}
+              style={{
+                background: '#1e3a8a',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '8px 14px',
+                fontSize: '12.5px',
+                fontWeight: '700',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                boxShadow: '0 2px 4px rgba(30,58,138,0.2)'
+              }}
+            >
+              <Table2 size={15} />
+              Ver Tablero Maestro
+            </button>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', padding: '4px', borderRadius: '10px' }}>
+              <span style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', padding: '0 8px' }}>Ordenar:</span>
+              {[
+                { id: 'numero', label: 'N° Pregunta' },
+                { id: 'asc', label: 'Menor a Mayor' },
+                { id: 'desc', label: 'Mayor a Menor' }
+              ].map((btn) => (
+                <button
+                  key={btn.id}
+                  onClick={() => setOrdenItems(btn.id)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '12.5px',
+                    fontWeight: '700',
+                    background: ordenItems === btn.id ? '#ffffff' : 'transparent',
+                    color: ordenItems === btn.id ? '#2563eb' : '#475569',
+                    boxShadow: ordenItems === btn.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+                  }}
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -769,6 +937,197 @@ export default function AnalisisPanel({
           </table>
         </div>
       </div>
+
+      {/* ===================================================================== */}
+      {/* MODAL TABLERO MAESTRO (MATRIZ COMPLETA ESTUDIANTES x PREGUNTAS)        */}
+      {/* ===================================================================== */}
+      {modalTableroMaestro && (
+        <div
+          onClick={() => setModalTableroMaestro(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.65)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '14px'
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#ffffff', borderRadius: '16px', width: '98%', maxWidth: '1400px',
+              maxHeight: '92vh', display: 'flex', flexDirection: 'column',
+              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.3)', overflow: 'hidden'
+            }}
+          >
+            {/* Cabecera Tablero Maestro */}
+            <div style={{ padding: '16px 22px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Table2 size={20} color="#1e3a8a" />
+                  Tablero Maestro — {config.tituloPrueba}
+                </h3>
+                <div style={{ fontSize: '12.5px', color: '#64748b', marginTop: '2px', display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
+                  <span><strong>{totalAlumnos}</strong> estudiantes</span>
+                  <span style={{ color: '#16a34a', fontWeight: '700' }}>■ Correcta</span>
+                  <span style={{ color: '#dc2626', fontWeight: '700' }}>■ Incorrecta (letra marcada)</span>
+                  <span style={{ color: '#64748b', fontWeight: '700' }}>■ Omitida (-)</span>
+                  <span style={{ color: '#d97706', fontWeight: '700' }}>■ Doble</span>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <button
+                  onClick={exportarExcel}
+                  style={{
+                    background: '#16a34a', color: '#ffffff', border: 'none', borderRadius: '8px',
+                    padding: '8px 14px', fontSize: '12.5px', fontWeight: '700', cursor: 'pointer',
+                    display: 'inline-flex', alignItems: 'center', gap: '6px'
+                  }}
+                >
+                  <Download size={15} /> Descargar Excel
+                </button>
+                <button
+                  onClick={() => setModalTableroMaestro(false)}
+                  style={{ background: '#f1f5f9', border: 'none', borderRadius: '8px', padding: '7px 10px', cursor: 'pointer' }}
+                >
+                  <X size={18} color="#475569" />
+                </button>
+              </div>
+            </div>
+
+            {/* Tabla Matriz Scrolleable */}
+            <div style={{ overflow: 'auto', flex: 1 }}>
+              <table style={{ borderCollapse: 'collapse', fontSize: '12px', width: '100%' }}>
+                <thead>
+                  {/* Fila 1: Número de pregunta y Clave */}
+                  <tr style={{ background: '#0f172a', color: '#ffffff', position: 'sticky', top: 0, zIndex: 3 }}>
+                    <th style={{ padding: '10px 12px', textAlign: 'left', position: 'sticky', left: 0, background: '#0f172a', zIndex: 4, minWidth: '210px', borderRight: '1px solid #334155' }}>
+                      Estudiante
+                    </th>
+                    <th style={{ padding: '8px 6px', textAlign: 'center', minWidth: '52px', borderRight: '1px solid #334155' }}>Pts</th>
+                    <th style={{ padding: '8px 6px', textAlign: 'center', minWidth: '52px', borderRight: '1px solid #334155' }}>%</th>
+                    <th style={{ padding: '8px 6px', textAlign: 'center', minWidth: '52px', borderRight: '1px solid #334155' }}>Nota</th>
+                    {analisisPreguntas.map((it) => (
+                      <th
+                        key={it.numero}
+                        style={{ padding: '6px 4px', textAlign: 'center', minWidth: '34px', borderLeft: '1px solid #1e293b' }}
+                        title={`P${it.numero} • Clave: ${it.correcta} • ${it.oa}`}
+                      >
+                        <div style={{ fontWeight: '800' }}>P{it.numero}</div>
+                        <div style={{ fontSize: '10px', color: '#93c5fd' }}>{it.correcta}</div>
+                      </th>
+                    ))}
+                  </tr>
+
+                  {/* Fila 2: % de logro por pregunta */}
+                  <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #cbd5e1', position: 'sticky', top: '43px', zIndex: 2 }}>
+                    <td style={{ padding: '6px 12px', fontWeight: '800', color: '#334155', position: 'sticky', left: 0, background: '#f1f5f9', zIndex: 3, borderRight: '1px solid #cbd5e1' }}>
+                      % Logro Ítem
+                    </td>
+                    <td style={{ padding: '6px', textAlign: 'center', fontWeight: '700', color: '#475569', borderRight: '1px solid #cbd5e1' }}>-</td>
+                    <td style={{ padding: '6px', textAlign: 'center', fontWeight: '800', color: '#2563eb', borderRight: '1px solid #cbd5e1' }}>{promedioLogro}%</td>
+                    <td style={{ padding: '6px', textAlign: 'center', fontWeight: '800', color: '#0f172a', borderRight: '1px solid #cbd5e1' }}>{promedioNota}</td>
+                    {analisisPreguntas.map((it) => (
+                      <td
+                        key={it.numero}
+                        style={{
+                          padding: '6px 2px',
+                          textAlign: 'center',
+                          fontWeight: '800',
+                          fontSize: '10.5px',
+                          color: it.colorInfo.text,
+                          background: it.colorInfo.bg,
+                          borderLeft: '1px solid #e2e8f0'
+                        }}
+                      >
+                        {it.pctLogro}%
+                      </td>
+                    ))}
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {alumnosFiltradosYOrdenados.map((al, idx) => {
+                    const notaNum = Number(al.nota || 1.0);
+                    return (
+                      <tr key={al.id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                        <td
+                          onClick={() => abrirModalEstudiante(al)}
+                          style={{
+                            padding: '7px 12px',
+                            fontWeight: '700',
+                            color: '#1e3a8a',
+                            position: 'sticky',
+                            left: 0,
+                            background: '#ffffff',
+                            zIndex: 1,
+                            borderRight: '1px solid #cbd5e1',
+                            cursor: 'pointer',
+                            whiteSpace: 'nowrap'
+                          }}
+                          title="Clic para abrir hoja escaneada y detalle"
+                        >
+                          {al.nombre}
+                          {al.curso && <span style={{ fontSize: '10.5px', color: '#64748b', fontWeight: '500', marginLeft: '6px' }}>({al.curso})</span>}
+                        </td>
+                        <td style={{ padding: '6px', textAlign: 'center', fontWeight: '600', borderRight: '1px solid #f1f5f9' }}>
+                          {al.puntaje}/{al.total}
+                        </td>
+                        <td style={{ padding: '6px', textAlign: 'center', fontWeight: '700', borderRight: '1px solid #f1f5f9' }}>
+                          {Math.round(al.porcentaje)}%
+                        </td>
+                        <td style={{ padding: '6px', textAlign: 'center', fontWeight: '800', color: notaNum >= notaAprob ? '#16a34a' : '#dc2626', borderRight: '1px solid #cbd5e1' }}>
+                          {notaNum.toFixed(1)}
+                        </td>
+
+                        {analisisPreguntas.map((it) => {
+                          const resp = (al.respuestas && al.respuestas[it.numero]) || '';
+                          const esBuena = it.correcta !== '-' && resp === it.correcta;
+                          const esOmitida = resp === '' || resp === '-';
+                          const esDoble = resp === 'DOBLE';
+
+                          let bgCelda = '#fee2e2';
+                          let colorCelda = '#991b1b';
+                          let textoCelda = resp;
+
+                          if (esBuena) {
+                            bgCelda = '#dcfce7';
+                            colorCelda = '#166534';
+                            textoCelda = resp;
+                          } else if (esOmitida) {
+                            bgCelda = '#f8fafc';
+                            colorCelda = '#94a3b8';
+                            textoCelda = '-';
+                          } else if (esDoble) {
+                            bgCelda = '#fef3c7';
+                            colorCelda = '#92400e';
+                            textoCelda = 'DUP';
+                          }
+
+                          return (
+                            <td
+                              key={it.numero}
+                              style={{
+                                padding: '6px 2px',
+                                textAlign: 'center',
+                                fontWeight: '800',
+                                background: bgCelda,
+                                color: colorCelda,
+                                borderLeft: '1px solid #e2e8f0'
+                              }}
+                              title={`${al.nombre} • P${it.numero}: Marcó "${resp || 'Omitida'}" (Clave: ${it.correcta})`}
+                            >
+                              {textoCelda}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ===================================================================== */}
       {/* MODAL 1: GRUPO DE DESEMPEÑO (AL HACER CLIC EN UNA BARRA DE DESEMPEÑO) */}
@@ -1048,7 +1407,7 @@ export default function AnalisisPanel({
           onClick={() => setModalAlumno(null)}
           style={{
             position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px'
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 70, padding: '16px'
           }}
         >
           <div

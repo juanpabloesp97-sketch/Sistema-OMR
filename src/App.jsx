@@ -2452,6 +2452,7 @@ export default function App() {
                   resultados={resultadosVisiblesEval}
                   config={config}
                   puedeEditar={puedeCorregirManualActual}
+                  esVistaNivelCompleto={!cursoFiltroEfectivo}
                   onActualizarRespuesta={async (resultadoId, nuevasRespuestas) => {
                     const totalPreg = Number(config.numPreguntas);
                     let puntosObtenidos = 0;
