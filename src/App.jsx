@@ -229,21 +229,26 @@ export default function App() {
     if (!ev) return true;
     if (ev.docente_id === perfilUsuario?.id) return true;
 
-    // Si el docente tiene asignado el curso específico de la evaluación
-    if (ev.curso_id && idsCursosProfe.has(ev.curso_id)) return true;
+    const cursoEvId = ev.curso_id || ev.cursoId || '';
+    const nivelEvId = ev.nivel_id || ev.nivelId || '';
 
-    // Si la evaluación es de nivel completo (o de un curso del nivel asignado al docente)
-    const nivelesAula = new Set(
-      listaCursos.filter((c) => idsCursosProfe.has(c.id)).map((c) => c.nivel_id)
+    // 1. Si el docente tiene asignado directamente ese curso
+    if (cursoEvId && idsCursosProfe.has(cursoEvId)) return true;
+
+    // 2. Obtener todos los niveles donde el docente tiene cursos asignados
+    const nivelesDelDocente = new Set(
+      listaCursos
+        .filter((c) => idsCursosProfe.has(c.id))
+        .map((c) => c.nivel_id)
     );
 
-    if (!ev.curso_id && ev.nivel_id && nivelesAula.has(ev.nivel_id)) return true;
+    // 3. Si es una evaluación de nivel completo y el docente hace clases en ese nivel
+    if (nivelEvId && nivelesDelDocente.has(nivelEvId)) return true;
 
-    if (ev.curso_id) {
-      const cursoEv = listaCursos.find((c) => c.id === ev.curso_id);
-      if (cursoEv && nivelesAula.has(cursoEv.nivel_id) && idsCursosProfe.has(cursoEv.id)) {
-        return true;
-      }
+    // 4. Si es una evaluación de un curso cuyo nivel pertenece al docente
+    if (cursoEvId) {
+      const cObj = listaCursos.find((c) => c.id === cursoEvId);
+      if (cObj && nivelesDelDocente.has(cObj.nivel_id)) return true;
     }
 
     return false;
