@@ -4,7 +4,8 @@ import QRCode from 'qrcode';
 import {
   FileDown, User, CheckCircle2, Camera, CheckSquare, Square,
   Cloud, BarChart3, Printer, Clock, AlertCircle, Save, Trash2, UserPlus,
-  UserX, UserCheck, Share2, GraduationCap, Users, FolderOpen, ArrowLeft, FilePlus2, Filter, Eye, Upload, ShieldAlert
+  UserX, UserCheck, Share2, GraduationCap, Users, FolderOpen, ArrowLeft,
+  FilePlus2, Filter, Eye, Upload, ShieldAlert, RefreshCw
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import VisorCurso from './VisorCurso';
@@ -80,6 +81,20 @@ const PERMISOS_RESPALDO = {
   }
 };
 
+function obtenerClavesCorrectas(item) {
+  if (!item) return [];
+  if (typeof item === 'string') return item ? [item] : [];
+  if (Array.isArray(item.correcta)) return item.correcta;
+  return item.correcta ? [item.correcta] : [];
+}
+
+function obtenerPuntajeItem(item) {
+  if (typeof item === 'object' && item !== null && item.puntaje !== undefined) {
+    return Number(item.puntaje);
+  }
+  return 1;
+}
+
 export default function App() {
   const [sesion, setSesion] = useState(null);
   const [cargandoSesion, setCargandoSesion] = useState(true);
@@ -122,7 +137,7 @@ export default function App() {
     nivelId: '',
     tituloPrueba: '',
     asignatura: 'Matemática',
-    numPreguntas: 30,
+    numPreguntas: 0,
     alternativas: 'ABCD',
     notaMin: 1.0,
     notaMax: 7.0,
@@ -142,13 +157,69 @@ export default function App() {
 
   const [ultimoResultado, setUltimoResultado] = useState(null);
   const [procesando, setProcesando] = useState(false);
+  const [recalculando, setRecalculando] = useState(false);
   const [progresoLote, setProgresoLote] = useState('');
   const [camaraAbierta, setCamaraAbierta] = useState(false);
 
   const [rutExtra, setRutExtra] = useState('');
   const [nombreExtra, setNombreExtra] = useState('');
 
-  // Verifica si una evaluación corresponde al aula del docente
+  // Calcula nota con escala flexible susceptible al puntaje ideal total
+  const calcularNotaConEscala = (puntaje, total, cfg = config) => {
+    const nMin = Number(cfg.notaMin ?? 1.0);
+    const nMax = Number(cfg.notaMax ?? 7.0);
+    const nAprob = Number(cfg.notaAprob ?? 4.0);
+    const exig = Number(cfg.exigencia ?? 60);
+
+    if (total <= 0) return nMin;
+    const p = Math.max(0, Math.min(Number(puntaje), Number(total)));
+    const pAprob = Number(total) * (exig / 100);
+
+    let nota = nMin;
+    if (p < pAprob) {
+      nota = pAprob > 0 ? nMin + ((nAprob - nMin) * p) / pAprob : nMin;
+    } else {
+      const tramoSuperior = Number(total) - pAprob;
+      nota = tramoSuperior > 0
+        ? nAprob + ((nMax - nAprob) * (p - pAprob)) / tramoSuperior
+        : nMax;
+    }
+
+    const redondeada = Math.round((nota + Number.EPSILON) * 10) / 10;
+    return Math.min(nMax, Math.max(nMin, redondeada));
+  };
+
+  // Evalúa un mapa de respuestas con la pauta actual (soporta múltiples claves, puntaje diferido y 0 pts anulada)
+  const evaluarRespuestasConPauta = (respuestasMap, cfg = config) => {
+    const totalPreg = Number(cfg.numPreguntas || 0);
+    const pautaActual = cfg.pauta || {};
+    let puntosObtenidos = 0;
+    let puntosTotales = 0;
+
+    for (let i = 1; i <= totalPreg; i++) {
+      const item = pautaActual[i];
+      const clavesValidas = obtenerClavesCorrectas(item);
+      const puntajeItem = obtenerPuntajeItem(item);
+
+      if (puntajeItem > 0 && clavesValidas.length > 0) {
+        puntosTotales += puntajeItem;
+        if (clavesValidas.includes(respuestasMap[i])) {
+          puntosObtenidos += puntajeItem;
+        }
+      }
+    }
+
+    if (puntosTotales === 0 && totalPreg > 0) {
+      const todasAnuladas = Array.from({ length: totalPreg }, (_, idx) => obtenerPuntajeItem(pautaActual[idx + 1]) === 0).every(Boolean);
+      if (!todasAnuladas) puntosTotales = totalPreg;
+    }
+
+    const porcentaje = puntosTotales > 0 ? Math.round((puntosObtenidos / puntosTotales) * 100) : 0;
+    const nota = calcularNotaConEscala(puntosObtenidos, puntosTotales, cfg);
+
+    return { puntosObtenidos, puntosTotales, porcentaje, nota };
+  };
+
   const esEvaluacionDeSuAula = (
     ev,
     perfilUsuario = profesor,
@@ -175,7 +246,7 @@ export default function App() {
     return false;
   };
 
-  // --- SINCRONIZACIÓN CON EL HISTORIAL DEL NAVEGADOR (BOTÓN ATRÁS / ADELANTE) ---
+  // --- SINCRONIZACIÓN CON HISTORIAL DEL NAVEGADOR ---
   useEffect(() => {
     if (!profesor?.id) return;
 
@@ -244,7 +315,6 @@ export default function App() {
     return () => window.removeEventListener('popstate', manejarPopState);
   }, [evaluacionesVisibles, profesor, permisosActivos, cursosAsignadosAula, cursos]);
 
-  // --- CONTROL DE SESIÓN SIN REINICIAR AL CAMBIAR DE PESTAÑA ---
   useEffect(() => {
     if (!supabase) {
       setCargandoSesion(false);
@@ -272,7 +342,6 @@ export default function App() {
         return;
       }
 
-      // Evitar recargar/resetear la pantalla cuando el usuario vuelve de otra pestaña o se refresca el token
       if (event === 'TOKEN_REFRESHED') return;
       if (usuarioCargadoIdRef.current === session.user.id) {
         setCargandoSesion(false);
@@ -688,7 +757,7 @@ export default function App() {
       nivelId: cObj ? cObj.nivel_id : (nivelPreseleccionado || ''),
       tituloPrueba: '',
       asignatura: profesor.asignatura || 'Matemática',
-      numPreguntas: 30,
+      numPreguntas: 0,
       alternativas: 'ABCD',
       notaMin: 1.0,
       notaMax: 7.0,
@@ -701,10 +770,14 @@ export default function App() {
     setVistaActiva('crear-evaluacion');
   };
 
-  const guardarEvaluacionNube = async () => {
+  const guardarEvaluacionNube = async (recalcularNotasExistentes = false) => {
     if (!supabase) return;
     if (!config.tituloPrueba.trim()) {
       alert('Escribe un título para la evaluación.');
+      return;
+    }
+    if (Number(config.numPreguntas) < 1) {
+      alert('Agrega al menos 1 pregunta a la evaluación antes de guardar.');
       return;
     }
 
@@ -730,16 +803,42 @@ export default function App() {
     };
 
     if (config.id) {
-      const { error } = await supabase
-        .from('evaluaciones')
-        .update(payload)
-        .eq('id', config.id);
+      if (recalcularNotasExistentes) setRecalculando(true);
+      try {
+        const { error } = await supabase
+          .from('evaluaciones')
+          .update(payload)
+          .eq('id', config.id);
 
-      if (error) {
-        alert('Error al guardar cambios: ' + error.message);
-      } else {
-        alert('✅ Cambios guardados en la nube.');
-        await cargarEvaluacionesNube(profesor, permisosActivos);
+        if (error) {
+          alert('Error al guardar cambios: ' + error.message);
+          return;
+        }
+
+        if (recalcularNotasExistentes && resultadosCurso.length > 0) {
+          await Promise.all(
+            resultadosCurso.map((res) => {
+              const evalNueva = evaluarRespuestasConPauta(res.respuestas || {}, config);
+              return supabase
+                .from('resultados')
+                .update({
+                  puntaje_obtenido: evalNueva.puntosObtenidos,
+                  puntaje_total: evalNueva.puntosTotales,
+                  porcentaje: evalNueva.porcentaje,
+                  nota: evalNueva.nota
+                })
+                .eq('id', res.id);
+            })
+          );
+          await cargarResultadosNube(config.id);
+          await cargarEvaluacionesNube(profesor, permisosActivos);
+          alert(`✅ Pauta guardada y ${resultadosCurso.length} nota(s) recalculadas automáticamente.`);
+        } else {
+          await cargarEvaluacionesNube(profesor, permisosActivos);
+          alert('✅ Cambios guardados en la nube.');
+        }
+      } finally {
+        setRecalculando(false);
       }
     } else {
       const { data, error } = await supabase
@@ -1005,8 +1104,8 @@ export default function App() {
 
           const respMarcada = respuestasAl[p] || '';
           const itemPauta = config.pauta[p];
-          const correcta = typeof itemPauta === 'object' ? itemPauta?.correcta : itemPauta;
-          const esCorrecta = Boolean(correcta) && respMarcada === correcta;
+          const clavesValidas = obtenerClavesCorrectas(itemPauta);
+          const esCorrecta = clavesValidas.length > 0 && clavesValidas.includes(respMarcada);
 
           doc.setTextColor(15, 23, 42);
           doc.setFontSize(9);
@@ -1020,7 +1119,7 @@ export default function App() {
               doc.setFillColor(esCorrecta ? 22 : 220, esCorrecta ? 163 : 38, esCorrecta ? 74 : 38);
               doc.circle(cx, baseY, 2.7, 'F');
               doc.setTextColor(255, 255, 255);
-            } else if (correcta === letra && !esCorrecta) {
+            } else if (clavesValidas.includes(letra) && !esCorrecta) {
               doc.setDrawColor(37, 99, 235);
               doc.setLineWidth(0.6);
               doc.circle(cx, baseY, 2.7, 'S');
@@ -1050,39 +1149,15 @@ export default function App() {
           } else if (esCorrecta) {
             doc.setTextColor(22, 163, 74);
             doc.text('OK', estadoX, baseY + 1);
-          } else if (correcta) {
+          } else if (clavesValidas.length > 0) {
             doc.setTextColor(220, 38, 38);
-            doc.text(`X (${correcta})`, estadoX, baseY + 1);
+            doc.text(`X (${clavesValidas.join('/')})`, estadoX, baseY + 1);
           }
         }
       }
     }
 
     doc.save(`Corregidas_${config.tituloPrueba.replace(/\s+/g, '_')}${sufijoArchivo}.pdf`);
-  };
-
-  const calcularNota = (puntaje, total) => {
-    const nMin = Number(config.notaMin ?? 1.0);
-    const nMax = Number(config.notaMax ?? 7.0);
-    const nAprob = Number(config.notaAprob ?? 4.0);
-    const exig = Number(config.exigencia ?? 60);
-
-    if (total <= 0) return nMin;
-    const p = Math.max(0, Math.min(Number(puntaje), Number(total)));
-    const pAprob = Number(total) * (exig / 100);
-
-    let nota = nMin;
-    if (p < pAprob) {
-      nota = pAprob > 0 ? nMin + ((nAprob - nMin) * p) / pAprob : nMin;
-    } else {
-      const tramoSuperior = Number(total) - pAprob;
-      nota = tramoSuperior > 0
-        ? nAprob + ((nMax - nAprob) * (p - pAprob)) / tramoSuperior
-        : nMax;
-    }
-
-    const redondeada = Math.round((nota + Number.EPSILON) * 10) / 10;
-    return Math.min(nMax, Math.max(nMin, redondeada));
   };
 
   const manejarEscaneo = async (e) => {
@@ -1119,25 +1194,8 @@ export default function App() {
           });
 
           const respuestasAlumno = resultadoOMR.respuestas || {};
-          const totalPreg = Number(config.numPreguntas);
-          let puntosObtenidos = 0;
-          let puntosTotales = 0;
+          const calificacion = evaluarRespuestasConPauta(respuestasAlumno, config);
 
-          for (let i = 1; i <= totalPreg; i++) {
-            const item = config.pauta[i];
-            const correcta = typeof item === 'object' ? item?.correcta : item;
-            const puntajeItem = typeof item === 'object' ? Number(item?.puntaje || 1) : 1;
-
-            if (correcta) {
-              puntosTotales += puntajeItem;
-              if (respuestasAlumno[i] === correcta) puntosObtenidos += puntajeItem;
-            }
-          }
-
-          if (puntosTotales === 0) puntosTotales = totalPreg;
-
-          const porcentaje = Math.round((puntosObtenidos / puntosTotales) * 100);
-          const nota = calcularNota(puntosObtenidos, puntosTotales);
           const alumnoInfo = imgFile.qrPreDetectado || resultadoOMR.qrData || {
             r: 'Sin QR',
             n: `Hoja ${idx + 1} (Sin QR)`,
@@ -1148,10 +1206,10 @@ export default function App() {
             rut: alumnoInfo.r || 'Sin QR',
             nombre: alumnoInfo.n || `Hoja ${idx + 1}`,
             curso: alumnoInfo.c || '',
-            puntaje: puntosObtenidos,
-            total: puntosTotales,
-            porcentaje,
-            nota,
+            puntaje: calificacion.puntosObtenidos,
+            total: calificacion.puntosTotales,
+            porcentaje: calificacion.porcentaje,
+            nota: calificacion.nota,
             respuestas: respuestasAlumno,
             imagenProcesada: resultadoOMR.imagenProcesada
           });
@@ -1234,7 +1292,6 @@ export default function App() {
     return <Login />;
   }
 
-  // Permisos efectivos sobre la evaluación actualmente abierta
   const esEvaluacionPropia = esEvaluacionDeSuAula(config, profesor, cursosAsignadosAula, cursos);
   const esSuperAdmin = profesor.rol === 'admin';
   const puedeEditarEvalActual = esSuperAdmin || esEvaluacionPropia || Boolean(permisosActivos?.editar_evals_ajenas);
@@ -1952,19 +2009,7 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>N° Preguntas (1 a 50)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="50"
-                    value={config.numPreguntas}
-                    onChange={(e) => setConfig({ ...config, numPreguntas: Math.min(50, Math.max(1, Number(e.target.value))) })}
-                    style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Alternativas</label>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Alternativas por Ítem</label>
                   <select
                     value={config.alternativas}
                     onChange={(e) => setConfig({ ...config, alternativas: e.target.value })}
@@ -1997,7 +2042,7 @@ export default function App() {
             />
 
             <button
-              onClick={guardarEvaluacionNube}
+              onClick={() => guardarEvaluacionNube(false)}
               style={{
                 width: '100%', padding: '14px', borderRadius: '10px', border: 'none',
                 background: '#16a34a', color: 'white', fontSize: '16px', fontWeight: '700',
@@ -2502,16 +2547,39 @@ export default function App() {
               </div>
             )}
 
-            {/* SUBVISTA D: EDITAR PAUTA */}
+            {/* SUBVISTA D: EDITAR PAUTA + GUARDAR Y RECALCULAR NOTAS */}
             {subVistaEval === 'pauta' && puedeEditarEvalActual && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 <PautaEditor config={config} setConfig={setConfig} nivelNombre={nivelActivoNombre} />
-                <button
-                  onClick={guardarEvaluacionNube}
-                  style={{ background: '#0284c7', color: 'white', border: 'none', borderRadius: '8px', padding: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-                >
-                  <Save size={18} /> Guardar Cambios en Pauta
-                </button>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+                  <button
+                    onClick={() => guardarEvaluacionNube(false)}
+                    disabled={recalculando}
+                    style={{
+                      background: '#0284c7', color: 'white', border: 'none', borderRadius: '8px',
+                      padding: '12px', fontWeight: '700', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
+                    }}
+                  >
+                    <Save size={18} /> Solo Guardar Pauta
+                  </button>
+
+                  <button
+                    onClick={() => guardarEvaluacionNube(true)}
+                    disabled={recalculando}
+                    style={{
+                      background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px',
+                      padding: '12px', fontWeight: '700', cursor: recalculando ? 'wait' : 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                      boxShadow: '0 2px 6px rgba(22,163,74,0.25)'
+                    }}
+                  >
+                    <RefreshCw size={18} />
+                    {recalculando
+                      ? 'Recalculando notas...'
+                      : `Guardar y Recalcular Notas (${resultadosCurso.length} alumnos)`}
+                  </button>
+                </div>
               </div>
             )}
 
@@ -2524,33 +2592,17 @@ export default function App() {
                   puedeEditar={puedeCorregirManualActual}
                   esVistaNivelCompleto={!cursoFiltroEfectivo}
                   onActualizarRespuesta={async (resultadoId, nuevasRespuestas) => {
-                    const totalPreg = Number(config.numPreguntas);
-                    let puntosObtenidos = 0;
-                    let puntosTotales = 0;
-
-                    for (let i = 1; i <= totalPreg; i++) {
-                      const item = config.pauta[i];
-                      const correcta = typeof item === 'object' ? item?.correcta : item;
-                      const puntajeItem = typeof item === 'object' ? Number(item?.puntaje || 1) : 1;
-                      if (correcta) {
-                        puntosTotales += puntajeItem;
-                        if (nuevasRespuestas[i] === correcta) puntosObtenidos += puntajeItem;
-                      }
-                    }
-                    if (puntosTotales === 0) puntosTotales = totalPreg;
-
-                    const porcentaje = Math.round((puntosObtenidos / puntosTotales) * 100);
-                    const nota = calcularNota(puntosObtenidos, puntosTotales);
+                    const calificacion = evaluarRespuestasConPauta(nuevasRespuestas, config);
 
                     if (supabase && resultadoId) {
                       const { error } = await supabase
                         .from('resultados')
                         .update({
                           respuestas_alumno: nuevasRespuestas,
-                          puntaje_obtenido: puntosObtenidos,
-                          puntaje_total: puntosTotales,
-                          porcentaje,
-                          nota
+                          puntaje_obtenido: calificacion.puntosObtenidos,
+                          puntaje_total: calificacion.puntosTotales,
+                          porcentaje: calificacion.porcentaje,
+                          nota: calificacion.nota
                         })
                         .eq('id', resultadoId);
 
@@ -2563,12 +2615,24 @@ export default function App() {
                     setResultadosCurso((prev) =>
                       prev.map((r) =>
                         r.id === resultadoId
-                          ? { ...r, respuestas: nuevasRespuestas, puntaje: puntosObtenidos, total: puntosTotales, porcentaje, nota }
+                          ? {
+                              ...r,
+                              respuestas: nuevasRespuestas,
+                              puntaje: calificacion.puntosObtenidos,
+                              total: calificacion.puntosTotales,
+                              porcentaje: calificacion.porcentaje,
+                              nota: calificacion.nota
+                            }
                           : r
                       )
                     );
 
-                    return { puntaje: puntosObtenidos, total: puntosTotales, porcentaje, nota };
+                    return {
+                      puntaje: calificacion.puntosObtenidos,
+                      total: calificacion.puntosTotales,
+                      porcentaje: calificacion.porcentaje,
+                      nota: calificacion.nota
+                    };
                   }}
                 />
 

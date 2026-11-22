@@ -6,6 +6,20 @@ import {
   Search, Eye, Save, ZoomIn, Table2
 } from 'lucide-react';
 
+function obtenerClavesItem(item) {
+  if (!item) return [];
+  if (typeof item === 'string') return item ? [item] : [];
+  if (Array.isArray(item.correcta)) return item.correcta;
+  return item.correcta ? [item.correcta] : [];
+}
+
+function obtenerPuntajeItem(item) {
+  if (typeof item === 'object' && item !== null && item.puntaje !== undefined) {
+    return Number(item.puntaje);
+  }
+  return 1;
+}
+
 export default function AnalisisPanel({
   resultados = [],
   config = {},
@@ -157,7 +171,11 @@ export default function AnalisisPanel({
 
     for (let p = 1; p <= numPreguntas; p++) {
       const itemPauta = pauta[p];
-      const correcta = typeof itemPauta === 'object' ? itemPauta?.correcta : itemPauta;
+      const clavesValidas = obtenerClavesItem(itemPauta);
+      const puntajeItem = obtenerPuntajeItem(itemPauta);
+      const anulada = puntajeItem === 0;
+      const correctaTexto = anulada ? 'ANUL.' : (clavesValidas.length > 0 ? clavesValidas.join('/') : '-');
+
       const oaNombre = (typeof itemPauta === 'object' && itemPauta?.oa) ? itemPauta.oa.trim() : 'General';
       const oaDesc = (typeof itemPauta === 'object' && itemPauta?.habilidad) ? itemPauta.habilidad.trim() : '';
 
@@ -175,16 +193,21 @@ export default function AnalisisPanel({
           doblesList.push(r);
         } else {
           if (porOpcion[resp]) porOpcion[resp].push(r);
-          if (correcta && resp === correcta) aciertos++;
+          if (!anulada && clavesValidas.includes(resp)) aciertos++;
         }
       });
 
-      const pctLogro = totalAlumnos > 0 ? Math.round((aciertos / totalAlumnos) * 100) : 0;
-      const colorInfo = clasificarDesempeno(pctLogro);
+      const pctLogro = anulada ? 100 : (totalAlumnos > 0 ? Math.round((aciertos / totalAlumnos) * 100) : 0);
+      const colorInfo = anulada
+        ? { id: 'anulada', label: 'Anulada', rango: '0 pts', color: '#94a3b8', bg: '#f1f5f9', text: '#475569' }
+        : clasificarDesempeno(pctLogro);
 
       preguntasArr.push({
         numero: p,
-        correcta: correcta || '-',
+        clavesValidas,
+        correcta: correctaTexto,
+        puntajeItem,
+        anulada,
         oa: oaNombre,
         descripcion: oaDesc,
         aciertos,
@@ -200,11 +223,15 @@ export default function AnalisisPanel({
           oa: oaNombre,
           descripcion: oaDesc,
           preguntas: [],
+          preguntasActivas: 0,
           sumaLogros: 0
         };
       }
       mapaOA[oaNombre].preguntas.push(p);
-      mapaOA[oaNombre].sumaLogros += pctLogro;
+      if (!anulada) {
+        mapaOA[oaNombre].preguntasActivas += 1;
+        mapaOA[oaNombre].sumaLogros += pctLogro;
+      }
       if (oaDesc && !mapaOA[oaNombre].descripcion) {
         mapaOA[oaNombre].descripcion = oaDesc;
       }
@@ -213,7 +240,7 @@ export default function AnalisisPanel({
     const paletaOA = ['#4f46e5', '#06b6d4', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899'];
     const oasCalculados = Object.values(mapaOA).map((g, idx) => ({
       ...g,
-      promedioLogro: Math.round(g.sumaLogros / (g.preguntas.length || 1)),
+      promedioLogro: g.preguntasActivas > 0 ? Math.round(g.sumaLogros / g.preguntasActivas) : 0,
       color: paletaOA[idx % paletaOA.length]
     }));
 
@@ -231,6 +258,7 @@ export default function AnalisisPanel({
   // --- DATOS ORDENADOS PARA EL TABLERO MAESTRO (DE MAYOR A MENOR EN AMBOS EJES) ---
   const { preguntasTableroMaestro, alumnosTableroMaestro } = useMemo(() => {
     const colsOrdenadas = [...analisisPreguntas].sort((a, b) => {
+      if (a.anulada !== b.anulada) return a.anulada ? 1 : -1;
       if (b.pctLogro !== a.pctLogro) return b.pctLogro - a.pctLogro;
       return a.numero - b.numero;
     });
@@ -249,22 +277,24 @@ export default function AnalisisPanel({
     };
   }, [analisisPreguntas, resultados]);
 
-  // --- CALCULAR % LOGRO POR CADA OA PARA CADA ESTUDIANTE ---
+  // --- CALCULAR % LOGRO POR CADA OA PARA CADA ESTUDIANTE (PONDERADO POR PUNTAJE) ---
   const calcularLogroAlumnoEnOA = (alumno, oaObj, respuestasOverride = null) => {
     const mapaResp = respuestasOverride || alumno.respuestas || {};
-    let buenas = 0;
-    let totalValidas = 0;
+    let puntosObtenidos = 0;
+    let puntosTotales = 0;
+
     oaObj.preguntas.forEach((numP) => {
       const itemPauta = pauta[numP];
-      const correcta = typeof itemPauta === 'object' ? itemPauta?.correcta : itemPauta;
-      if (correcta) {
-        totalValidas++;
-        if (mapaResp[numP] === correcta) {
-          buenas++;
+      const clavesValidas = obtenerClavesItem(itemPauta);
+      const pts = obtenerPuntajeItem(itemPauta);
+      if (pts > 0 && clavesValidas.length > 0) {
+        puntosTotales += pts;
+        if (clavesValidas.includes(mapaResp[numP])) {
+          puntosObtenidos += pts;
         }
       }
     });
-    return totalValidas > 0 ? Math.round((buenas / totalValidas) * 100) : 0;
+    return puntosTotales > 0 ? Math.round((puntosObtenidos / puntosTotales) * 100) : 0;
   };
 
   // --- ORDENAMIENTO DE LA NÓMINA INDIVIDUAL ---
@@ -355,8 +385,9 @@ export default function AnalisisPanel({
       const fila = {
         Pregunta: `P${it.numero}`,
         'Clave Correcta': it.correcta,
+        Puntaje: it.puntajeItem,
         OA: it.oa,
-        '% Logro': it.pctLogro,
+        '% Logro': it.anulada ? 'ANULADA' : it.pctLogro,
         Aciertos: it.aciertos
       };
       opciones.forEach((op) => {
@@ -392,7 +423,6 @@ export default function AnalisisPanel({
     return ordenTabla.dir === 'asc' ? <ArrowUp size={12} color="#2563eb" /> : <ArrowDown size={12} color="#2563eb" />;
   };
 
-  // Helper para renderizar una fila de barra apilada al 100%
   const renderFilaBarraApilada = (fila, destacar = false) => (
     <div key={fila.titulo} style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -810,10 +840,10 @@ export default function AnalisisPanel({
                     cursor: 'pointer',
                     minWidth: '24px'
                   }}
-                  title={`P${it.numero}: ${it.pctLogro}% logro (Clave: ${it.correcta}) - Clic para detalle`}
+                  title={it.anulada ? `P${it.numero}: ANULADA (0 pts)` : `P${it.numero}: ${it.pctLogro}% logro (Clave: ${it.correcta}) - Clic para detalle`}
                 >
                   <span style={{ fontSize: '10px', fontWeight: '800', color: '#334155', marginBottom: '4px' }}>
-                    {it.pctLogro}%
+                    {it.anulada ? 'ANUL' : `${it.pctLogro}%`}
                   </span>
                   <div
                     style={{
@@ -978,7 +1008,6 @@ export default function AnalisisPanel({
               boxShadow: '0 25px 50px -12px rgba(0,0,0,0.3)', overflow: 'hidden'
             }}
           >
-            {/* Cabecera Tablero Maestro */}
             <div style={{ padding: '16px 22px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
               <div>
                 <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1015,11 +1044,9 @@ export default function AnalisisPanel({
               </div>
             </div>
 
-            {/* Tabla Matriz Scrolleable */}
             <div style={{ overflow: 'auto', flex: 1 }}>
               <table style={{ borderCollapse: 'collapse', fontSize: '12px', width: '100%' }}>
                 <thead>
-                  {/* Fila 1: Número de pregunta y Clave (ordenadas de mayor a menor % logro de izq a der) */}
                   <tr style={{ background: '#0f172a', color: '#ffffff', position: 'sticky', top: 0, zIndex: 3 }}>
                     <th style={{ padding: '10px 12px', textAlign: 'left', position: 'sticky', left: 0, background: '#0f172a', zIndex: 4, minWidth: '215px', borderRight: '1px solid #334155' }}>
                       Estudiante (Mayor a Menor Logro)
@@ -1030,16 +1057,15 @@ export default function AnalisisPanel({
                     {preguntasTableroMaestro.map((it) => (
                       <th
                         key={it.numero}
-                        style={{ padding: '6px 4px', textAlign: 'center', minWidth: '36px', borderLeft: '1px solid #1e293b' }}
-                        title={`P${it.numero} • Logro: ${it.pctLogro}% • Clave: ${it.correcta} • ${it.oa}`}
+                        style={{ padding: '6px 4px', textAlign: 'center', minWidth: '38px', borderLeft: '1px solid #1e293b' }}
+                        title={`P${it.numero} • Logro: ${it.pctLogro}% • Clave: ${it.correcta} (${it.puntajeItem} pts) • ${it.oa}`}
                       >
                         <div style={{ fontWeight: '800' }}>P{it.numero}</div>
-                        <div style={{ fontSize: '10px', color: '#93c5fd' }}>{it.correcta}</div>
+                        <div style={{ fontSize: '10px', color: it.anulada ? '#fca5a5' : '#93c5fd' }}>{it.correcta}</div>
                       </th>
                     ))}
                   </tr>
 
-                  {/* Fila 2: % de logro por pregunta */}
                   <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #cbd5e1', position: 'sticky', top: '43px', zIndex: 2 }}>
                     <td style={{ padding: '6px 12px', fontWeight: '800', color: '#334155', position: 'sticky', left: 0, background: '#f1f5f9', zIndex: 3, borderRight: '1px solid #cbd5e1' }}>
                       % Logro Ítem (Mayor a Menor →)
@@ -1060,7 +1086,7 @@ export default function AnalisisPanel({
                           borderLeft: '1px solid #e2e8f0'
                         }}
                       >
-                        {it.pctLogro}%
+                        {it.anulada ? 'ANUL' : `${it.pctLogro}%`}
                       </td>
                     ))}
                   </tr>
@@ -1103,7 +1129,7 @@ export default function AnalisisPanel({
 
                         {preguntasTableroMaestro.map((it) => {
                           const resp = (al.respuestas && al.respuestas[it.numero]) || '';
-                          const esBuena = it.correcta !== '-' && resp === it.correcta;
+                          const esBuena = !it.anulada && it.clavesValidas.includes(resp);
                           const esOmitida = resp === '' || resp === '-';
                           const esDoble = resp === 'DOBLE';
 
@@ -1111,7 +1137,11 @@ export default function AnalisisPanel({
                           let colorCelda = '#991b1b';
                           let textoCelda = resp;
 
-                          if (esBuena) {
+                          if (it.anulada) {
+                            bgCelda = '#f1f5f9';
+                            colorCelda = '#64748b';
+                            textoCelda = resp || '-';
+                          } else if (esBuena) {
                             bgCelda = '#dcfce7';
                             colorCelda = '#166534';
                             textoCelda = resp;
@@ -1256,7 +1286,7 @@ export default function AnalisisPanel({
                     Detalle del Ítem P{itemActivoModal.numero}
                   </h3>
                   <div style={{ fontSize: '12px', color: '#64748b' }}>
-                    Rendimiento en el curso evaluado
+                    Puntaje ítem: <strong>{itemActivoModal.puntajeItem} pt{itemActivoModal.puntajeItem === 1 ? '' : 's'}</strong>
                   </div>
                 </div>
               </div>
@@ -1291,13 +1321,17 @@ export default function AnalisisPanel({
                   <div>
                     <div style={{ fontSize: '11.5px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>% Logro General</div>
                     <div style={{ fontSize: '13px', color: '#334155', marginTop: '2px' }}>
-                      Aciertos: <strong>{itemActivoModal.aciertos} de {totalAlumnos}</strong> estudiantes
+                      {itemActivoModal.anulada
+                        ? 'Pregunta anulada (0 pts en la escala)'
+                        : <>Aciertos: <strong>{itemActivoModal.aciertos} de {totalAlumnos}</strong> estudiantes</>}
                     </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '26px', fontWeight: '800', color: '#0f172a' }}>{itemActivoModal.pctLogro}%</div>
+                    <div style={{ fontSize: '26px', fontWeight: '800', color: '#0f172a' }}>
+                      {itemActivoModal.anulada ? 'ANULADA' : `${itemActivoModal.pctLogro}%`}
+                    </div>
                     <div style={{ fontSize: '12px', color: '#64748b' }}>
-                      Clave correcta: <strong style={{ color: '#16a34a' }}>{itemActivoModal.correcta}</strong>
+                      Clave(s) correcta(s): <strong style={{ color: '#16a34a' }}>{itemActivoModal.correcta}</strong>
                     </div>
                   </div>
                 </div>
@@ -1314,7 +1348,7 @@ export default function AnalisisPanel({
                     {opciones.map((op) => {
                       const alumnosOp = itemActivoModal.porOpcion[op] || [];
                       const pctOp = totalAlumnos > 0 ? Math.round((alumnosOp.length / totalAlumnos) * 100) : 0;
-                      const esCorrecta = op === itemActivoModal.correcta;
+                      const esCorrecta = !itemActivoModal.anulada && itemActivoModal.clavesValidas.includes(op);
                       const activa = opcionSeleccionadaItem === op;
 
                       return (
@@ -1515,8 +1549,10 @@ export default function AnalisisPanel({
                     const p = i + 1;
                     const resp = (editandoRespuestas ? respuestasEditadas[p] : modalAlumno.respuestas?.[p]) || '';
                     const itemPauta = pauta[p];
-                    const correcta = typeof itemPauta === 'object' ? itemPauta?.correcta : itemPauta;
-                    const esBuena = Boolean(correcta) && resp === correcta;
+                    const clavesValidas = obtenerClavesItem(itemPauta);
+                    const ptsItem = obtenerPuntajeItem(itemPauta);
+                    const esAnulada = ptsItem === 0;
+                    const esBuena = !esAnulada && clavesValidas.includes(resp);
                     const esOmitida = resp === '' || resp === '-';
 
                     return (
@@ -1525,8 +1561,8 @@ export default function AnalisisPanel({
                         style={{
                           padding: '8px 10px',
                           borderRadius: '10px',
-                          border: `1px solid ${esBuena ? '#86efac' : esOmitida ? '#cbd5e1' : '#fecaca'}`,
-                          background: esBuena ? '#f0fdf4' : esOmitida ? '#f8fafc' : '#fef2f2',
+                          border: `1px solid ${esAnulada ? '#cbd5e1' : esBuena ? '#86efac' : esOmitida ? '#cbd5e1' : '#fecaca'}`,
+                          background: esAnulada ? '#f1f5f9' : esBuena ? '#f0fdf4' : esOmitida ? '#f8fafc' : '#fef2f2',
                           display: 'flex',
                           flexDirection: 'column',
                           gap: '6px'
@@ -1534,14 +1570,18 @@ export default function AnalisisPanel({
                       >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
                           <span style={{ fontWeight: '800', color: '#334155' }}>P{p}</span>
-                          <span style={{ fontWeight: '700', color: esBuena ? '#166534' : esOmitida ? '#64748b' : '#991b1b', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
-                            {resp === 'DOBLE' ? 'DUP' : resp || '-'} <span style={{ fontSize: '11px', opacity: 0.8 }}>({correcta || '-'})</span>
-                            {esBuena ? (
-                              <CheckCircle2 size={13} color="#16a34a" />
-                            ) : esOmitida ? (
-                              <MinusCircle size={13} color="#94a3b8" />
-                            ) : (
-                              <XCircle size={13} color="#dc2626" />
+                          <span style={{ fontWeight: '700', color: esAnulada ? '#64748b' : esBuena ? '#166534' : esOmitida ? '#64748b' : '#991b1b', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                            {esAnulada ? 'ANULADA' : (
+                              <>
+                                {resp === 'DOBLE' ? 'DUP' : resp || '-'} <span style={{ fontSize: '11px', opacity: 0.8 }}>({clavesValidas.join('/') || '-'})</span>
+                                {esBuena ? (
+                                  <CheckCircle2 size={13} color="#16a34a" />
+                                ) : esOmitida ? (
+                                  <MinusCircle size={13} color="#94a3b8" />
+                                ) : (
+                                  <XCircle size={13} color="#dc2626" />
+                                )}
+                              </>
                             )}
                           </span>
                         </div>

@@ -9,6 +9,20 @@ async function obtenerOpenCV() {
   });
 }
 
+function obtenerClavesItem(item) {
+  if (!item) return [];
+  if (typeof item === 'string') return item ? [item] : [];
+  if (Array.isArray(item.correcta)) return item.correcta;
+  return item.correcta ? [item.correcta] : [];
+}
+
+function obtenerPuntajeItem(item) {
+  if (typeof item === 'object' && item !== null && item.puntaje !== undefined) {
+    return Number(item.puntaje);
+  }
+  return 1;
+}
+
 function leerCodigoQR(canvas) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const { width, height } = canvas;
@@ -238,7 +252,7 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   const outCtx = outCanvas.getContext('2d');
 
   const radioPx = 22;
-  const radioNucleoPx = 15; // Núcleo interior de la burbuja (sin tocar el contorno impreso)
+  const radioNucleoPx = 15;
   const respuestas = {};
 
   for (let p = 1; p <= totalPreguntas; p++) {
@@ -282,13 +296,9 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       return { letra, ratio, brilloNucleo, px, py };
     });
 
-    // Referencia del círculo vacío en esta fila (el más claro / con menos tinta)
     const fondoFilaRatio = Math.min(...densidades.map((d) => d.ratio));
     const fondoFilaBrillo = Math.max(...densidades.map((d) => d.brilloNucleo));
 
-    // Doble criterio:
-    // 1) Marca oscura clásica (lápiz pasta / marcador)
-    // 2) Marca tenue en el núcleo (lápiz grafito suave: núcleo >= 18 niveles más oscuro que la burbuja vacía de la fila)
     const marcadas = densidades.filter((d) => {
       const marcaFuerte = d.ratio > 0.26 && d.ratio - fondoFilaRatio > 0.09;
       const marcaTenueGrafito = d.brilloNucleo < 220 && fondoFilaBrillo - d.brilloNucleo > 18;
@@ -305,8 +315,10 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     respuestas[p] = respuestaFinal;
 
     const itemPauta = pauta[p];
-    const correcta = typeof itemPauta === 'object' ? itemPauta?.correcta : itemPauta;
-    const esCorrecta = Boolean(correcta) && respuestaFinal === correcta;
+    const clavesValidas = obtenerClavesItem(itemPauta);
+    const puntajeItem = obtenerPuntajeItem(itemPauta);
+    const esAnulada = puntajeItem === 0;
+    const esCorrecta = !esAnulada && clavesValidas.length > 0 && clavesValidas.includes(respuestaFinal);
 
     const ultimaBurbuja = densidades[densidades.length - 1];
     const posXIcono = ultimaBurbuja.px + 54;
@@ -317,9 +329,9 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
         outCtx.beginPath();
         outCtx.arc(d.px, d.py, 28, 0, 2 * Math.PI);
         outCtx.lineWidth = 6;
-        outCtx.strokeStyle = esCorrecta ? '#16a34a' : '#dc2626';
+        outCtx.strokeStyle = esAnulada ? '#64748b' : esCorrecta ? '#16a34a' : '#dc2626';
         outCtx.stroke();
-      } else if (correcta && d.letra === correcta && !esCorrecta) {
+      } else if (!esAnulada && clavesValidas.includes(d.letra) && !esCorrecta) {
         outCtx.beginPath();
         outCtx.arc(d.px, d.py, 26, 0, 2 * Math.PI);
         outCtx.lineWidth = 4;
@@ -328,7 +340,9 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       }
     });
 
-    if (respuestaFinal === '') {
+    if (esAnulada) {
+      dibujarEtiquetaEstado(outCtx, posXIcono, posYIcono, 'ANULADA', '#64748b');
+    } else if (respuestaFinal === '') {
       dibujarCruzRoja(outCtx, posXIcono, posYIcono);
       dibujarEtiquetaEstado(outCtx, posXIcono + 22, posYIcono, 'BLANCO', '#64748b');
     } else if (respuestaFinal === 'DOBLE') {
@@ -336,7 +350,7 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       dibujarEtiquetaEstado(outCtx, posXIcono + 22, posYIcono, 'DOBLE', '#d97706');
     } else if (esCorrecta) {
       dibujarTicketVerde(outCtx, posXIcono, posYIcono);
-    } else if (correcta) {
+    } else if (clavesValidas.length > 0) {
       dibujarCruzRoja(outCtx, posXIcono, posYIcono);
     }
   }
