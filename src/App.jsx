@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
 import {
@@ -83,6 +83,10 @@ const PERMISOS_RESPALDO = {
 export default function App() {
   const [sesion, setSesion] = useState(null);
   const [cargandoSesion, setCargandoSesion] = useState(true);
+  const usuarioCargadoIdRef = useRef(null);
+  const ignorarPushHistoryRef = useRef(false);
+  const ultimoHashHistoryRef = useRef('');
+
   const [profesor, setProfesor] = useState({
     id: null,
     nombre: 'Docente',
@@ -144,7 +148,7 @@ export default function App() {
   const [rutExtra, setRutExtra] = useState('');
   const [nombreExtra, setNombreExtra] = useState('');
 
-  // Verifica si una evaluación corresponde al aula del docente (autor directo o curso/nivel asignado en su asignatura)
+  // Verifica si una evaluación corresponde al aula del docente
   const esEvaluacionDeSuAula = (
     ev,
     perfilUsuario = profesor,
@@ -171,8 +175,10 @@ export default function App() {
     return false;
   };
 
+  // --- SINCRONIZACIÓN CON EL HISTORIAL DEL NAVEGADOR (BOTÓN ATRÁS / ADELANTE) ---
   useEffect(() => {
     if (!profesor?.id) return;
+
     const estadoNav = {
       vistaActiva,
       nivelActivoId,
@@ -182,9 +188,63 @@ export default function App() {
       contextoAperturaEval,
       filtroCursoEnNivel
     };
+
     localStorage.setItem(`omr_nav_estado_${profesor.id}`, JSON.stringify(estadoNav));
+
+    const hashActual = JSON.stringify({
+      v: vistaActiva,
+      n: nivelActivoId,
+      c: cursoActivoId,
+      e: config.id || '',
+      s: subVistaEval
+    });
+
+    if (ignorarPushHistoryRef.current) {
+      ignorarPushHistoryRef.current = false;
+      ultimoHashHistoryRef.current = hashActual;
+      return;
+    }
+
+    if (ultimoHashHistoryRef.current !== hashActual) {
+      if (!ultimoHashHistoryRef.current) {
+        window.history.replaceState(estadoNav, '');
+      } else {
+        window.history.pushState(estadoNav, '');
+      }
+      ultimoHashHistoryRef.current = hashActual;
+    }
   }, [profesor?.id, vistaActiva, nivelActivoId, cursoActivoId, config.id, subVistaEval, contextoAperturaEval, filtroCursoEnNivel]);
 
+  useEffect(() => {
+    const manejarPopState = (event) => {
+      const nav = event.state;
+      if (!nav || !nav.vistaActiva) return;
+
+      ignorarPushHistoryRef.current = true;
+
+      if (nav.nivelActivoId !== undefined) setNivelActivoId(nav.nivelActivoId);
+      if (nav.cursoActivoId !== undefined) setCursoActivoId(nav.cursoActivoId);
+      if (nav.contextoAperturaEval) setContextoAperturaEval(nav.contextoAperturaEval);
+      if (nav.filtroCursoEnNivel) setFiltroCursoEnNivel(nav.filtroCursoEnNivel);
+
+      if (nav.vistaActiva === 'detalle-evaluacion' && nav.evalId) {
+        const evEncontrada = evaluacionesVisibles.find((e) => String(e.id) === String(nav.evalId));
+        if (evEncontrada) {
+          abrirEvaluacion(evEncontrada, nav.cursoActivoId || '', nav.contextoAperturaEval || 'curso');
+          if (nav.subVistaEval) setSubVistaEval(nav.subVistaEval);
+          return;
+        }
+      }
+
+      if (nav.subVistaEval) setSubVistaEval(nav.subVistaEval);
+      setVistaActiva(nav.vistaActiva);
+    };
+
+    window.addEventListener('popstate', manejarPopState);
+    return () => window.removeEventListener('popstate', manejarPopState);
+  }, [evaluacionesVisibles, profesor, permisosActivos, cursosAsignadosAula, cursos]);
+
+  // --- CONTROL DE SESIÓN SIN REINICIAR AL CAMBIAR DE PESTAÑA ---
   useEffect(() => {
     if (!supabase) {
       setCargandoSesion(false);
@@ -194,7 +254,10 @@ export default function App() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSesion(session);
       if (session?.user) {
-        cargarPerfilUsuario(session.user);
+        if (usuarioCargadoIdRef.current !== session.user.id) {
+          usuarioCargadoIdRef.current = session.user.id;
+          cargarPerfilUsuario(session.user);
+        }
       } else {
         setCargandoSesion(false);
       }
@@ -202,13 +265,22 @@ export default function App() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSesion(session);
-      if (event === 'TOKEN_REFRESHED') return;
 
-      if (session?.user) {
-        cargarPerfilUsuario(session.user);
-      } else {
+      if (!session?.user) {
+        usuarioCargadoIdRef.current = null;
         setCargandoSesion(false);
+        return;
       }
+
+      // Evitar recargar/resetear la pantalla cuando el usuario vuelve de otra pestaña o se refresca el token
+      if (event === 'TOKEN_REFRESHED') return;
+      if (usuarioCargadoIdRef.current === session.user.id) {
+        setCargandoSesion(false);
+        return;
+      }
+
+      usuarioCargadoIdRef.current = session.user.id;
+      cargarPerfilUsuario(session.user);
     });
 
     return () => subscription.unsubscribe();
@@ -267,6 +339,7 @@ export default function App() {
 
     if (!perfilFinal.activo) {
       alert('Tu cuenta ha sido suspendida por el administrador del establecimiento.');
+      usuarioCargadoIdRef.current = null;
       await supabase.auth.signOut();
       setCargandoSesion(false);
       return;
@@ -359,6 +432,7 @@ export default function App() {
     if (profesor?.id) {
       localStorage.removeItem(`omr_nav_estado_${profesor.id}`);
     }
+    usuarioCargadoIdRef.current = null;
     if (supabase) await supabase.auth.signOut();
     setSesion(null);
   };
@@ -471,11 +545,8 @@ export default function App() {
     const asigUsuario = (perfilUsuario.asignatura || '').trim().toLowerCase();
 
     const filtradas = (todasEvals || []).filter((ev) => {
-      // 1. Evaluaciones propias o de sus cursos/niveles asignados en su asignatura
       if (esEvaluacionDeSuAula(ev, perfilUsuario, idsCursosProfe, listaCursos)) return true;
-      // 2. Admin o UTP (ver todo el colegio)
       if (perfilUsuario.rol === 'admin' || permsUsuario?.ver_evals_colegio) return true;
-      // 3. Jefe de Depto (ver toda su asignatura en otros niveles)
       if (permsUsuario?.ver_evals_depto && asigUsuario) {
         const asigEval = (ev.asignatura || '').trim().toLowerCase();
         return asigEval === asigUsuario;
@@ -1942,7 +2013,6 @@ export default function App() {
         {/* VISTA 4: DETALLE DE EVALUACIÓN */}
         {vistaActiva === 'detalle-evaluacion' && config.id && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Banner de Modo Supervisión solo si está viendo una prueba de otro curso/colega fuera de su aula */}
             {!puedeEditarEvalActual && (
               <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e', padding: '12px 16px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13.5px' }}>
                 <ShieldAlert size={18} color="#d97706" />
