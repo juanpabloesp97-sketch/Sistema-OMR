@@ -229,18 +229,21 @@ export default function App() {
     if (!ev) return true;
     if (ev.docente_id === perfilUsuario?.id) return true;
 
-    const asigUsuario = (perfilUsuario?.asignatura || '').trim().toLowerCase();
-    const asigEval = (ev.asignatura || '').trim().toLowerCase();
-    const asigCoincide = !asigUsuario || asigEval === asigUsuario;
-    if (!asigCoincide) return false;
-
+    // Si el docente tiene asignado el curso específico de la evaluación
     if (ev.curso_id && idsCursosProfe.has(ev.curso_id)) return true;
 
-    if (!ev.curso_id && ev.nivel_id) {
-      const nivelesAula = new Set(
-        listaCursos.filter((c) => idsCursosProfe.has(c.id)).map((c) => c.nivel_id)
-      );
-      if (nivelesAula.has(ev.nivel_id)) return true;
+    // Si la evaluación es de nivel completo (o de un curso del nivel asignado al docente)
+    const nivelesAula = new Set(
+      listaCursos.filter((c) => idsCursosProfe.has(c.id)).map((c) => c.nivel_id)
+    );
+
+    if (!ev.curso_id && ev.nivel_id && nivelesAula.has(ev.nivel_id)) return true;
+
+    if (ev.curso_id) {
+      const cursoEv = listaCursos.find((c) => c.id === ev.curso_id);
+      if (cursoEv && nivelesAula.has(cursoEv.nivel_id) && idsCursosProfe.has(cursoEv.id)) {
+        return true;
+      }
     }
 
     return false;
