@@ -429,7 +429,6 @@ export default function App() {
       await supabase.from('perfiles').upsert([nuevoPerfil]);
       perfilDB = nuevoPerfil;
     } else if (perfilDB.id !== user.id) {
-      // Si fue pre-registrado por Admin/UTP, migrar su ID y cursos al ID real de Auth
       const idAnterior = perfilDB.id;
       await supabase.from('perfiles').update({ id: user.id }).eq('email', perfilDB.email);
       await supabase.from('docente_cursos').update({ docente_id: user.id }).eq('docente_id', idAnterior);
@@ -465,7 +464,6 @@ export default function App() {
       docenteNombre: perfilFinal.nombre,
       asignatura: perfilFinal.asignatura || 'Matemática'
     }));
-    setCargandoSesion(false);
 
     const { nivelesVisibles, cursosVisibles, idsAula } = await cargarEstructuraEscolar(perfilFinal, permsUsuario);
     const { visibles } = await cargarEvaluacionesNube(perfilFinal, permsUsuario, idsAula, cursosVisibles);
@@ -488,6 +486,17 @@ export default function App() {
         if (nav.vistaActiva === 'detalle-evaluacion' && nav.evalId) {
           const evEncontrada = (visibles || []).find((e) => String(e.id) === String(nav.evalId));
           if (evEncontrada) {
+            await Promise.all([
+              cargarResultadosNube(evEncontrada.id),
+              (nav.contextoAperturaEval === 'curso' && nav.cursoActivoId)
+                ? cargarEstudiantesParaEval(nav.cursoActivoId, null, cursosVisibles)
+                : evEncontrada.curso_id
+                ? cargarEstudiantesParaEval(evEncontrada.curso_id, null, cursosVisibles)
+                : evEncontrada.nivel_id
+                ? cargarEstudiantesParaEval(null, evEncontrada.nivel_id, cursosVisibles)
+                : Promise.resolve()
+            ]);
+
             abrirEvaluacion(
               evEncontrada,
               nav.cursoActivoId || '',
@@ -516,7 +525,9 @@ export default function App() {
       }
       setVistaActiva('inicio');
     }
+
     navRestauradaRef.current = true;
+    setCargandoSesion(false);
   };
 
   useEffect(() => {
@@ -681,11 +692,11 @@ export default function App() {
     return { visibles: filtradas, compartidas: compartidas || [] };
   };
 
-  const cargarEstudiantesParaEval = async (cursoId, nivelId) => {
+  const cargarEstudiantesParaEval = async (cursoId, nivelId, listaCursos = cursos) => {
     if (!supabase) return;
 
     if (cursoId) {
-      const cObj = cursos.find((c) => c.id === cursoId);
+      const cObj = listaCursos.find((c) => c.id === cursoId);
       const { data, error } = await supabase
         .from('estudiantes')
         .select('*')
@@ -701,7 +712,7 @@ export default function App() {
         setSeleccionadosImprimir(conCurso.map((e) => e.rut));
       }
     } else if (nivelId) {
-      const cursosDelNivel = cursos.filter((c) => c.nivel_id === nivelId);
+      const cursosDelNivel = listaCursos.filter((c) => c.nivel_id === nivelId);
       const idsCursos = cursosDelNivel.map((c) => c.id);
       if (idsCursos.length === 0) {
         setEstudiantesCursoEval([]);
