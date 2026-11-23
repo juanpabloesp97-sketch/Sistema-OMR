@@ -13,33 +13,60 @@ function leerCodigoQR(canvas) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const { width, height } = canvas;
 
-  const cropX = Math.floor(width * 0.55);
+  const intentarDecodificar = (imageData, w, h) => {
+    const code = jsQR(imageData.data, w, h, { inversionAttempts: 'attemptBoth' });
+    if (code && code.data) {
+      try {
+        const parsed = JSON.parse(code.data);
+        return {
+          r: parsed.r || parsed.rut || 'Sin RUT',
+          n: parsed.n || parsed.nombre || 'Estudiante',
+          c: parsed.c || parsed.curso || '',
+          e: parsed.e || ''
+        };
+      } catch {
+        return { r: code.data, n: 'Estudiante QR', c: '' };
+      }
+    }
+    return null;
+  };
+
+  // Pasada 1: Cuadrante superior derecho ampliado
+  const cropX = Math.floor(width * 0.52);
   const cropY = 0;
   const cropW = width - cropX;
-  const cropH = Math.floor(height * 0.30);
-
+  const cropH = Math.floor(height * 0.32);
   const cropData = ctx.getImageData(cropX, cropY, cropW, cropH);
-  let code = jsQR(cropData.data, cropW, cropH, { inversionAttempts: 'attemptBoth' });
 
-  if (!code) {
-    const fullData = ctx.getImageData(0, 0, width, height);
-    code = jsQR(fullData.data, width, height, { inversionAttempts: 'attemptBoth' });
-  }
+  let resultado = intentarDecodificar(cropData, cropW, cropH);
+  if (resultado) return resultado;
 
-  if (code && code.data) {
-    try {
-      const parsed = JSON.parse(code.data);
-      return {
-        r: parsed.r || parsed.rut || 'Sin RUT',
-        n: parsed.n || parsed.nombre || 'Estudiante',
-        c: parsed.c || parsed.curso || '',
-        e: parsed.e || ''
-      };
-    } catch {
-      return { r: code.data, n: 'Estudiante QR', c: '' };
-    }
+  // Pasada 2: Binarizado blanco/negro puro para eliminar sombras o tóner oscuro
+  const binData = new ImageData(new Uint8ClampedArray(cropData.data), cropW, cropH);
+  const d = binData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    const bw = lum < 155 ? 0 : 255;
+    d[i] = bw;
+    d[i + 1] = bw;
+    d[i + 2] = bw;
   }
-  return null;
+  resultado = intentarDecodificar(binData, cropW, cropH);
+  if (resultado) return resultado;
+
+  // Pasada 3: Reducción al 55% del recorte (limpia ruido del escáner)
+  const smallCanvas = document.createElement('canvas');
+  smallCanvas.width = Math.floor(cropW * 0.55);
+  smallCanvas.height = Math.floor(cropH * 0.55);
+  const sCtx = smallCanvas.getContext('2d', { willReadFrequently: true });
+  sCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, smallCanvas.width, smallCanvas.height);
+  const smallData = sCtx.getImageData(0, 0, smallCanvas.width, smallCanvas.height);
+  resultado = intentarDecodificar(smallData, smallCanvas.width, smallCanvas.height);
+  if (resultado) return resultado;
+
+  // Pasada 4: Hoja completa
+  const fullData = ctx.getImageData(0, 0, width, height);
+  return intentarDecodificar(fullData, width, height);
 }
 
 function ordenarEsquinas(puntos) {
@@ -142,7 +169,6 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   for (let i = 0; i < contours.size(); i++) {
     const cnt = contours.get(i);
     const area = cv.contourArea(cnt);
-    // Rango preciso para los 4 cuadrados negros de 8x8mm (evita letras y manchas pequeñas)
     if (area > areaTotal * 0.0005 && area < areaTotal * 0.006) {
       const rect = cv.boundingRect(cnt);
       const aspecto = rect.width / rect.height;
@@ -241,7 +267,7 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   cv.imshow(outCanvas, warped);
   const outCtx = outCanvas.getContext('2d');
 
-const radioPx = 21;
+  const radioPx = 21;
   const radioNucleoPx = 9;
   const respuestas = {};
 
@@ -286,14 +312,12 @@ const radioPx = 21;
       return { letra, ratio, brilloNucleo, px, py };
     });
 
-    // Línea base de los círculos vacíos de esta misma fila
     const ordenadosRatio = [...densidades].sort((a, b) => a.ratio - b.ratio);
     const fondoFilaRatio = (ordenadosRatio[0].ratio + ordenadosRatio[1].ratio) / 2;
 
     const ordenadosBrillo = [...densidades].sort((a, b) => b.brilloNucleo - a.brilloNucleo);
     const fondoFilaBrillo = (ordenadosBrillo[0].brilloNucleo + ordenadosBrillo[1].brilloNucleo) / 2;
 
-    // Calibrado para impresoras con tóner oscuro (evita falsos positivos en la letra B)
     const marcadas = densidades.filter((d) => {
       const marcaFuerte = d.ratio > 0.38 && d.ratio - fondoFilaRatio > 0.17;
       const marcaTenueGrafito = d.brilloNucleo < 178 && fondoFilaBrillo - d.brilloNucleo > 42;
@@ -304,9 +328,8 @@ const radioPx = 21;
     if (marcadas.length === 1) {
       respuestaFinal = marcadas[0].letra;
     } else if (marcadas.length > 1) {
-      // Si hay una marca muy rellena (>0.50) y las demás fueron solo sombras/roces (<0.36), prioriza la rellena
-      const muyLlenas = marcadas.filter((m) => m.ratio > 0.50);
-      if (muyLlenas.length === 1 && marcadas.every((m) => m === muyLlenas[0] || m.ratio < 0.36)) {
+      const muyLlenas = marcadas.filter((m) => m.ratio > 0.52);
+      if (muyLlenas.length === 1 && marcadas.every((m) => m === muyLlenas[0] || m.ratio < 0.40)) {
         respuestaFinal = muyLlenas[0].letra;
       } else {
         respuestaFinal = 'DOBLE';
@@ -369,6 +392,6 @@ const radioPx = 21;
   return {
     qrData,
     respuestas,
-    imagenProcesada: outCanvas.toDataURL('image/jpeg', 0.85)
+    imagenProcesada: outCanvas.toDataURL('image/jpeg', 0.6)
   };
 }
