@@ -151,6 +151,7 @@ export default function App() {
   const [subVistaEval, setSubVistaEval] = useState('avance');
   const [estudiantesCursoEval, setEstudiantesCursoEval] = useState([]);
   const [resultadosCurso, setResultadosCurso] = useState([]);
+  const [ordenHojasCorregidas, setOrdenHojasCorregidas] = useState({ col: 'apellido', dir: 'asc' });
   const [escaneosSeleccionados, setEscaneosSeleccionados] = useState([]);
   const [seleccionadosImprimir, setSeleccionadosImprimir] = useState([]);
   const [eximidosRuts, setEximidosRuts] = useState([]);
@@ -162,6 +163,7 @@ export default function App() {
   const [progresoLote, setProgresoLote] = useState('');
   const [camaraAbierta, setCamaraAbierta] = useState(false);
 
+  // Modal Asistente para Hojas Sin QR
   const [hojasSinQrPendientes, setHojasSinQrPendientes] = useState([]);
   const [indiceHojaSinQr, setIndiceHojaSinQr] = useState(0);
   const [busquedaAlumnoModal, setBusquedaAlumnoModal] = useState('');
@@ -170,6 +172,13 @@ export default function App() {
 
   const [rutExtra, setRutExtra] = useState('');
   const [nombreExtra, setNombreExtra] = useState('');
+
+  const alternarOrdenHojasCorregidas = (col) => {
+    setOrdenHojasCorregidas((prev) => ({
+      col,
+      dir: prev.col === col && prev.dir === 'asc' ? 'desc' : 'asc'
+    }));
+  };
 
   const calcularNotaConEscala = (puntaje, total, cfg = config) => {
     const nMin = Number(cfg.notaMin ?? 1.0);
@@ -1108,19 +1117,21 @@ export default function App() {
     doc.save(`Hojas_${config.tituloPrueba.replace(/\s+/g, '_')}${sufijoArchivo}.pdf`);
   };
 
-  const descargarHojasCorregidasPDF = (listaResultadosAExportar, sufijoArchivo = '') => {
+  const descargarHojasCorregidasPDF = (listaResultadosAExportar, sufijoArchivo = '', respetarOrden = false) => {
     if (!listaResultadosAExportar || listaResultadosAExportar.length === 0) {
       alert('No hay resultados corregidos para descargar.');
       return;
     }
 
-    const listaOrdenada = [...listaResultadosAExportar].sort((a, b) => {
-      const cursoA = (a.curso || '').trim();
-      const cursoB = (b.curso || '').trim();
-      const cmpCurso = cursoA.localeCompare(cursoB, 'es', { numeric: true, sensitivity: 'base' });
-      if (cmpCurso !== 0) return cmpCurso;
-      return (a.nombre || '').trim().localeCompare((b.nombre || '').trim(), 'es', { sensitivity: 'base' });
-    });
+    const listaOrdenada = respetarOrden
+      ? [...listaResultadosAExportar]
+      : [...listaResultadosAExportar].sort((a, b) => {
+          const cursoA = (a.curso || '').trim();
+          const cursoB = (b.curso || '').trim();
+          const cmpCurso = cursoA.localeCompare(cursoB, 'es', { numeric: true, sensitivity: 'base' });
+          if (cmpCurso !== 0) return cmpCurso;
+          return (a.nombre || '').trim().localeCompare((b.nombre || '').trim(), 'es', { sensitivity: 'base' });
+        });
 
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
     const opciones = config.alternativas.split('');
@@ -1227,6 +1238,7 @@ export default function App() {
     doc.save(`Corregidas_${config.tituloPrueba.replace(/\s+/g, '_')}${sufijoArchivo}.pdf`);
   };
 
+  // --- FUNCIONES DEL MODAL DE ASIGNACIÓN DE HOJAS SIN QR ---
   const abrirAsistenteHojasSinQr = (listaResultadosActualizados) => {
     const sinQr = (listaResultadosActualizados || []).filter((r) => {
       const rutNorm = (r.rut || '').trim().toLowerCase();
@@ -1522,6 +1534,19 @@ export default function App() {
       })
     : resultadosCurso;
 
+  const resultadosHojasOrdenados = [...resultadosVisiblesEval].sort((a, b) => {
+    let cmp = 0;
+    if (ordenHojasCorregidas.col === 'nota') {
+      cmp = Number(a.nota || 0) - Number(b.nota || 0);
+      if (cmp === 0) {
+        cmp = (a.nombre || '').trim().localeCompare((b.nombre || '').trim(), 'es', { sensitivity: 'base' });
+      }
+    } else {
+      cmp = (a.nombre || '').trim().localeCompare((b.nombre || '').trim(), 'es', { sensitivity: 'base' });
+    }
+    return ordenHojasCorregidas.dir === 'asc' ? cmp : -cmp;
+  });
+
   const rutsRendidos = new Set(resultadosVisiblesEval.map((r) => r.rut.trim().toLowerCase()));
   const eximidosSet = new Set(eximidosRuts);
   const estudiantesActivos = estudiantesVisiblesEval.filter((e) => !eximidosSet.has(e.rut.trim().toLowerCase()));
@@ -1546,7 +1571,7 @@ export default function App() {
     { id: 'analisis', label: 'Análisis y Reportes', icon: BarChart3, visible: true }
   ].filter((t) => t.visible);
 
-  const idsVisiblesEscaneos = resultadosVisiblesEval.map((r) => r.id).filter(Boolean);
+  const idsVisiblesEscaneos = resultadosHojasOrdenados.map((r) => r.id).filter(Boolean);
   const todosEscaneosMarcados =
     idsVisiblesEscaneos.length > 0 &&
     idsVisiblesEscaneos.every((id) => escaneosSeleccionados.includes(id));
@@ -1602,6 +1627,7 @@ export default function App() {
       />
 
       <main style={{ flex: 1, padding: '24px', maxWidth: '1100px', margin: '0 auto', boxSizing: 'border-box' }}>
+        {/* VISTA INICIO */}
         {vistaActiva === 'inicio' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             <div
@@ -1783,6 +1809,7 @@ export default function App() {
           </div>
         )}
 
+        {/* VISTA A: PANEL DE NIVEL */}
         {vistaActiva === 'panel-nivel' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
@@ -1933,6 +1960,7 @@ export default function App() {
           </div>
         )}
 
+        {/* VISTA B: PANEL DE CURSO */}
         {vistaActiva === 'panel-curso' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -2052,6 +2080,7 @@ export default function App() {
           </div>
         )}
 
+        {/* VISTA 1: MI PERFIL DOCENTE */}
         {vistaActiva === 'perfil' && (
           <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', maxWidth: '600px' }}>
             <h2 style={{ margin: '0 0 16px 0', fontSize: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -2098,6 +2127,7 @@ export default function App() {
           </div>
         )}
 
+        {/* VISTA 1B: GESTIÓN DE USUARIOS Y MATRIZ DE PERMISOS */}
         {vistaActiva === 'usuarios' && puedeGestionarUsuarios && (
           <GestionUsuarios
             perfilActual={profesor}
@@ -2109,6 +2139,7 @@ export default function App() {
           />
         )}
 
+        {/* VISTA 2: LISTA DE CURSO / CONFIGURAR NIVELES */}
         {vistaActiva === 'visor-curso' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             {cursoActivoId && (
@@ -2135,6 +2166,7 @@ export default function App() {
           </div>
         )}
 
+        {/* VISTA 3: CREAR EVALUACIÓN */}
         {vistaActiva === 'crear-evaluacion' && puedeCrearEvaluaciones && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
@@ -2262,6 +2294,7 @@ export default function App() {
           </div>
         )}
 
+        {/* VISTA 4: DETALLE DE EVALUACIÓN */}
         {vistaActiva === 'detalle-evaluacion' && config.id && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             {!puedeEditarEvalActual && (
@@ -2430,6 +2463,7 @@ export default function App() {
               })}
             </div>
 
+            {/* SUBVISTA A: AVANCE Y PENDIENTES */}
             {subVistaEval === 'avance' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 {!tieneDestinoAsignado ? (
@@ -2587,6 +2621,7 @@ export default function App() {
               </div>
             )}
 
+            {/* SUBVISTA B: IMPRIMIR SELECTIVO */}
             {subVistaEval === 'imprimir' && (
               <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
@@ -2680,6 +2715,7 @@ export default function App() {
               </div>
             )}
 
+            {/* SUBVISTA C: ESCANEAR */}
             {subVistaEval === 'escanear' && puedeEscanearEvalActual && (
               <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
@@ -2687,7 +2723,7 @@ export default function App() {
 
                   {resultadosVisiblesEval.length > 0 && (
                     <button
-                      onClick={() => descargarHojasCorregidasPDF(resultadosVisiblesEval, cursoFiltroObj ? `_${cursoFiltroObj.nombre.replace(/\s+/g, '_')}` : '')}
+                      onClick={() => descargarHojasCorregidasPDF(resultadosHojasOrdenados, cursoFiltroObj ? `_${cursoFiltroObj.nombre.replace(/\s+/g, '_')}` : '', true)}
                       style={{
                         background: '#0f172a', color: '#ffffff', border: 'none', borderRadius: '8px',
                         padding: '9px 14px', fontSize: '13px', fontWeight: '700', cursor: 'pointer',
@@ -2794,6 +2830,7 @@ export default function App() {
               </div>
             )}
 
+            {/* SUBVISTA D: EDITAR PAUTA + GUARDAR Y RECALCULAR NOTAS */}
             {subVistaEval === 'pauta' && puedeEditarEvalActual && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 <PautaEditor config={config} setConfig={setConfig} nivelNombre={nivelActivoNombre} />
@@ -2829,6 +2866,7 @@ export default function App() {
               </div>
             )}
 
+            {/* SUBVISTA E: ANÁLISIS Y REPORTES */}
             {subVistaEval === 'analisis' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <AnalisisPanel
@@ -2888,20 +2926,57 @@ export default function App() {
                       Hojas Corregidas para Devolución a Estudiantes ({resultadosVisiblesEval.length})
                     </h3>
 
-                    {resultadosVisiblesEval.length > 0 && (
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                       <button
-                        onClick={() => descargarHojasCorregidasPDF(resultadosVisiblesEval, cursoFiltroObj ? `_${cursoFiltroObj.nombre.replace(/\s+/g, '_')}` : '')}
+                        type="button"
+                        onClick={() => alternarOrdenHojasCorregidas('apellido')}
                         style={{
-                          background: '#16a34a', color: '#ffffff', border: 'none', borderRadius: '8px',
-                          padding: '9px 14px', fontSize: '13px', fontWeight: '700', cursor: 'pointer',
-                          display: 'flex', alignItems: 'center', gap: '6px'
+                          background: ordenHojasCorregidas.col === 'apellido' ? '#eff6ff' : '#ffffff',
+                          color: ordenHojasCorregidas.col === 'apellido' ? '#1d4ed8' : '#334155',
+                          border: `1px solid ${ordenHojasCorregidas.col === 'apellido' ? '#93c5fd' : '#cbd5e1'}`,
+                          borderRadius: '8px',
+                          padding: '8px 12px',
+                          fontSize: '12.5px',
+                          fontWeight: '700',
+                          cursor: 'pointer'
                         }}
                       >
-                        <FileDown size={16} /> Descargar PDF Todas ({resultadosVisiblesEval.length})
+                        Ordenar por Apellido {ordenHojasCorregidas.col === 'apellido' ? (ordenHojasCorregidas.dir === 'asc' ? 'A-Z' : 'Z-A') : ''}
                       </button>
-                    )}
+
+                      <button
+                        type="button"
+                        onClick={() => alternarOrdenHojasCorregidas('nota')}
+                        style={{
+                          background: ordenHojasCorregidas.col === 'nota' ? '#eff6ff' : '#ffffff',
+                          color: ordenHojasCorregidas.col === 'nota' ? '#1d4ed8' : '#334155',
+                          border: `1px solid ${ordenHojasCorregidas.col === 'nota' ? '#93c5fd' : '#cbd5e1'}`,
+                          borderRadius: '8px',
+                          padding: '8px 12px',
+                          fontSize: '12.5px',
+                          fontWeight: '700',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Ordenar por Nota {ordenHojasCorregidas.col === 'nota' ? (ordenHojasCorregidas.dir === 'asc' ? '↑' : '↓') : ''}
+                      </button>
+
+                      {resultadosVisiblesEval.length > 0 && (
+                        <button
+                          onClick={() => descargarHojasCorregidasPDF(resultadosHojasOrdenados, cursoFiltroObj ? `_${cursoFiltroObj.nombre.replace(/\s+/g, '_')}` : '', true)}
+                          style={{
+                            background: '#16a34a', color: '#ffffff', border: 'none', borderRadius: '8px',
+                            padding: '9px 14px', fontSize: '13px', fontWeight: '700', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: '6px'
+                          }}
+                        >
+                          <FileDown size={16} /> Descargar PDF Todas ({resultadosVisiblesEval.length})
+                        </button>
+                      )}
+                    </div>
                   </div>
 
+                  {/* Barra de eliminación múltiple y total */}
                   {resultadosVisiblesEval.length > 0 && puedeCorregirManualActual && (
                     <div
                       style={{
@@ -2983,7 +3058,7 @@ export default function App() {
                                 <input
                                   type="checkbox"
                                   checked={todosEscaneosMarcados}
-                                  onChange={() => toggleSeleccionarTodosEscaneos(resultadosVisiblesEval)}
+                                  onChange={() => toggleSeleccionarTodosEscaneos(resultadosHojasOrdenados)}
                                   title="Seleccionar todos"
                                   style={{ width: '16px', height: '16px', cursor: 'pointer' }}
                                 />
@@ -2999,7 +3074,7 @@ export default function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {resultadosVisiblesEval.map((res, idx) => {
+                          {resultadosHojasOrdenados.map((res, idx) => {
                             const seleccionado = res.id && escaneosSeleccionados.includes(res.id);
                             const rutNorm = (res.rut || '').trim().toLowerCase();
                             const esSinQr = !rutNorm || rutNorm === 'sin qr' || rutNorm === 'sin rut';
@@ -3074,6 +3149,7 @@ export default function App() {
           </div>
         )}
 
+        {/* MODAL ASISTENTE PARA ASIGNAR HOJAS SIN QR */}
         {hojaSinQrActual && (
           <div
             style={{
