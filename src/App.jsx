@@ -162,7 +162,6 @@ export default function App() {
   const [progresoLote, setProgresoLote] = useState('');
   const [camaraAbierta, setCamaraAbierta] = useState(false);
 
-  // Estados para el Modal de Asignación Manual de Hojas Sin QR
   const [hojasSinQrPendientes, setHojasSinQrPendientes] = useState([]);
   const [indiceHojaSinQr, setIndiceHojaSinQr] = useState(0);
   const [busquedaAlumnoModal, setBusquedaAlumnoModal] = useState('');
@@ -1228,7 +1227,6 @@ export default function App() {
     doc.save(`Corregidas_${config.tituloPrueba.replace(/\s+/g, '_')}${sufijoArchivo}.pdf`);
   };
 
-  // --- FUNCIONES DEL MODAL DE ASIGNACIÓN DE HOJAS SIN QR ---
   const abrirAsistenteHojasSinQr = (listaResultadosActualizados) => {
     const sinQr = (listaResultadosActualizados || []).filter((r) => {
       const rutNorm = (r.rut || '').trim().toLowerCase();
@@ -1262,7 +1260,6 @@ export default function App() {
         '';
 
       if (supabase && config.id && hojaActual.id) {
-        // Si ya existía un resultado previo de este estudiante en esta evaluación, reemplazarlo
         await supabase
           .from('resultados')
           .delete()
@@ -1559,7 +1556,6 @@ export default function App() {
     return !rn || rn === 'sin qr' || rn === 'sin rut';
   });
 
-  // Datos filtrados para el Modal de Asignación Manual
   const hojaSinQrActual = hojasSinQrPendientes[indiceHojaSinQr] || null;
   const alumnosFiltradosModal = estudiantesVisiblesEval
     .filter((est) => {
@@ -1606,7 +1602,6 @@ export default function App() {
       />
 
       <main style={{ flex: 1, padding: '24px', maxWidth: '1100px', margin: '0 auto', boxSizing: 'border-box' }}>
-        {/* VISTA INICIO: PANEL PRINCIPAL */}
         {vistaActiva === 'inicio' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             <div
@@ -1657,7 +1652,6 @@ export default function App() {
               )}
             </div>
 
-            {/* Accesos directos a Niveles y Cursos */}
             <div>
               <h2 style={{ margin: '0 0 12px 0', fontSize: '17px', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <GraduationCap size={20} color="#2563eb" /> Niveles y Cursos Disponibles
@@ -1710,7 +1704,6 @@ export default function App() {
               )}
             </div>
 
-            {/* Evaluaciones Recientes */}
             <div style={{ background: '#ffffff', padding: '20px', borderRadius: '14px', border: '1px solid #cbd5e1' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                 <h2 style={{ margin: 0, fontSize: '17px', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1790,7 +1783,6 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA A: PANEL DE NIVEL */}
         {vistaActiva === 'panel-nivel' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
@@ -1862,7 +1854,6 @@ export default function App() {
                   );
                 })}
 
-              {/* Tarjeta Evaluaciones del Nivel */}
               <div
                 onClick={() => setModoResultadosNivel(!modoResultadosNivel)}
                 style={{
@@ -1942,7 +1933,6 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA B: PANEL DE CURSO */}
         {vistaActiva === 'panel-curso' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -2062,7 +2052,6 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA 1: MI PERFIL DOCENTE */}
         {vistaActiva === 'perfil' && (
           <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', maxWidth: '600px' }}>
             <h2 style={{ margin: '0 0 16px 0', fontSize: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -2109,7 +2098,6 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA 1B: GESTIÓN DE USUARIOS Y MATRIZ DE PERMISOS */}
         {vistaActiva === 'usuarios' && puedeGestionarUsuarios && (
           <GestionUsuarios
             perfilActual={profesor}
@@ -2121,7 +2109,6 @@ export default function App() {
           />
         )}
 
-        {/* VISTA 2: LISTA DE CURSO / CONFIGURAR NIVELES */}
         {vistaActiva === 'visor-curso' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             {cursoActivoId && (
@@ -2148,7 +2135,6 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA 3: CREAR EVALUACIÓN */}
         {vistaActiva === 'crear-evaluacion' && puedeCrearEvaluaciones && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
@@ -2276,7 +2262,6 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA 4: DETALLE DE EVALUACIÓN */}
         {vistaActiva === 'detalle-evaluacion' && config.id && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             {!puedeEditarEvalActual && (
@@ -2288,7 +2273,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Alerta persistente si quedaron hojas sin QR por asignar */}
             {hojasSinQrEnVista.length > 0 && puedeCorregirManualActual && (
               <div
                 style={{
@@ -2446,7 +2430,6 @@ export default function App() {
               })}
             </div>
 
-            {/* SUBVISTA A: AVANCE Y PENDIENTES */}
             {subVistaEval === 'avance' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 {!tieneDestinoAsignado ? (
@@ -2604,7 +2587,6 @@ export default function App() {
               </div>
             )}
 
-            {/* SUBVISTA B: IMPRIMIR SELECTIVO */}
             {subVistaEval === 'imprimir' && (
               <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
@@ -2698,7 +2680,6 @@ export default function App() {
               </div>
             )}
 
-            {/* SUBVISTA C: ESCANEAR */}
             {subVistaEval === 'escanear' && puedeEscanearEvalActual && (
               <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
@@ -2813,7 +2794,6 @@ export default function App() {
               </div>
             )}
 
-            {/* SUBVISTA D: EDITAR PAUTA + GUARDAR Y RECALCULAR NOTAS */}
             {subVistaEval === 'pauta' && puedeEditarEvalActual && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 <PautaEditor config={config} setConfig={setConfig} nivelNombre={nivelActivoNombre} />
@@ -2849,7 +2829,6 @@ export default function App() {
               </div>
             )}
 
-            {/* SUBVISTA E: ANÁLISIS Y REPORTES */}
             {subVistaEval === 'analisis' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <AnalisisPanel
@@ -2923,7 +2902,6 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* Barra de eliminación múltiple y total */}
                   {resultadosVisiblesEval.length > 0 && puedeCorregirManualActual && (
                     <div
                       style={{
@@ -3096,9 +3074,6 @@ export default function App() {
           </div>
         )}
 
-        {/* ================================================================= */}
-        {/* MODAL ASISTENTE PARA ASIGNAR HOJAS SIN QR                         */}
-        {/* ================================================================= */}
         {hojaSinQrActual && (
           <div
             style={{
@@ -3125,7 +3100,6 @@ export default function App() {
                 boxShadow: '0 25px 50px -12px rgba(0,0,0,0.35)'
               }}
             >
-              {/* Cabecera de advertencia */}
               <div
                 style={{
                   background: '#fef2f2',
@@ -3161,7 +3135,6 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Cuerpo en 2 columnas: Izquierda imagen de la hoja / Derecha buscador y selector */}
               <div
                 style={{
                   display: 'grid',
@@ -3193,7 +3166,6 @@ export default function App() {
                       Busca y selecciona al estudiante del curso al que pertenece esta hoja:
                     </div>
 
-                    {/* Buscador rápido */}
                     <div style={{ position: 'relative' }}>
                       <Search size={16} color="#64748b" style={{ position: 'absolute', left: '12px', top: '11px' }} />
                       <input
@@ -3223,7 +3195,6 @@ export default function App() {
                       />
                     </div>
 
-                    {/* Selector desplegable + Lista rápida */}
                     <div>
                       <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '5px' }}>
                         Estudiante del curso ({alumnosFiltradosModal.length} disponibles):
@@ -3263,7 +3234,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Botones de acción del Modal */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid #e2e8f0', paddingTop: '14px' }}>
                     <button
                       type="button"

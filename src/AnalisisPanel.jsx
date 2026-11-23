@@ -2,60 +2,44 @@ import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import {
   BarChart3, Download, ArrowUpDown, ArrowUp, ArrowDown, X,
-  CheckCircle2, XCircle, MinusCircle, SlidersHorizontal, ExternalLink,
-  Search, Eye, Save, ZoomIn, Table2
+  CheckCircle2, XCircle, MinusCircle, SlidersHorizontal, Search,
+  Eye, Save, ZoomIn, AlertTriangle, ArrowRight, Check
 } from 'lucide-react';
-
-function obtenerClavesItem(item) {
-  if (!item) return [];
-  if (typeof item === 'string') return item ? [item] : [];
-  if (Array.isArray(item.correcta)) return item.correcta;
-  return item.correcta ? [item.correcta] : [];
-}
-
-function obtenerPuntajeItem(item) {
-  if (typeof item === 'object' && item !== null && item.puntaje !== undefined) {
-    return Number(item.puntaje);
-  }
-  return 1;
-}
 
 export default function AnalisisPanel({
   resultados = [],
   config = {},
   onActualizarRespuesta,
-  puedeEditar = true,
-  esVistaNivelCompleto = false
+  puedeEditar = true
 }) {
-  // --- ESTADOS DE LÍMITES DE DESEMPEÑO ---
   const [cortes, setCortes] = useState({
-    muyBueno: 85,    // 85 - 100%
-    bueno: 72,       // 72 - 84%
-    aceptable: 60,   // 60 - 71%
-    insuficiente: 30 // 30 - 59% (0 - 29% Muy Insuficiente)
+    muyBueno: 85,
+    bueno: 72,
+    aceptable: 60,
+    insuficiente: 30
   });
   const [mostrarConfigCortes, setMostrarConfigCortes] = useState(false);
 
-  // --- ESTADOS DE MODALES INTERACTIVOS ---
   const [modalGrupo, setModalGrupo] = useState(null);
   const [modalItemNum, setModalItemNum] = useState(null);
   const [opcionSeleccionadaItem, setOpcionSeleccionadaItem] = useState(null);
   const [modalAlumno, setModalAlumno] = useState(null);
-  const [modalTableroMaestro, setModalTableroMaestro] = useState(false);
 
-  // --- EDICIÓN DE RESPUESTAS Y ZOOM DE HOJA EN MODAL DE ALUMNO ---
   const [editandoRespuestas, setEditandoRespuestas] = useState(false);
   const [respuestasEditadas, setRespuestasEditadas] = useState({});
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
   const [zoomImagen, setZoomImagen] = useState(false);
 
-  // --- URL PERMANENTE DEL PDF DE LA PRUEBA ---
-  const pdfPruebaUrl = config.pdfPruebaUrl || null;
+  // Estados para el modal "Revisar preguntas dobles y blancas"
+  const [modalDudasAbierto, setModalDudasAbierto] = useState(false);
+  const [indiceDudaActual, setIndiceDudaActual] = useState(0);
+  const [claveDudaSeleccionada, setClaveDudaSeleccionada] = useState('');
+  const [guardandoDuda, setGuardandoDuda] = useState(false);
+  const [zoomDudaImagen, setZoomDudaImagen] = useState(false);
 
-  // --- FILTROS Y ORDENAMIENTO ---
   const [busqueda, setBusqueda] = useState('');
   const [ordenTabla, setOrdenTabla] = useState({ col: 'nombre', dir: 'asc' });
-  const [ordenItems, setOrdenItems] = useState('numero'); // 'numero' | 'asc' | 'desc'
+  const [ordenItems, setOrdenItems] = useState('numero');
 
   const totalAlumnos = resultados.length;
   const numPreguntas = Number(config.numPreguntas || 30);
@@ -63,7 +47,85 @@ export default function AnalisisPanel({
   const opciones = (config.alternativas || 'ABCD').split('');
   const pauta = config.pauta || {};
 
-  // --- CLASIFICADOR DE LOS 5 GRUPOS DE DESEMPEÑO ---
+  const obtenerClavesCorrectasItem = (item) => {
+    if (!item) return [];
+    if (typeof item === 'string') return item ? [item] : [];
+    if (Array.isArray(item.correcta)) return item.correcta;
+    return item.correcta ? [item.correcta] : [];
+  };
+
+  const obtenerPuntajeItem = (item) => {
+    if (typeof item === 'object' && item !== null && item.puntaje !== undefined) {
+      return Number(item.puntaje);
+    }
+    return 1;
+  };
+
+  const obtenerImagenHoja = (obj) => obj?.imagenProcesada || obj?.imagenUrl || obj?.imagen_corregida || null;
+
+  // Lista de todas las preguntas DOBLE o BLANCO que aún NO han sido confirmadas/revisadas
+  const pendientesDoblesYBlancas = useMemo(() => {
+    const lista = [];
+    resultados.forEach((alumno) => {
+      const respMap = alumno.respuestas || {};
+      const revisadasArr = Array.isArray(respMap._revisadas) ? respMap._revisadas : [];
+      const revisadasSet = new Set(revisadasArr.map(Number));
+
+      for (let p = 1; p <= numPreguntas; p++) {
+        if (revisadasSet.has(p)) continue;
+        const val = respMap[p];
+        const esBlanco = val === '' || val === undefined || val === null || val === '-';
+        const esDoble = val === 'DOBLE';
+
+        if (esBlanco || esDoble) {
+          lista.push({
+            alumno,
+            numeroPregunta: p,
+            estadoActual: esDoble ? 'DOBLE' : 'BLANCO',
+            respuestaActual: val || ''
+          });
+        }
+      }
+    });
+    return lista;
+  }, [resultados, numPreguntas]);
+
+  const dudaActiva = pendientesDoblesYBlancas[indiceDudaActual] || pendientesDoblesYBlancas[0] || null;
+
+  const abrirModalDudas = () => {
+    if (pendientesDoblesYBlancas.length === 0) return;
+    const primera = pendientesDoblesYBlancas[0];
+    setIndiceDudaActual(0);
+    setClaveDudaSeleccionada(primera.estadoActual === 'DOBLE' ? '' : primera.respuestaActual);
+    setZoomDudaImagen(false);
+    setModalDudasAbierto(true);
+  };
+
+  const confirmarYAvanzarDuda = async (forzarOmitida = false) => {
+    if (!dudaActiva || !onActualizarRespuesta) return;
+    const { alumno, numeroPregunta } = dudaActiva;
+    const respActuales = { ...(alumno.respuestas || {}) };
+    const revisadasPrevias = Array.isArray(respActuales._revisadas)
+      ? respActuales._revisadas.map(Number)
+      : [];
+
+    const nuevaClave = forzarOmitida ? '' : claveDudaSeleccionada;
+    const nuevasRespuestas = {
+      ...respActuales,
+      [numeroPregunta]: nuevaClave,
+      _revisadas: Array.from(new Set([...revisadasPrevias, numeroPregunta]))
+    };
+
+    setGuardandoDuda(true);
+    try {
+      await onActualizarRespuesta(alumno.id, nuevasRespuestas);
+      setIndiceDudaActual(0);
+      setClaveDudaSeleccionada('');
+    } finally {
+      setGuardandoDuda(false);
+    }
+  };
+
   const clasificarDesempeno = (pct) => {
     const val = Number(pct || 0);
     if (val >= cortes.muyBueno) {
@@ -81,7 +143,6 @@ export default function AnalisisPanel({
     return { id: 'muy_insuficiente', label: 'Muy Insuficiente', rango: `0-${cortes.insuficiente - 1}%`, color: '#ef4444', bg: '#fee2e2', text: '#991b1b' };
   };
 
-  // --- INDICADORES CONSOLIDADOS ---
   const promedioNota = totalAlumnos > 0
     ? (resultados.reduce((acc, r) => acc + Number(r.nota || 1.0), 0) / totalAlumnos).toFixed(1)
     : '0.0';
@@ -90,260 +151,235 @@ export default function AnalisisPanel({
     ? Math.round(resultados.reduce((acc, r) => acc + Number(r.porcentaje || 0), 0) / totalAlumnos)
     : 0;
 
-  // --- LOS 5 GRUPOS DE DESEMPEÑO PARA EL GRÁFICO DE BARRAS ---
+  const aprobadosCount = resultados.filter((r) => Number(r.nota || 1.0) >= notaAprob).length;
+  const pctAprobacion = totalAlumnos > 0 ? Math.round((aprobadosCount / totalAlumnos) * 100) : 0;
+
   const gruposDesempeno = useMemo(() => {
-    const definiciones = [
-      { id: 'muy_insuficiente', label: 'Muy Insuficiente', rango: `0-${cortes.insuficiente - 1}%`, color: '#ef4444', bg: '#fee2e2', text: '#991b1b' },
-      { id: 'insuficiente', label: 'Insuficiente', rango: `${cortes.insuficiente}-${cortes.aceptable - 1}%`, color: '#f97316', bg: '#ffedd5', text: '#9a3412' },
-      { id: 'aceptable', label: 'Aceptable', rango: `${cortes.aceptable}-${cortes.bueno - 1}%`, color: '#eab308', bg: '#fef9c3', text: '#854d0e' },
-      { id: 'bueno', label: 'Bueno', rango: `${cortes.bueno}-${cortes.muyBueno - 1}%`, color: '#3b82f6', bg: '#dbeafe', text: '#1e40af' },
-      { id: 'muy_bueno', label: 'Muy Bueno', rango: `${cortes.muyBueno}-100%`, color: '#10b981', bg: '#d1fae5', text: '#065f46' }
+    const base = [
+      { id: 'muy_insuficiente', label: 'Muy Insuficiente', rango: `0-${cortes.insuficiente - 1}%`, color: '#ef4444', bg: '#fee2e2', text: '#991b1b', estudiantes: [] },
+      { id: 'insuficiente', label: 'Insuficiente', rango: `${cortes.insuficiente}-${cortes.aceptable - 1}%`, color: '#f97316', bg: '#ffedd5', text: '#9a3412', estudiantes: [] },
+      { id: 'aceptable', label: 'Aceptable', rango: `${cortes.aceptable}-${cortes.bueno - 1}%`, color: '#eab308', bg: '#fef9c3', text: '#854d0e', estudiantes: [] },
+      { id: 'bueno', label: 'Bueno', rango: `${cortes.bueno}-${cortes.muyBueno - 1}%`, color: '#3b82f6', bg: '#dbeafe', text: '#1e40af', estudiantes: [] },
+      { id: 'muy_bueno', label: 'Muy Bueno', rango: `${cortes.muyBueno}-100%`, color: '#10b981', bg: '#d1fae5', text: '#065f46', estudiantes: [] }
     ];
 
-    return definiciones.map((def) => ({
-      ...def,
-      estudiantes: resultados
-        .filter((r) => clasificarDesempeno(r.porcentaje).id === def.id)
-        .sort((a, b) => a.nombre.localeCompare(b.nombre))
-    }));
-  }, [resultados, cortes]);
-
-  const maxAlumnosGrupo = Math.max(1, ...gruposDesempeno.map((g) => g.estudiantes.length));
-
-  // --- COMPARATIVO DE CURSOS (BARRAS APILADAS HORIZONTALES PARA NIVEL COMPLETO) ---
-  const comparativoCursos = useMemo(() => {
-    const mapaCursos = {};
     resultados.forEach((r) => {
-      const nombreCurso = (r.curso || 'Sin Curso').trim();
-      if (!mapaCursos[nombreCurso]) {
-        mapaCursos[nombreCurso] = [];
-      }
-      mapaCursos[nombreCurso].push(r);
+      const cat = clasificarDesempeno(r.porcentaje);
+      const encontrado = base.find((g) => g.id === cat.id);
+      if (encontrado) encontrado.estudiantes.push(r);
     });
 
-    const nombresOrdenados = Object.keys(mapaCursos).sort((a, b) =>
-      a.localeCompare(b, 'es', { numeric: true, sensitivity: 'base' })
-    );
+    return base.map((g) => ({
+      ...g,
+      cantidad: g.estudiantes.length,
+      porcentajeCurso: totalAlumnos > 0 ? Math.round((g.estudiantes.length / totalAlumnos) * 100) : 0
+    }));
+  }, [resultados, cortes, totalAlumnos]);
 
-    const calcularFilaBarra = (titulo, lista) => {
-      const total = lista.length;
-      const conteos = {
-        muy_insuficiente: 0,
-        insuficiente: 0,
-        aceptable: 0,
-        bueno: 0,
-        muy_bueno: 0
-      };
-      lista.forEach((al) => {
-        const gId = clasificarDesempeno(al.porcentaje).id;
-        conteos[gId] = (conteos[gId] || 0) + 1;
-      });
-
-      const segmentos = [
-        { id: 'muy_insuficiente', label: 'Muy Insuficiente', color: '#ec4899', textColor: '#ffffff' },
-        { id: 'insuficiente', label: 'Insuficiente', color: '#fca5a5', textColor: '#7f1d1d' },
-        { id: 'aceptable', label: 'Aceptable', color: '#facc15', textColor: '#713f12' },
-        { id: 'bueno', label: 'Bueno', color: '#86efac', textColor: '#14532d' },
-        { id: 'muy_bueno', label: 'Muy Bueno', color: '#059669', textColor: '#ffffff' }
-      ].map((seg) => {
-        const cant = conteos[seg.id] || 0;
-        const pct = total > 0 ? Number(((cant / total) * 100).toFixed(1)) : 0;
-        return { ...seg, cant, pct };
-      });
-
-      return { titulo, total, segmentos };
-    };
-
-    const filasCursos = nombresOrdenados.map((cNom) => calcularFilaBarra(cNom, mapaCursos[cNom]));
-    const filaConsolidada = calcularFilaBarra(`Consolidado Nivel (${nombresOrdenados.length} cursos)`, resultados);
-
-    return {
-      cantidadCursos: nombresOrdenados.length,
-      filas: filasCursos,
-      consolidado: filaConsolidada
-    };
-  }, [resultados, cortes]);
-
-  // --- PROCESAMIENTO DE OBJETIVOS DE APRENDIZAJE (OAS) Y PREGUNTAS ---
-  const { listaOAs, analisisPreguntas } = useMemo(() => {
-    const mapaOA = {};
-    const preguntasArr = [];
-
+  const listaOAs = useMemo(() => {
+    const map = new Map();
+    const coloresOA = ['#2563eb', '#059669', '#7c3aed', '#d97706', '#dc2626', '#0891b2'];
     for (let p = 1; p <= numPreguntas; p++) {
-      const itemPauta = pauta[p];
-      const clavesValidas = obtenerClavesItem(itemPauta);
-      const puntajeItem = obtenerPuntajeItem(itemPauta);
-      const anulada = puntajeItem === 0;
-      const correctaTexto = anulada ? 'ANUL.' : (clavesValidas.length > 0 ? clavesValidas.join('/') : '-');
+      const item = pauta[p];
+      const oaCod = (typeof item === 'object' && item?.oa) ? item.oa.trim() : 'OA General';
+      const desc = (typeof item === 'object' && item?.habilidad) ? item.habilidad.trim() : '';
+      if (!map.has(oaCod)) {
+        map.set(oaCod, {
+          oa: oaCod,
+          descripcion: desc,
+          preguntas: [],
+          color: coloresOA[map.size % coloresOA.length]
+        });
+      }
+      map.get(oaCod).preguntas.push(p);
+    }
+    return Array.from(map.values()).map((entry) => {
+      let sumaPct = 0;
+      let validos = 0;
+      resultados.forEach((r) => {
+        let ptsObtenidos = 0;
+        let ptsTotales = 0;
+        entry.preguntas.forEach((numP) => {
+          const it = pauta[numP];
+          const pts = obtenerPuntajeItem(it);
+          const claves = obtenerClavesCorrectasItem(it);
+          if (pts > 0 && claves.length > 0) {
+            ptsTotales += pts;
+            if (claves.includes(r.respuestas?.[numP])) ptsObtenidos += pts;
+          }
+        });
+        if (ptsTotales > 0) {
+          sumaPct += (ptsObtenidos / ptsTotales) * 100;
+          validos++;
+        }
+      });
+      return {
+        ...entry,
+        promedioLogro: validos > 0 ? Math.round(sumaPct / validos) : 0
+      };
+    });
+  }, [pauta, numPreguntas, resultados]);
 
-      const oaNombre = (typeof itemPauta === 'object' && itemPauta?.oa) ? itemPauta.oa.trim() : 'General';
-      const oaDesc = (typeof itemPauta === 'object' && itemPauta?.habilidad) ? itemPauta.habilidad.trim() : '';
+  const calcularLogroAlumnoEnOA = (alumno, oaObj, mapaRespuestasOverride = null) => {
+    const mapa = mapaRespuestasOverride || alumno.respuestas || {};
+    let ptsObtenidos = 0;
+    let ptsTotales = 0;
+    oaObj.preguntas.forEach((numP) => {
+      const it = pauta[numP];
+      const pts = obtenerPuntajeItem(it);
+      const claves = obtenerClavesCorrectasItem(it);
+      if (pts > 0 && claves.length > 0) {
+        ptsTotales += pts;
+        if (claves.includes(mapa[numP])) ptsObtenidos += pts;
+      }
+    });
+    return ptsTotales > 0 ? Math.round((ptsObtenidos / ptsTotales) * 100) : 0;
+  };
+
+  const datosItems = useMemo(() => {
+    const arr = [];
+    for (let p = 1; p <= numPreguntas; p++) {
+      const item = pauta[p];
+      const clavesCorrectas = obtenerClavesCorrectasItem(item);
+      const pts = obtenerPuntajeItem(item);
+      const anulada = pts === 0;
+      const oaCod = (typeof item === 'object' && item?.oa) ? item.oa.trim() : 'OA General';
+      const desc = (typeof item === 'object' && item?.habilidad) ? item.habilidad.trim() : '';
 
       let aciertos = 0;
       const porOpcion = {};
       opciones.forEach((op) => { porOpcion[op] = []; });
-      const omitidasList = [];
-      const doblesList = [];
+      const omitidas = [];
+      const dobles = [];
 
       resultados.forEach((r) => {
-        const resp = (r.respuestas && r.respuestas[p]) || '';
+        const resp = r.respuestas?.[p] || '';
         if (!resp) {
-          omitidasList.push(r);
+          omitidas.push(r);
         } else if (resp === 'DOBLE') {
-          doblesList.push(r);
+          dobles.push(r);
         } else {
-          if (porOpcion[resp]) porOpcion[resp].push(r);
-          if (!anulada && clavesValidas.includes(resp)) aciertos++;
+          if (!porOpcion[resp]) porOpcion[resp] = [];
+          porOpcion[resp].push(r);
+          if (!anulada && clavesCorrectas.includes(resp)) aciertos++;
         }
       });
 
-      const pctLogro = anulada ? 100 : (totalAlumnos > 0 ? Math.round((aciertos / totalAlumnos) * 100) : 0);
-      const colorInfo = anulada
-        ? { id: 'anulada', label: 'Anulada', rango: '0 pts', color: '#94a3b8', bg: '#f1f5f9', text: '#475569' }
-        : clasificarDesempeno(pctLogro);
-
-      preguntasArr.push({
+      const pctLogro = !anulada && totalAlumnos > 0 ? Math.round((aciertos / totalAlumnos) * 100) : 0;
+      arr.push({
         numero: p,
-        clavesValidas,
-        correcta: correctaTexto,
-        puntajeItem,
+        clavesCorrectas,
+        claveTexto: clavesCorrectas.length > 0 ? clavesCorrectas.join(' / ') : '-',
         anulada,
-        oa: oaNombre,
-        descripcion: oaDesc,
+        oa: oaCod,
+        descripcion: desc,
         aciertos,
+        total: totalAlumnos,
         pctLogro,
-        colorInfo,
         porOpcion,
-        omitidasList,
-        doblesList
+        omitidas,
+        dobles
       });
-
-      if (!mapaOA[oaNombre]) {
-        mapaOA[oaNombre] = {
-          oa: oaNombre,
-          descripcion: oaDesc,
-          preguntas: [],
-          preguntasActivas: 0,
-          sumaLogros: 0
-        };
-      }
-      mapaOA[oaNombre].preguntas.push(p);
-      if (!anulada) {
-        mapaOA[oaNombre].preguntasActivas += 1;
-        mapaOA[oaNombre].sumaLogros += pctLogro;
-      }
-      if (oaDesc && !mapaOA[oaNombre].descripcion) {
-        mapaOA[oaNombre].descripcion = oaDesc;
-      }
     }
 
-    const paletaOA = ['#4f46e5', '#06b6d4', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899'];
-    const oasCalculados = Object.values(mapaOA).map((g, idx) => ({
-      ...g,
-      promedioLogro: g.preguntasActivas > 0 ? Math.round(g.sumaLogros / g.preguntasActivas) : 0,
-      color: paletaOA[idx % paletaOA.length]
-    }));
+    if (ordenItems === 'asc') return [...arr].sort((a, b) => a.pctLogro - b.pctLogro);
+    if (ordenItems === 'desc') return [...arr].sort((a, b) => b.pctLogro - a.pctLogro);
+    return arr;
+  }, [numPreguntas, pauta, opciones, resultados, totalAlumnos, ordenItems]);
 
-    return { listaOAs: oasCalculados, analisisPreguntas: preguntasArr };
-  }, [resultados, numPreguntas, pauta, opciones, totalAlumnos, cortes]);
+  const filasOrdenadas = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    const filtradas = resultados.filter(
+      (r) =>
+        !q ||
+        (r.nombre || '').toLowerCase().includes(q) ||
+        (r.rut || '').toLowerCase().includes(q) ||
+        (r.curso || '').toLowerCase().includes(q)
+    );
 
-  // --- PREGUNTAS ORDENADAS PARA EL GRÁFICO ---
-  const preguntasOrdenadas = useMemo(() => {
-    const copia = [...analisisPreguntas];
-    if (ordenItems === 'asc') return copia.sort((a, b) => a.pctLogro - b.pctLogro);
-    if (ordenItems === 'desc') return copia.sort((a, b) => b.pctLogro - a.pctLogro);
-    return copia.sort((a, b) => a.numero - b.numero);
-  }, [analisisPreguntas, ordenItems]);
-
-  // --- DATOS ORDENADOS PARA EL TABLERO MAESTRO (DE MAYOR A MENOR EN AMBOS EJES) ---
-  const { preguntasTableroMaestro, alumnosTableroMaestro } = useMemo(() => {
-    const colsOrdenadas = [...analisisPreguntas].sort((a, b) => {
-      if (a.anulada !== b.anulada) return a.anulada ? 1 : -1;
-      if (b.pctLogro !== a.pctLogro) return b.pctLogro - a.pctLogro;
-      return a.numero - b.numero;
-    });
-
-    const filasOrdenadas = [...resultados].sort((a, b) => {
-      const diffPct = Number(b.porcentaje || 0) - Number(a.porcentaje || 0);
-      if (diffPct !== 0) return diffPct;
-      const diffPts = Number(b.puntaje || 0) - Number(a.puntaje || 0);
-      if (diffPts !== 0) return diffPts;
-      return (a.nombre || '').localeCompare(b.nombre || '', 'es', { sensitivity: 'base' });
-    });
-
-    return {
-      preguntasTableroMaestro: colsOrdenadas,
-      alumnosTableroMaestro: filasOrdenadas
-    };
-  }, [analisisPreguntas, resultados]);
-
-  // --- CALCULAR % LOGRO POR CADA OA PARA CADA ESTUDIANTE (PONDERADO POR PUNTAJE) ---
-  const calcularLogroAlumnoEnOA = (alumno, oaObj, respuestasOverride = null) => {
-    const mapaResp = respuestasOverride || alumno.respuestas || {};
-    let puntosObtenidos = 0;
-    let puntosTotales = 0;
-
-    oaObj.preguntas.forEach((numP) => {
-      const itemPauta = pauta[numP];
-      const clavesValidas = obtenerClavesItem(itemPauta);
-      const pts = obtenerPuntajeItem(itemPauta);
-      if (pts > 0 && clavesValidas.length > 0) {
-        puntosTotales += pts;
-        if (clavesValidas.includes(mapaResp[numP])) {
-          puntosObtenidos += pts;
-        }
+    return [...filtradas].sort((a, b) => {
+      let valA;
+      let valB;
+      if (ordenTabla.col.startsWith('oa_')) {
+        const cod = ordenTabla.col.replace('oa_', '');
+        const oaObj = listaOAs.find((x) => x.oa === cod);
+        valA = oaObj ? calcularLogroAlumnoEnOA(a, oaObj) : 0;
+        valB = oaObj ? calcularLogroAlumnoEnOA(b, oaObj) : 0;
+      } else if (ordenTabla.col === 'nombre') {
+        valA = (a.nombre || '').toLowerCase();
+        valB = (b.nombre || '').toLowerCase();
+      } else if (ordenTabla.col === 'curso') {
+        valA = (a.curso || '').toLowerCase();
+        valB = (b.curso || '').toLowerCase();
+      } else if (ordenTabla.col === 'puntaje') {
+        valA = Number(a.puntaje || 0);
+        valB = Number(b.puntaje || 0);
+      } else if (ordenTabla.col === 'porcentaje') {
+        valA = Number(a.porcentaje || 0);
+        valB = Number(b.porcentaje || 0);
+      } else {
+        valA = Number(a.nota || 1);
+        valB = Number(b.nota || 1);
       }
-    });
-    return puntosTotales > 0 ? Math.round((puntosObtenidos / puntosTotales) * 100) : 0;
-  };
 
-  // --- ORDENAMIENTO DE LA NÓMINA INDIVIDUAL ---
-  const toggleOrdenTabla = (col) => {
+      if (valA < valB) return ordenTabla.dir === 'asc' ? -1 : 1;
+      if (valA > valB) return ordenTabla.dir === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [resultados, busqueda, ordenTabla, listaOAs]);
+
+  const alternarOrdenColumna = (col) => {
     setOrdenTabla((prev) => ({
       col,
       dir: prev.col === col && prev.dir === 'asc' ? 'desc' : 'asc'
     }));
   };
 
-  const alumnosFiltradosYOrdenados = useMemo(() => {
-    return resultados
-      .filter((r) =>
-        r.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-        r.rut.toLowerCase().includes(busqueda.toLowerCase()) ||
-        (r.curso || '').toLowerCase().includes(busqueda.toLowerCase())
-      )
-      .sort((a, b) => {
-        let cmp = 0;
-        if (ordenTabla.col === 'nombre') cmp = a.nombre.localeCompare(b.nombre);
-        else if (ordenTabla.col === 'curso') cmp = (a.curso || '').localeCompare(b.curso || '');
-        else if (ordenTabla.col === 'puntaje') cmp = Number(a.puntaje) - Number(b.puntaje);
-        else if (ordenTabla.col === 'porcentaje') cmp = Number(a.porcentaje) - Number(b.porcentaje);
-        else if (ordenTabla.col === 'nota') cmp = Number(a.nota) - Number(b.nota);
-        else if (ordenTabla.col.startsWith('oa_')) {
-          const oaNombre = ordenTabla.col.replace('oa_', '');
-          const oaObj = listaOAs.find((o) => o.oa === oaNombre);
-          if (oaObj) {
-            cmp = calcularLogroAlumnoEnOA(a, oaObj) - calcularLogroAlumnoEnOA(b, oaObj);
-          }
-        }
-        return ordenTabla.dir === 'asc' ? cmp : -cmp;
-      });
-  }, [resultados, busqueda, ordenTabla, listaOAs]);
+  const renderIconoOrden = (col) => {
+    if (ordenTabla.col !== col) return <ArrowUpDown size={13} style={{ opacity: 0.45 }} />;
+    return ordenTabla.dir === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />;
+  };
 
-  // --- ABRIR MODAL DE ESTUDIANTE Y PREPARAR EDICIÓN ---
-  const abrirModalEstudiante = (al) => {
-    setModalAlumno(al);
-    setRespuestasEditadas({ ...(al.respuestas || {}) });
+  const exportarExcel = () => {
+    const filas = filasOrdenadas.map((r) => {
+      const cat = clasificarDesempeno(r.porcentaje);
+      const filaObj = {
+        RUT: r.rut,
+        Estudiante: r.nombre,
+        Curso: r.curso || '',
+        Puntaje: r.puntaje,
+        Total: r.total,
+        Logro_Pct: r.porcentaje,
+        Nota: Number(r.nota).toFixed(1),
+        Grupo_Desempeno: cat.label
+      };
+      listaOAs.forEach((oaObj) => {
+        filaObj[`OA_${oaObj.oa}_Pct`] = calcularLogroAlumnoEnOA(r, oaObj);
+      });
+      for (let p = 1; p <= numPreguntas; p++) {
+        filaObj[`P${p}`] = r.respuestas?.[p] || '-';
+      }
+      return filaObj;
+    });
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(filas);
+    XLSX.utils.book_append_sheet(wb, ws, 'Resultados');
+    XLSX.writeFile(wb, `Analisis_${(config.tituloPrueba || 'Evaluacion').replace(/\s+/g, '_')}.xlsx`);
+  };
+
+  const abrirModalAlumno = (alumno) => {
+    setModalAlumno(alumno);
+    setRespuestasEditadas({ ...(alumno.respuestas || {}) });
     setEditandoRespuestas(false);
     setZoomImagen(false);
   };
 
-  const guardarCambiosEstudiante = async () => {
-    if (!modalAlumno || !onActualizarRespuesta || !puedeEditar) return;
+  const guardarCambiosAlumno = async () => {
+    if (!modalAlumno || !onActualizarRespuesta) return;
     setGuardandoEdicion(true);
     const actualizado = await onActualizarRespuesta(modalAlumno.id, respuestasEditadas);
     setGuardandoEdicion(false);
-
     if (actualizado) {
       setModalAlumno((prev) => ({
         ...prev,
@@ -357,630 +393,292 @@ export default function AnalisisPanel({
     }
   };
 
-  // --- EXPORTAR EXCEL COMPLETO ---
-  const exportarExcel = () => {
-    if (resultados.length === 0) return;
+  const itemActivoModal = modalItemNum !== null
+    ? datosItems.find((d) => d.numero === modalItemNum) || null
+    : null;
 
-    const hojaAlumnos = alumnosFiltradosYOrdenados.map((r) => {
-      const des = clasificarDesempeno(r.porcentaje);
-      const fila = {
-        Estudiante: r.nombre,
-        RUT: r.rut,
-        Curso: r.curso || '-',
-        Puntaje: `${r.puntaje}/${r.total}`,
-        '% Logro': Number(r.porcentaje),
-        Nota: Number(r.nota).toFixed(1),
-        Desempeño: des.label
-      };
-      listaOAs.forEach((oa) => {
-        fila[`% ${oa.oa}`] = calcularLogroAlumnoEnOA(r, oa);
-      });
-      for (let p = 1; p <= numPreguntas; p++) {
-        fila[`P${p}`] = (r.respuestas && r.respuestas[p]) || '-';
-      }
-      return fila;
-    });
-
-    const hojaItems = analisisPreguntas.map((it) => {
-      const fila = {
-        Pregunta: `P${it.numero}`,
-        'Clave Correcta': it.correcta,
-        Puntaje: it.puntajeItem,
-        OA: it.oa,
-        '% Logro': it.anulada ? 'ANULADA' : it.pctLogro,
-        Aciertos: it.aciertos
-      };
-      opciones.forEach((op) => {
-        fila[`Alt ${op}`] = it.porOpcion[op]?.length || 0;
-      });
-      fila['Omitidas'] = it.omitidasList.length;
-      fila['Dobles'] = it.doblesList.length;
-      return fila;
-    });
-
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaAlumnos), 'Nomina_Resultados');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaItems), 'Logro_Por_Pregunta');
-    XLSX.writeFile(wb, `Reporte_${(config.tituloPrueba || 'Evaluacion').replace(/\s+/g, '_')}.xlsx`);
-  };
-
-  if (totalAlumnos === 0) {
-    return (
-      <div style={{ background: '#ffffff', padding: '44px 24px', borderRadius: '14px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
-        <BarChart3 size={44} color="#94a3b8" style={{ marginBottom: '12px' }} />
-        <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', color: '#0f172a' }}>Aún no hay resultados escaneados</h3>
-        <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>
-          Sube las hojas de respuestas o el PDF escaneado en la pestaña <strong>Escanear Hojas</strong> para visualizar el panel interactivo.
-        </p>
-      </div>
-    );
-  }
-
-  const itemActivoModal = modalItemNum ? analisisPreguntas.find((it) => it.numero === modalItemNum) : null;
-
-  const IconoOrden = ({ col }) => {
-    if (ordenTabla.col !== col) return <ArrowUpDown size={12} color="#94a3b8" />;
-    return ordenTabla.dir === 'asc' ? <ArrowUp size={12} color="#2563eb" /> : <ArrowDown size={12} color="#2563eb" />;
-  };
-
-  const renderFilaBarraApilada = (fila, destacar = false) => (
-    <div key={fila.titulo} style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: '14px', fontWeight: destacar ? '800' : '700', color: '#0f172a' }}>
-          {fila.titulo}
-        </span>
-        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '600' }}>
-          {fila.total} estudiante{fila.total === 1 ? '' : 's'}
-        </span>
-      </div>
-      <div
-        style={{
-          display: 'flex',
-          width: '100%',
-          height: '32px',
-          borderRadius: '8px',
-          overflow: 'hidden',
-          background: '#f1f5f9',
-          boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.06)'
-        }}
-      >
-        {fila.segmentos.map((seg) => {
-          if (seg.cant === 0) return null;
-          return (
-            <div
-              key={seg.id}
-              style={{
-                width: `${seg.pct}%`,
-                background: seg.color,
-                color: seg.textColor,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '11.5px',
-                fontWeight: '800',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                padding: '0 4px',
-                transition: 'width 0.3s ease'
-              }}
-              title={`${seg.label}: ${seg.pct}% (${seg.cant} estudiantes)`}
-            >
-              {seg.pct >= 8 ? `${seg.pct}% (${seg.cant})` : seg.pct >= 4 ? `${seg.cant}` : ''}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
+  const imagenAlumnoModal = obtenerImagenHoja(modalAlumno);
+  const imagenDudaModal = dudaActiva ? obtenerImagenHoja(dudaActiva.alumno) : null;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
-      {/* 1. CABECERA CONSOLIDADA Y 3 TARJETAS SUPERIORES */}
-      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '14px', marginBottom: '20px' }}>
-          <div>
-            <h2 style={{ margin: 0, fontSize: '22px', fontWeight: '800', color: '#0f172a' }}>
-              {config.tituloPrueba || 'Evaluación'}
-            </h2>
-            <p style={{ margin: '4px 0 0 0', fontSize: '13.5px', color: '#64748b' }}>
-              Consolidado General — <strong>{totalAlumnos} alumnos evaluados</strong> &nbsp;|&nbsp; Exigencia: <strong>{config.exigencia || 60}%</strong> &nbsp;|&nbsp; Escala: <strong>{Number(config.notaMin || 1).toFixed(1)} - {Number(config.notaMax || 7).toFixed(1)}</strong>
-            </p>
-          </div>
-
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            <button
-              onClick={() => setMostrarConfigCortes(!mostrarConfigCortes)}
-              style={{
-                background: '#f8fafc',
-                color: '#334155',
-                border: '1px solid #cbd5e1',
-                borderRadius: '8px',
-                padding: '8px 12px',
-                fontSize: '12.5px',
-                fontWeight: '600',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px'
-              }}
-            >
-              <SlidersHorizontal size={15} />
-              Límites de Logro
-            </button>
-
-            <button
-              onClick={exportarExcel}
-              style={{
-                background: '#16a34a',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '8px',
-                padding: '8px 14px',
-                fontSize: '12.5px',
-                fontWeight: '700',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px'
-              }}
-            >
-              <Download size={15} />
-              Exportar Excel
-            </button>
-          </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      {/* BARRA SUPERIOR DE ACCIONES */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', background: '#ffffff', padding: '16px 20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: '19px', fontWeight: '800', color: '#0f172a' }}>
+            Análisis de Resultados — {config.tituloPrueba}
+          </h2>
+          <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#64748b' }}>
+            Haz clic en los gráficos de desempeño o en cada pregunta (P1–P{numPreguntas}) para inspeccionar estudiantes y distractores.
+          </p>
         </div>
 
-        {/* Panel editable de límites de los 5 niveles */}
-        {mostrarConfigCortes && (
-          <div style={{ background: '#f8fafc', padding: '14px', borderRadius: '10px', border: '1px solid #cbd5e1', marginBottom: '18px', display: 'flex', flexWrap: 'wrap', gap: '14px', alignItems: 'center', fontSize: '12.5px' }}>
-            <strong style={{ color: '#0f172a' }}>Cortes mínimos (%):</strong>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ color: '#10b981', fontWeight: '700' }}>Muy Bueno ≥</span>
-              <input type="number" value={cortes.muyBueno} onChange={(e) => setCortes({ ...cortes, muyBueno: Number(e.target.value) })} style={{ width: '50px', padding: '4px', borderRadius: '5px', border: '1px solid #cbd5e1' }} />%
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ color: '#3b82f6', fontWeight: '700' }}>Bueno ≥</span>
-              <input type="number" value={cortes.bueno} onChange={(e) => setCortes({ ...cortes, bueno: Number(e.target.value) })} style={{ width: '50px', padding: '4px', borderRadius: '5px', border: '1px solid #cbd5e1' }} />%
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ color: '#eab308', fontWeight: '700' }}>Aceptable ≥</span>
-              <input type="number" value={cortes.aceptable} onChange={(e) => setCortes({ ...cortes, aceptable: Number(e.target.value) })} style={{ width: '50px', padding: '4px', borderRadius: '5px', border: '1px solid #cbd5e1' }} />%
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ color: '#f97316', fontWeight: '700' }}>Insuficiente ≥</span>
-              <input type="number" value={cortes.insuficiente} onChange={(e) => setCortes({ ...cortes, insuficiente: Number(e.target.value) })} style={{ width: '50px', padding: '4px', borderRadius: '5px', border: '1px solid #cbd5e1' }} />%
-            </label>
-            <span style={{ color: '#ef4444', fontWeight: '700' }}>(Muy Insuficiente: 0 - {cortes.insuficiente - 1}%)</span>
-          </div>
-        )}
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+          {puedeEditar && (
+            <button
+              type="button"
+              onClick={abrirModalDudas}
+              disabled={pendientesDoblesYBlancas.length === 0}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 13px',
+                borderRadius: '8px',
+                border: `1px solid ${pendientesDoblesYBlancas.length > 0 ? '#f59e0b' : '#cbd5e1'}`,
+                background: pendientesDoblesYBlancas.length > 0 ? '#fef3c7' : '#f8fafc',
+                color: pendientesDoblesYBlancas.length > 0 ? '#92400e' : '#94a3b8',
+                fontWeight: '700',
+                fontSize: '12.5px',
+                cursor: pendientesDoblesYBlancas.length > 0 ? 'pointer' : 'not-allowed'
+              }}
+            >
+              <AlertTriangle size={15} />
+              Revisar preguntas dobles y blancas ({pendientesDoblesYBlancas.length})
+            </button>
+          )}
 
-        {/* 3 Tarjetas Principales */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
-          <div style={{ background: '#f8fafc', padding: '18px', borderRadius: '12px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
-            <div style={{ fontSize: '12px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              RINDIERON
-            </div>
-            <div style={{ fontSize: '34px', fontWeight: '800', color: '#0f172a', marginTop: '4px' }}>
-              {totalAlumnos}
-            </div>
-          </div>
+          <button
+            type="button"
+            onClick={() => setMostrarConfigCortes(!mostrarConfigCortes)}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: '6px',
+              padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1',
+              background: mostrarConfigCortes ? '#eff6ff' : '#ffffff', color: '#334155',
+              fontWeight: '700', fontSize: '12.5px', cursor: 'pointer'
+            }}
+          >
+            <SlidersHorizontal size={15} /> Límites de Logro
+          </button>
 
-          <div style={{ background: '#f8fafc', padding: '18px', borderRadius: '12px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
-            <div style={{ fontSize: '12px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              PROMEDIO DE NOTAS
-            </div>
-            <div style={{ fontSize: '34px', fontWeight: '800', color: Number(promedioNota) >= notaAprob ? '#16a34a' : '#dc2626', marginTop: '4px' }}>
-              {promedioNota}
-            </div>
-          </div>
-
-          <div style={{ background: '#f8fafc', padding: '18px', borderRadius: '12px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
-            <div style={{ fontSize: '12px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              PORCENTAJE DE LOGRO
-            </div>
-            <div style={{ fontSize: '34px', fontWeight: '800', color: '#2563eb', marginTop: '4px' }}>
-              {promedioLogro}%
-            </div>
-          </div>
+          <button
+            type="button"
+            onClick={exportarExcel}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: '6px',
+              padding: '8px 14px', borderRadius: '8px', border: 'none',
+              background: '#16a34a', color: '#ffffff', fontWeight: '700',
+              fontSize: '12.5px', cursor: 'pointer'
+            }}
+          >
+            <Download size={15} /> Exportar Excel
+          </button>
         </div>
       </div>
 
-      {/* 1B. GRÁFICO COMPARATIVO DE CURSOS (SOLO EN CONSOLIDADO DE NIVEL COMPLETO) */}
-      {esVistaNivelCompleto && comparativoCursos.cantidadCursos > 1 && (
-        <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '18px' }}>
-            <div>
-              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase' }}>
-                Comparativo de Desempeño por Curso
-              </h3>
-              <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#64748b' }}>
-                Distribución porcentual y cantidad de estudiantes por nivel de logro en cada curso
-              </p>
-            </div>
-
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', fontSize: '11.5px' }}>
-              {[
-                { label: 'Muy Insuficiente', color: '#ec4899' },
-                { label: 'Insuficiente', color: '#fca5a5' },
-                { label: 'Aceptable', color: '#facc15' },
-                { label: 'Bueno', color: '#86efac' },
-                { label: 'Muy Bueno', color: '#059669' }
-              ].map((ley) => (
-                <span key={ley.label} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontWeight: '600', color: '#334155' }}>
-                  <span style={{ width: '11px', height: '11px', borderRadius: '3px', background: ley.color }} />
-                  {ley.label}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            {comparativoCursos.filas.map((fila) => renderFilaBarraApilada(fila, false))}
-            <div style={{ borderTop: '2px dashed #cbd5e1', paddingTop: '12px', marginTop: '4px' }}>
-              {renderFilaBarraApilada(comparativoCursos.consolidado, true)}
-            </div>
-          </div>
+      {/* CONFIGURADOR DE LÍMITES DE DESEMPEÑO */}
+      {mostrarConfigCortes && (
+        <div style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '12px', padding: '16px 20px', display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'center' }}>
+          <strong style={{ fontSize: '13px', color: '#0f172a' }}>Cortes de Logro (%):</strong>
+          <label style={{ fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            Muy Bueno desde:
+            <input type="number" min="1" max="100" value={cortes.muyBueno} onChange={(e) => setCortes({ ...cortes, muyBueno: Number(e.target.value) })} style={{ width: '54px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />%
+          </label>
+          <label style={{ fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            Bueno desde:
+            <input type="number" min="1" max="100" value={cortes.bueno} onChange={(e) => setCortes({ ...cortes, bueno: Number(e.target.value) })} style={{ width: '54px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />%
+          </label>
+          <label style={{ fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            Aceptable desde:
+            <input type="number" min="1" max="100" value={cortes.aceptable} onChange={(e) => setCortes({ ...cortes, aceptable: Number(e.target.value) })} style={{ width: '54px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />%
+          </label>
+          <label style={{ fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            Insuficiente desde:
+            <input type="number" min="0" max="100" value={cortes.insuficiente} onChange={(e) => setCortes({ ...cortes, insuficiente: Number(e.target.value) })} style={{ width: '54px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />%
+          </label>
         </div>
       )}
 
-      {/* 2. PORCENTAJE DE LOGRO POR OBJETIVO DE APRENDIZAJE (OA) + COMPARATIVO DE BARRAS */}
-      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
-        <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase' }}>
-          Porcentaje de Logro por Objetivo de Aprendizaje (OA)
-        </h3>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px', marginBottom: '24px' }}>
-          {listaOAs.map((oaObj) => (
-            <div key={oaObj.oa} style={{ padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#f8fafc', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '10px' }}>
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                  <span style={{ background: oaObj.color, color: '#ffffff', padding: '3px 10px', borderRadius: '6px', fontSize: '12.5px', fontWeight: '800' }}>
-                    {oaObj.oa}
-                  </span>
-                  <span style={{ fontSize: '22px', fontWeight: '800', color: oaObj.color }}>
-                    {oaObj.promedioLogro}%
-                  </span>
-                </div>
-                {oaObj.descripcion && (
-                  <p style={{ margin: '6px 0', fontSize: '12.5px', color: '#334155', lineHeight: '1.45' }}>
-                    {oaObj.descripcion}
-                  </p>
-                )}
-              </div>
-              <div style={{ fontSize: '12px', color: '#64748b', borderTop: '1px solid #e2e8f0', paddingTop: '8px' }}>
-                Preguntas: <strong>{oaObj.preguntas.join(', ')}</strong> ({oaObj.preguntas.length} ítems)
-              </div>
-            </div>
-          ))}
+      {/* TARJETAS KPI */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '14px' }}>
+        <div style={{ background: '#ffffff', padding: '18px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+          <div style={{ fontSize: '12px', fontWeight: '700', color: '#64748b' }}>PROMEDIO NOTA</div>
+          <div style={{ fontSize: '28px', fontWeight: '800', color: Number(promedioNota) >= notaAprob ? '#16a34a' : '#dc2626', marginTop: '4px' }}>{promedioNota}</div>
         </div>
-
-        <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '18px' }}>
-          <div style={{ fontSize: '13px', fontWeight: '800', color: '#475569', textTransform: 'uppercase', marginBottom: '12px' }}>
-            Comparativo de Logro entre OAs
-          </div>
-          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-around', height: '190px', padding: '20px 16px 0 16px', background: '#f8fafc', borderRadius: '10px', borderBottom: '2px solid #cbd5e1' }}>
-            {listaOAs.map((oaObj) => (
-              <div key={oaObj.oa} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, maxWidth: '180px' }}>
-                <span style={{ fontSize: '13px', fontWeight: '800', color: '#0f172a', marginBottom: '6px' }}>
-                  {oaObj.promedioLogro}%
-                </span>
-                <div
-                  style={{
-                    width: '70%',
-                    height: `${Math.max(8, Math.round((oaObj.promedioLogro / 100) * 145))}px`,
-                    background: oaObj.color,
-                    borderRadius: '8px 8px 0 0',
-                    transition: 'height 0.3s ease'
-                  }}
-                />
-              </div>
-            ))}
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-around', padding: '8px 16px 0 16px' }}>
-            {listaOAs.map((oaObj) => (
-              <div key={oaObj.oa} style={{ flex: 1, maxWidth: '180px', textAlign: 'center', fontSize: '13px', fontWeight: '700', color: '#334155' }}>
-                {oaObj.oa}
-              </div>
-            ))}
-          </div>
+        <div style={{ background: '#ffffff', padding: '18px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+          <div style={{ fontSize: '12px', fontWeight: '700', color: '#64748b' }}>LOGRO PROMEDIO</div>
+          <div style={{ fontSize: '28px', fontWeight: '800', color: '#2563eb', marginTop: '4px' }}>{promedioLogro}%</div>
+        </div>
+        <div style={{ background: '#ffffff', padding: '18px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+          <div style={{ fontSize: '12px', fontWeight: '700', color: '#64748b' }}>APROBACIÓN</div>
+          <div style={{ fontSize: '28px', fontWeight: '800', color: '#0f172a', marginTop: '4px' }}>{pctAprobacion}%</div>
+        </div>
+        <div style={{ background: '#ffffff', padding: '18px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+          <div style={{ fontSize: '12px', fontWeight: '700', color: '#64748b' }}>HOJAS CORREGIDAS</div>
+          <div style={{ fontSize: '28px', fontWeight: '800', color: '#0f172a', marginTop: '4px' }}>{totalAlumnos}</div>
         </div>
       </div>
 
-      {/* 3. GRUPOS DE DESEMPEÑO (5 BARRAS INTERACTIVAS) */}
-      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
-          <div>
-            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase' }}>
-              Grupos de Desempeño
-            </h3>
-            <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#2563eb', fontWeight: '600' }}>
-              Haz clic en una barra para ver la nómina de estudiantes del grupo
-            </p>
-          </div>
-
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', fontSize: '11.5px' }}>
-            {gruposDesempeno.map((g) => (
-              <span key={g.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontWeight: '600', color: '#334155' }}>
-                <span style={{ width: '10px', height: '10px', borderRadius: '999px', background: g.color }} />
-                {g.label} ({g.rango})
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-around', height: '210px', padding: '24px 12px 0 12px', background: '#f8fafc', borderRadius: '10px', borderBottom: '2px solid #cbd5e1' }}>
-          {gruposDesempeno.map((g) => {
-            const cant = g.estudiantes.length;
-            const pctGrupo = totalAlumnos > 0 ? Math.round((cant / totalAlumnos) * 100) : 0;
-            const alturaPx = Math.round((cant / maxAlumnosGrupo) * 155);
-
-            return (
-              <div
-                key={g.id}
-                onClick={() => setModalGrupo(g)}
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  width: '18%',
-                  cursor: 'pointer'
-                }}
-                title={`Clic para ver los ${cant} estudiantes en ${g.label}`}
-              >
-                <span style={{ fontSize: '12.5px', fontWeight: '800', color: '#0f172a', marginBottom: '6px', textAlign: 'center' }}>
-                  {cant} ({pctGrupo}%)
-                </span>
-                <div
-                  style={{
-                    width: '65%',
-                    maxWidth: '90px',
-                    height: `${Math.max(8, alturaPx)}px`,
-                    background: g.color,
-                    borderRadius: '8px 8px 0 0',
-                    boxShadow: '0 2px 4px rgba(0,0,0,0.08)'
-                  }}
-                />
-              </div>
-            );
-          })}
-        </div>
-
-        <div style={{ display: 'flex', justifyContent: 'space-around', padding: '10px 12px 0 12px' }}>
+      {/* GRÁFICO DE GRUPOS DE DESEMPEÑO (CLICABLE) */}
+      <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+        <h3 style={{ margin: '0 0 14px 0', fontSize: '16px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <BarChart3 size={18} color="#2563eb" /> Grupos de Desempeño (Haz clic en un grupo para ver los estudiantes)
+        </h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '12px' }}>
           {gruposDesempeno.map((g) => (
             <div
               key={g.id}
               onClick={() => setModalGrupo(g)}
-              style={{ width: '18%', textAlign: 'center', cursor: 'pointer' }}
+              style={{
+                padding: '14px', borderRadius: '10px', border: `1px solid ${g.color}`,
+                background: g.bg, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '4px'
+              }}
             >
-              <div style={{ fontSize: '12.5px', fontWeight: '700', color: '#1e293b' }}>{g.label}</div>
-              <div style={{ fontSize: '11px', color: '#64748b' }}>{g.rango}</div>
+              <div style={{ fontSize: '12px', fontWeight: '800', color: g.text }}>{g.label}</div>
+              <div style={{ fontSize: '11px', color: g.text, opacity: 0.85 }}>{g.rango}</div>
+              <div style={{ fontSize: '22px', fontWeight: '900', color: g.text, marginTop: '4px' }}>
+                {g.cantidad} <span style={{ fontSize: '13px', fontWeight: '700' }}>({g.porcentajeCurso}%)</span>
+              </div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* 4. PORCENTAJE DE LOGRO POR PREGUNTA + BOTÓN VER TABLERO MAESTRO */}
-      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
-          <div>
-            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase' }}>
-              Porcentaje de Logro por Pregunta
-            </h3>
-            <p style={{ margin: '4px 0 0 0', fontSize: '12.5px', color: '#64748b' }}>
-              Coloreado por nivel de logro. <strong>Haz clic en cualquier barra</strong> para ver el detalle de distractores y alternativas.
-            </p>
+      {/* LOGRO POR OA */}
+      {listaOAs.length > 0 && (
+        <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+          <h3 style={{ margin: '0 0 14px 0', fontSize: '16px', fontWeight: '800' }}>Logro por Objetivo de Aprendizaje (OA)</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+            {listaOAs.map((oaObj) => (
+              <div key={oaObj.oa} style={{ padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0', background: '#f8fafc' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '800', fontSize: '14px', marginBottom: '6px' }}>
+                  <span>{oaObj.oa}</span>
+                  <span style={{ color: oaObj.color }}>{oaObj.promedioLogro}%</span>
+                </div>
+                <div style={{ width: '100%', height: '8px', background: '#e2e8f0', borderRadius: '999px', overflow: 'hidden', marginBottom: '6px' }}>
+                  <div style={{ width: `${oaObj.promedioLogro}%`, height: '100%', background: oaObj.color }} />
+                </div>
+                <div style={{ fontSize: '11.5px', color: '#64748b' }}>
+                  Ítems: {oaObj.preguntas.join(', ')}
+                </div>
+              </div>
+            ))}
           </div>
+        </div>
+      )}
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-            <button
-              onClick={() => setModalTableroMaestro(true)}
-              style={{
-                background: '#1e3a8a',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '8px',
-                padding: '8px 14px',
-                fontSize: '12.5px',
-                fontWeight: '700',
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                boxShadow: '0 2px 4px rgba(30,58,138,0.2)'
-              }}
-            >
-              <Table2 size={15} />
-              Ver Tablero Maestro
+      {/* GRÁFICO DE LOGRO POR PREGUNTA (CLICABLE + ORDENABLE) */}
+      <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '14px' }}>
+          <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800' }}>
+            Porcentaje de Logro por Pregunta (Haz clic para ver distractores)
+          </h3>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button type="button" onClick={() => setOrdenItems('numero')} style={{ padding: '5px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', background: ordenItems === 'numero' ? '#0f172a' : '#fff', color: ordenItems === 'numero' ? '#fff' : '#334155', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>
+              Orden P1..P{numPreguntas}
             </button>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', padding: '4px', borderRadius: '10px' }}>
-              <span style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', padding: '0 8px' }}>Ordenar:</span>
-              {[
-                { id: 'numero', label: 'N° Pregunta' },
-                { id: 'asc', label: 'Menor a Mayor' },
-                { id: 'desc', label: 'Mayor a Menor' }
-              ].map((btn) => (
-                <button
-                  key={btn.id}
-                  onClick={() => setOrdenItems(btn.id)}
-                  style={{
-                    padding: '6px 12px',
-                    borderRadius: '8px',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: '12.5px',
-                    fontWeight: '700',
-                    background: ordenItems === btn.id ? '#ffffff' : 'transparent',
-                    color: ordenItems === btn.id ? '#2563eb' : '#475569',
-                    boxShadow: ordenItems === btn.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
-                  }}
-                >
-                  {btn.label}
-                </button>
-              ))}
-            </div>
+            <button type="button" onClick={() => setOrdenItems('asc')} style={{ padding: '5px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', background: ordenItems === 'asc' ? '#0f172a' : '#fff', color: ordenItems === 'asc' ? '#fff' : '#334155', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>
+              Menor a Mayor %
+            </button>
+            <button type="button" onClick={() => setOrdenItems('desc')} style={{ padding: '5px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', background: ordenItems === 'desc' ? '#0f172a' : '#fff', color: ordenItems === 'desc' ? '#fff' : '#334155', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>
+              Mayor a Menor %
+            </button>
           </div>
         </div>
 
-        <div style={{ overflowX: 'auto', paddingBottom: '8px' }}>
-          <div style={{ minWidth: `${Math.max(650, numPreguntas * 32)}px` }}>
-            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', height: '210px', padding: '24px 8px 0 8px', background: '#f8fafc', borderRadius: '10px', borderBottom: '2px solid #cbd5e1', gap: '4px' }}>
-              {preguntasOrdenadas.map((it) => (
-                <div
-                  key={it.numero}
-                  onClick={() => {
-                    setModalItemNum(it.numero);
-                    setOpcionSeleccionadaItem(null);
-                  }}
-                  style={{
-                    flex: 1,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    cursor: 'pointer',
-                    minWidth: '24px'
-                  }}
-                  title={it.anulada ? `P${it.numero}: ANULADA (0 pts)` : `P${it.numero}: ${it.pctLogro}% logro (Clave: ${it.correcta}) - Clic para detalle`}
-                >
-                  <span style={{ fontSize: '10px', fontWeight: '800', color: '#334155', marginBottom: '4px' }}>
-                    {it.anulada ? 'ANUL' : `${it.pctLogro}%`}
-                  </span>
-                  <div
-                    style={{
-                      width: '78%',
-                      maxWidth: '28px',
-                      height: `${Math.max(6, Math.round((it.pctLogro / 100) * 160))}px`,
-                      background: it.colorInfo.color,
-                      borderRadius: '5px 5px 0 0',
-                      transition: 'height 0.25s ease'
-                    }}
-                  />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))', gap: '10px' }}>
+          {datosItems.map((it) => {
+            const colorBarra = it.anulada ? '#94a3b8' : it.pctLogro >= 70 ? '#16a34a' : it.pctLogro >= 50 ? '#2563eb' : '#dc2626';
+            return (
+              <div
+                key={it.numero}
+                onClick={() => {
+                  setModalItemNum(it.numero);
+                  setOpcionSeleccionadaItem(null);
+                }}
+                style={{
+                  padding: '10px', borderRadius: '10px', border: '1px solid #e2e8f0',
+                  background: it.anulada ? '#f1f5f9' : '#ffffff', cursor: 'pointer', textAlign: 'center'
+                }}
+              >
+                <div style={{ fontSize: '12px', fontWeight: '800', color: '#334155' }}>P{it.numero}</div>
+                <div style={{ fontSize: '17px', fontWeight: '900', color: colorBarra, margin: '3px 0' }}>
+                  {it.anulada ? 'ANUL' : `${it.pctLogro}%`}
                 </div>
-              ))}
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px 0 8px', gap: '4px' }}>
-              {preguntasOrdenadas.map((it) => (
-                <div
-                  key={it.numero}
-                  onClick={() => {
-                    setModalItemNum(it.numero);
-                    setOpcionSeleccionadaItem(null);
-                  }}
-                  style={{ flex: 1, textAlign: 'center', fontSize: '11px', fontWeight: '700', color: '#475569', cursor: 'pointer', minWidth: '24px' }}
-                >
-                  P{it.numero}
-                </div>
-              ))}
-            </div>
-          </div>
+                <div style={{ fontSize: '11px', color: '#64748b' }}>Clave: <strong>{it.claveTexto}</strong></div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* 5. NÓMINA DE RESULTADOS INDIVIDUALES */}
-      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
-          <div>
-            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase' }}>
-              Nómina de Resultados Individuales
-            </h3>
-            <p style={{ margin: '4px 0 0 0', fontSize: '12.5px', color: '#2563eb', fontWeight: '600' }}>
-              Haz clic en el nombre de cualquier alumno para ver su hoja escaneada y respuestas
-            </p>
-          </div>
-
-          <div style={{ position: 'relative' }}>
+      {/* NÓMINA INDIVIDUAL ORDENABLE */}
+      <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
+          <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800' }}>
+            Resultados por Estudiante ({filasOrdenadas.length})
+          </h3>
+          <div style={{ position: 'relative', minWidth: '240px' }}>
             <Search size={15} color="#94a3b8" style={{ position: 'absolute', left: '10px', top: '9px' }} />
             <input
               type="text"
-              placeholder="Buscar estudiante o curso..."
+              placeholder="Buscar alumno o RUT..."
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              style={{ padding: '7px 12px 7px 32px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', minWidth: '230px' }}
+              style={{ width: '100%', padding: '7px 10px 7px 32px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }}
             />
           </div>
         </div>
 
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13.5px' }}>
-            <thead style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+            <thead style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
               <tr>
-                <th onClick={() => toggleOrdenTabla('nombre')} style={{ padding: '10px', textAlign: 'left', cursor: 'pointer' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>ESTUDIANTE <IconoOrden col="nombre" /></div>
+                <th onClick={() => alternarOrdenColumna('nombre')} style={{ padding: '10px', textAlign: 'left', cursor: 'pointer' }}>
+                  Estudiante {renderIconoOrden('nombre')}
                 </th>
-                <th onClick={() => toggleOrdenTabla('curso')} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>CURSO <IconoOrden col="curso" /></div>
+                <th onClick={() => alternarOrdenColumna('curso')} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
+                  Curso {renderIconoOrden('curso')}
                 </th>
-                <th onClick={() => toggleOrdenTabla('puntaje')} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>PUNTAJE <IconoOrden col="puntaje" /></div>
+                <th onClick={() => alternarOrdenColumna('puntaje')} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
+                  Puntaje {renderIconoOrden('puntaje')}
                 </th>
-                <th onClick={() => toggleOrdenTabla('porcentaje')} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>% LOGRO <IconoOrden col="porcentaje" /></div>
+                <th onClick={() => alternarOrdenColumna('porcentaje')} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
+                  % Logro {renderIconoOrden('porcentaje')}
                 </th>
-                <th onClick={() => toggleOrdenTabla('nota')} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>NOTA <IconoOrden col="nota" /></div>
+                <th onClick={() => alternarOrdenColumna('nota')} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
+                  Nota {renderIconoOrden('nota')}
                 </th>
-                <th style={{ padding: '10px', textAlign: 'center' }}>DESEMPEÑO</th>
+                <th style={{ padding: '10px', textAlign: 'center' }}>Grupo</th>
                 {listaOAs.map((oaObj) => (
-                  <th
-                    key={oaObj.oa}
-                    onClick={() => toggleOrdenTabla(`oa_${oaObj.oa}`)}
-                    style={{ padding: '10px', textAlign: 'center', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                      % {oaObj.oa} <IconoOrden col={`oa_${oaObj.oa}`} />
-                    </div>
+                  <th key={oaObj.oa} onClick={() => alternarOrdenColumna(`oa_${oaObj.oa}`)} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
+                    {oaObj.oa} {renderIconoOrden(`oa_${oaObj.oa}`)}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {alumnosFiltradosYOrdenados.map((al, idx) => {
-                const des = clasificarDesempeno(al.porcentaje);
-                const notaNum = Number(al.nota || 1.0);
+              {filasOrdenadas.map((r, idx) => {
+                const cat = clasificarDesempeno(r.porcentaje);
+                const imgHoja = obtenerImagenHoja(r);
                 return (
-                  <tr key={al.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '10px', fontWeight: '700' }}>
+                  <tr key={r.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '10px' }}>
                       <button
-                        onClick={() => abrirModalEstudiante(al)}
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          padding: 0,
-                          color: '#1e3a8a',
-                          fontWeight: '700',
-                          fontSize: '13.5px',
-                          cursor: 'pointer',
-                          textAlign: 'left',
-                          textDecoration: 'underline',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '6px'
-                        }}
+                        type="button"
+                        onClick={() => abrirModalAlumno(r)}
+                        style={{ background: 'none', border: 'none', padding: 0, color: '#1d4ed8', fontWeight: '700', textDecoration: 'underline', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                       >
-                        {al.nombre}
-                        {al.imagenProcesada && <Eye size={14} color="#64748b" title="Tiene hoja escaneada" />}
+                        {r.nombre}
+                        {imgHoja && <Eye size={14} color="#64748b" />}
                       </button>
                     </td>
-                    <td style={{ padding: '10px', textAlign: 'center', color: '#475569' }}>{al.curso || '-'}</td>
-                    <td style={{ padding: '10px', textAlign: 'center', fontWeight: '600' }}>{al.puntaje}/{al.total}</td>
-                    <td style={{ padding: '10px', textAlign: 'center', fontWeight: '700' }}>{Number(al.porcentaje).toFixed(1)}%</td>
-                    <td style={{ padding: '10px', textAlign: 'center', fontWeight: '800', fontSize: '14.5px', color: notaNum >= notaAprob ? '#16a34a' : '#dc2626' }}>
-                      {notaNum.toFixed(1)}
+                    <td style={{ padding: '10px', textAlign: 'center', color: '#475569' }}>{r.curso || '-'}</td>
+                    <td style={{ padding: '10px', textAlign: 'center', fontWeight: '600' }}>{r.puntaje}/{r.total}</td>
+                    <td style={{ padding: '10px', textAlign: 'center', fontWeight: '700' }}>{r.porcentaje}%</td>
+                    <td style={{ padding: '10px', textAlign: 'center', fontWeight: '800', color: Number(r.nota) >= notaAprob ? '#16a34a' : '#dc2626' }}>
+                      {Number(r.nota).toFixed(1)}
                     </td>
                     <td style={{ padding: '10px', textAlign: 'center' }}>
-                      <span style={{ background: des.bg, color: des.text, padding: '3px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: '700', whiteSpace: 'nowrap' }}>
-                        {des.label}
+                      <span style={{ padding: '3px 9px', borderRadius: '999px', fontSize: '11.5px', fontWeight: '700', background: cat.bg, color: cat.text }}>
+                        {cat.label}
                       </span>
                     </td>
-                    {listaOAs.map((oaObj) => {
-                      const pctOA = calcularLogroAlumnoEnOA(al, oaObj);
-                      return (
-                        <td key={oaObj.oa} style={{ padding: '10px', textAlign: 'center', fontWeight: '700', color: '#334155' }}>
-                          {pctOA}%
-                        </td>
-                      );
-                    })}
+                    {listaOAs.map((oaObj) => (
+                      <td key={oaObj.oa} style={{ padding: '10px', textAlign: 'center', fontWeight: '700' }}>
+                        {calcularLogroAlumnoEnOA(r, oaObj)}%
+                      </td>
+                    ))}
                   </tr>
                 );
               })}
@@ -990,629 +688,338 @@ export default function AnalisisPanel({
       </div>
 
       {/* ===================================================================== */}
-      {/* MODAL TABLERO MAESTRO (ORDENADO MAYOR A MENOR EN AMBOS EJES)          */}
+      {/* MODAL NUEVO: REVISAR PREGUNTAS DOBLES Y BLANCAS                        */}
       {/* ===================================================================== */}
-      {modalTableroMaestro && (
+      {modalDudasAbierto && dudaActiva && (
         <div
-          onClick={() => setModalTableroMaestro(false)}
+          onClick={() => setModalDudasAbierto(false)}
           style={{
-            position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.65)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '14px'
+            position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.72)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: '16px'
           }}
         >
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              background: '#ffffff', borderRadius: '16px', width: '98%', maxWidth: '1400px',
+              background: '#ffffff', borderRadius: '16px', width: '100%',
+              maxWidth: imagenDudaModal ? '1140px' : '640px',
               maxHeight: '92vh', display: 'flex', flexDirection: 'column',
-              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.3)', overflow: 'hidden'
+              overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.35)'
             }}
           >
-            <div style={{ padding: '16px 22px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+            {/* Cabecera del Modal de Dobles y Blancas */}
+            <div style={{ padding: '16px 22px', background: '#fffbeb', borderBottom: '1px solid #fde68a', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
               <div>
-                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Table2 size={20} color="#1e3a8a" />
-                  Tablero Maestro (Ordenado por Logro) — {config.tituloPrueba}
-                </h3>
-                <div style={{ fontSize: '12.5px', color: '#64748b', marginTop: '2px', display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
-                  <span><strong>{totalAlumnos}</strong> estudiantes (Mayor a menor logro ↓)</span>
-                  <span>Preguntas (Mayor a menor logro →)</span>
-                  <span style={{ color: '#16a34a', fontWeight: '700' }}>■ Correcta</span>
-                  <span style={{ color: '#dc2626', fontWeight: '700' }}>■ Incorrecta</span>
-                  <span style={{ color: '#64748b', fontWeight: '700' }}>■ Omitida (-)</span>
-                  <span style={{ color: '#d97706', fontWeight: '700' }}>■ Doble</span>
+                <div style={{ fontSize: '11.5px', fontWeight: '800', color: '#92400e', textTransform: 'uppercase' }}>
+                  Revisión de Dobles y Blancas • {pendientesDoblesYBlancas.length} pendiente(s) por confirmar
                 </div>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <button
-                  onClick={exportarExcel}
-                  style={{
-                    background: '#16a34a', color: '#ffffff', border: 'none', borderRadius: '8px',
-                    padding: '8px 14px', fontSize: '12.5px', fontWeight: '700', cursor: 'pointer',
-                    display: 'inline-flex', alignItems: 'center', gap: '6px'
-                  }}
-                >
-                  <Download size={15} /> Descargar Excel
-                </button>
-                <button
-                  onClick={() => setModalTableroMaestro(false)}
-                  style={{ background: '#f1f5f9', border: 'none', borderRadius: '8px', padding: '7px 10px', cursor: 'pointer' }}
-                >
-                  <X size={18} color="#475569" />
-                </button>
-              </div>
-            </div>
-
-            <div style={{ overflow: 'auto', flex: 1 }}>
-              <table style={{ borderCollapse: 'collapse', fontSize: '12px', width: '100%' }}>
-                <thead>
-                  <tr style={{ background: '#0f172a', color: '#ffffff', position: 'sticky', top: 0, zIndex: 3 }}>
-                    <th style={{ padding: '10px 12px', textAlign: 'left', position: 'sticky', left: 0, background: '#0f172a', zIndex: 4, minWidth: '215px', borderRight: '1px solid #334155' }}>
-                      Estudiante (Mayor a Menor Logro)
-                    </th>
-                    <th style={{ padding: '8px 6px', textAlign: 'center', minWidth: '52px', borderRight: '1px solid #334155' }}>Pts</th>
-                    <th style={{ padding: '8px 6px', textAlign: 'center', minWidth: '52px', borderRight: '1px solid #334155' }}>%</th>
-                    <th style={{ padding: '8px 6px', textAlign: 'center', minWidth: '52px', borderRight: '1px solid #334155' }}>Nota</th>
-                    {preguntasTableroMaestro.map((it) => (
-                      <th
-                        key={it.numero}
-                        style={{ padding: '6px 4px', textAlign: 'center', minWidth: '38px', borderLeft: '1px solid #1e293b' }}
-                        title={`P${it.numero} • Logro: ${it.pctLogro}% • Clave: ${it.correcta} (${it.puntajeItem} pts) • ${it.oa}`}
-                      >
-                        <div style={{ fontWeight: '800' }}>P{it.numero}</div>
-                        <div style={{ fontSize: '10px', color: it.anulada ? '#fca5a5' : '#93c5fd' }}>{it.correcta}</div>
-                      </th>
-                    ))}
-                  </tr>
-
-                  <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #cbd5e1', position: 'sticky', top: '43px', zIndex: 2 }}>
-                    <td style={{ padding: '6px 12px', fontWeight: '800', color: '#334155', position: 'sticky', left: 0, background: '#f1f5f9', zIndex: 3, borderRight: '1px solid #cbd5e1' }}>
-                      % Logro Ítem (Mayor a Menor →)
-                    </td>
-                    <td style={{ padding: '6px', textAlign: 'center', fontWeight: '700', color: '#475569', borderRight: '1px solid #cbd5e1' }}>-</td>
-                    <td style={{ padding: '6px', textAlign: 'center', fontWeight: '800', color: '#2563eb', borderRight: '1px solid #cbd5e1' }}>{promedioLogro}%</td>
-                    <td style={{ padding: '6px', textAlign: 'center', fontWeight: '800', color: '#0f172a', borderRight: '1px solid #cbd5e1' }}>{promedioNota}</td>
-                    {preguntasTableroMaestro.map((it) => (
-                      <td
-                        key={it.numero}
-                        style={{
-                          padding: '6px 2px',
-                          textAlign: 'center',
-                          fontWeight: '800',
-                          fontSize: '10.5px',
-                          color: it.colorInfo.text,
-                          background: it.colorInfo.bg,
-                          borderLeft: '1px solid #e2e8f0'
-                        }}
-                      >
-                        {it.anulada ? 'ANUL' : `${it.pctLogro}%`}
-                      </td>
-                    ))}
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {alumnosTableroMaestro.map((al, idx) => {
-                    const notaNum = Number(al.nota || 1.0);
-                    return (
-                      <tr key={al.id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                        <td
-                          onClick={() => abrirModalEstudiante(al)}
-                          style={{
-                            padding: '7px 12px',
-                            fontWeight: '700',
-                            color: '#1e3a8a',
-                            position: 'sticky',
-                            left: 0,
-                            background: '#ffffff',
-                            zIndex: 1,
-                            borderRight: '1px solid #cbd5e1',
-                            cursor: 'pointer',
-                            whiteSpace: 'nowrap'
-                          }}
-                          title="Clic para abrir hoja escaneada y detalle"
-                        >
-                          <span style={{ color: '#94a3b8', fontSize: '11px', marginRight: '6px' }}>{idx + 1}.</span>
-                          {al.nombre}
-                          {al.curso && <span style={{ fontSize: '10.5px', color: '#64748b', fontWeight: '500', marginLeft: '6px' }}>({al.curso})</span>}
-                        </td>
-                        <td style={{ padding: '6px', textAlign: 'center', fontWeight: '600', borderRight: '1px solid #f1f5f9' }}>
-                          {al.puntaje}/{al.total}
-                        </td>
-                        <td style={{ padding: '6px', textAlign: 'center', fontWeight: '800', color: '#0f172a', borderRight: '1px solid #f1f5f9' }}>
-                          {Math.round(al.porcentaje)}%
-                        </td>
-                        <td style={{ padding: '6px', textAlign: 'center', fontWeight: '800', color: notaNum >= notaAprob ? '#16a34a' : '#dc2626', borderRight: '1px solid #cbd5e1' }}>
-                          {notaNum.toFixed(1)}
-                        </td>
-
-                        {preguntasTableroMaestro.map((it) => {
-                          const resp = (al.respuestas && al.respuestas[it.numero]) || '';
-                          const esBuena = !it.anulada && it.clavesValidas.includes(resp);
-                          const esOmitida = resp === '' || resp === '-';
-                          const esDoble = resp === 'DOBLE';
-
-                          let bgCelda = '#fee2e2';
-                          let colorCelda = '#991b1b';
-                          let textoCelda = resp;
-
-                          if (it.anulada) {
-                            bgCelda = '#f1f5f9';
-                            colorCelda = '#64748b';
-                            textoCelda = resp || '-';
-                          } else if (esBuena) {
-                            bgCelda = '#dcfce7';
-                            colorCelda = '#166534';
-                            textoCelda = resp;
-                          } else if (esOmitida) {
-                            bgCelda = '#f8fafc';
-                            colorCelda = '#94a3b8';
-                            textoCelda = '-';
-                          } else if (esDoble) {
-                            bgCelda = '#fef3c7';
-                            colorCelda = '#92400e';
-                            textoCelda = 'DUP';
-                          }
-
-                          return (
-                            <td
-                              key={it.numero}
-                              style={{
-                                padding: '6px 2px',
-                                textAlign: 'center',
-                                fontWeight: '800',
-                                background: bgCelda,
-                                color: colorCelda,
-                                borderLeft: '1px solid #e2e8f0'
-                              }}
-                              title={`${al.nombre} • P${it.numero}: Marcó "${resp || 'Omitida'}" (Clave: ${it.correcta})`}
-                            >
-                              {textoCelda}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ===================================================================== */}
-      {/* MODAL 1: GRUPO DE DESEMPEÑO (AL HACER CLIC EN UNA BARRA DE DESEMPEÑO) */}
-      {/* ===================================================================== */}
-      {modalGrupo && (
-        <div
-          onClick={() => setModalGrupo(null)}
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px'
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '520px',
-              maxHeight: '82vh', display: 'flex', flexDirection: 'column',
-              boxShadow: '0 20px 25px -5px rgba(0,0,0,0.2)', overflow: 'hidden'
-            }}
-          >
-            <div style={{ padding: '18px 22px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a' }}>
-                  Grupo: {modalGrupo.label}
+                <h3 style={{ margin: '3px 0 0 0', fontSize: '18px', fontWeight: '800', color: '#0f172a' }}>
+                  {dudaActiva.alumno.nombre} — Pregunta {dudaActiva.numeroPregunta}{' '}
+                  <span style={{
+                    fontSize: '12px', padding: '2px 8px', borderRadius: '999px', marginLeft: '6px',
+                    background: dudaActiva.estadoActual === 'DOBLE' ? '#fef3c7' : '#e2e8f0',
+                    color: dudaActiva.estadoActual === 'DOBLE' ? '#b45309' : '#334155'
+                  }}>
+                    Detectada: {dudaActiva.estadoActual === 'DOBLE' ? 'DOBLE MARCA' : 'BLANCO / OMITIDA'}
+                  </span>
                 </h3>
-                <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#64748b' }}>
-                  {modalGrupo.estudiantes.length} estudiante(s) en este nivel ({modalGrupo.rango})
-                </p>
               </div>
+
               <button
-                onClick={() => setModalGrupo(null)}
-                style={{ background: '#f1f5f9', border: 'none', borderRadius: '8px', padding: '6px', cursor: 'pointer' }}
+                type="button"
+                onClick={() => setModalDudasAbierto(false)}
+                style={{ background: '#ffffff', border: '1px solid #fcd34d', borderRadius: '8px', padding: '7px 10px', cursor: 'pointer' }}
               >
-                <X size={18} color="#475569" />
+                <X size={18} color="#92400e" />
               </button>
             </div>
 
-            <div style={{ padding: '12px 22px', overflowY: 'auto', flex: 1 }}>
-              {modalGrupo.estudiantes.length === 0 ? (
-                <p style={{ textAlign: 'center', color: '#64748b', padding: '20px 0' }}>
-                  No hay estudiantes en este nivel de desempeño.
-                </p>
-              ) : (
-                modalGrupo.estudiantes.map((est, i) => (
-                  <div
-                    key={est.id || i}
-                    onClick={() => {
-                      setModalGrupo(null);
-                      abrirModalEstudiante(est);
-                    }}
-                    style={{
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                      padding: '12px 4px', borderBottom: '1px solid #f1f5f9', cursor: 'pointer'
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontWeight: '700', fontSize: '14px', color: '#0f172a' }}>{est.nombre}</div>
-                      <div style={{ fontSize: '12px', color: '#64748b' }}>Curso: {est.curso || '-'}</div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontWeight: '800', fontSize: '15px', color: '#0f172a' }}>
-                        {Number(est.nota).toFixed(1)}
-                      </div>
-                      <div style={{ fontSize: '11.5px', color: '#64748b' }}>
-                        {Number(est.porcentaje).toFixed(1)}%
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ===================================================================== */}
-      {/* MODAL 2: DETALLE DEL ÍTEM P_X + ELECCIÓN POR ALTERNATIVA + VISOR PDF  */}
-      {/* ===================================================================== */}
-      {itemActivoModal && (
-        <div
-          onClick={() => setModalItemNum(null)}
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px'
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: '#ffffff', borderRadius: '16px', width: '100%',
-              maxWidth: pdfPruebaUrl ? '1020px' : '560px',
-              maxHeight: '88vh', display: 'flex', flexDirection: 'column',
-              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', overflow: 'hidden'
-            }}
-          >
-            <div style={{ padding: '16px 22px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span style={{ background: '#2563eb', color: '#ffffff', padding: '5px 12px', borderRadius: '8px', fontWeight: '800', fontSize: '15px' }}>
-                  P{itemActivoModal.numero}
-                </span>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: '17px', fontWeight: '800', color: '#0f172a' }}>
-                    Detalle del Ítem P{itemActivoModal.numero}
-                  </h3>
-                  <div style={{ fontSize: '12px', color: '#64748b' }}>
-                    Puntaje ítem: <strong>{itemActivoModal.puntajeItem} pt{itemActivoModal.puntajeItem === 1 ? '' : 's'}</strong>
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {pdfPruebaUrl && (
-                  <a
-                    href={pdfPruebaUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{
-                      display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 10px',
-                      borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '12px',
-                      fontWeight: '600', color: '#334155', textDecoration: 'none'
-                    }}
-                  >
-                    <ExternalLink size={14} /> Abrir PDF en ventana nueva
-                  </a>
-                )}
-                <button
-                  onClick={() => setModalItemNum(null)}
-                  style={{ background: '#f1f5f9', border: 'none', borderRadius: '8px', padding: '6px', cursor: 'pointer' }}
-                >
-                  <X size={18} color="#475569" />
-                </button>
-              </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: pdfPruebaUrl ? '1fr 1fr' : '1fr', overflowY: 'auto', flex: 1 }}>
-              <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
-                <div style={{ background: '#f8fafc', padding: '14px 16px', borderRadius: '10px', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontSize: '11.5px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>% Logro General</div>
-                    <div style={{ fontSize: '13px', color: '#334155', marginTop: '2px' }}>
-                      {itemActivoModal.anulada
-                        ? 'Pregunta anulada (0 pts en la escala)'
-                        : <>Aciertos: <strong>{itemActivoModal.aciertos} de {totalAlumnos}</strong> estudiantes</>}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '26px', fontWeight: '800', color: '#0f172a' }}>
-                      {itemActivoModal.anulada ? 'ANULADA' : `${itemActivoModal.pctLogro}%`}
-                    </div>
-                    <div style={{ fontSize: '12px', color: '#64748b' }}>
-                      Clave(s) correcta(s): <strong style={{ color: '#16a34a' }}>{itemActivoModal.correcta}</strong>
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                    <span style={{ fontSize: '12px', fontWeight: '800', color: '#475569', textTransform: 'uppercase' }}>
-                      Elección por Alternativa
-                    </span>
-                    <span style={{ fontSize: '11.5px', color: '#2563eb' }}>Haz clic en una opción para ver quién la marcó</span>
-                  </div>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {opciones.map((op) => {
-                      const alumnosOp = itemActivoModal.porOpcion[op] || [];
-                      const pctOp = totalAlumnos > 0 ? Math.round((alumnosOp.length / totalAlumnos) * 100) : 0;
-                      const esCorrecta = !itemActivoModal.anulada && itemActivoModal.clavesValidas.includes(op);
-                      const activa = opcionSeleccionadaItem === op;
-
-                      return (
-                        <div
-                          key={op}
-                          onClick={() => setOpcionSeleccionadaItem(activa ? null : op)}
-                          style={{
-                            padding: '10px 12px',
-                            borderRadius: '10px',
-                            border: activa ? '2px solid #2563eb' : esCorrecta ? '1px solid #86efac' : '1px solid #e2e8f0',
-                            background: esCorrecta ? '#f0fdf4' : '#ffffff',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', marginBottom: '6px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <span style={{ width: '22px', height: '22px', borderRadius: '6px', background: esCorrecta ? '#16a34a' : '#f1f5f9', color: esCorrecta ? '#fff' : '#334155', fontWeight: '800', fontSize: '12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                                {op}
-                              </span>
-                              <span style={{ fontWeight: '700', color: '#0f172a' }}>Alternativa {op}</span>
-                              {esCorrecta && (
-                                <span style={{ background: '#dcfce7', color: '#166534', fontSize: '10.5px', fontWeight: '800', padding: '2px 7px', borderRadius: '4px' }}>
-                                  CORRECTA
-                                </span>
-                              )}
-                            </div>
-                            <div style={{ fontWeight: '700', color: '#334155' }}>
-                              <span style={{ fontSize: '12px', color: '#64748b', marginRight: '8px' }}>{alumnosOp.length} alumnos</span>
-                              {pctOp}%
-                            </div>
-                          </div>
-                          <div style={{ width: '100%', height: '7px', background: '#e2e8f0', borderRadius: '999px', overflow: 'hidden' }}>
-                            <div style={{ width: `${pctOp}%`, height: '100%', background: esCorrecta ? '#16a34a' : '#94a3b8' }} />
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    <div
-                      onClick={() => setOpcionSeleccionadaItem(opcionSeleccionadaItem === 'OMITIDA' ? null : 'OMITIDA')}
-                      style={{
-                        padding: '10px 12px',
-                        borderRadius: '10px',
-                        border: opcionSeleccionadaItem === 'OMITIDA' ? '2px solid #2563eb' : '1px solid #e2e8f0',
-                        background: '#f8fafc',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
-                        <span style={{ fontWeight: '600', color: '#475569' }}>Omitida / Blanco / Doble</span>
-                        <span style={{ fontWeight: '700', color: '#475569' }}>
-                          {itemActivoModal.omitidasList.length + itemActivoModal.doblesList.length} alumno(s)
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {opcionSeleccionadaItem && (
-                  <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px', padding: '12px' }}>
-                    <div style={{ fontSize: '12px', fontWeight: '800', color: '#1e40af', marginBottom: '6px' }}>
-                      {opcionSeleccionadaItem === 'OMITIDA'
-                        ? 'Estudiantes que omitieron o marcaron doble:'
-                        : `Estudiantes que marcaron la alternativa ${opcionSeleccionadaItem}:`}
-                    </div>
-                    <div style={{ maxHeight: '110px', overflowY: 'auto', fontSize: '12.5px', color: '#1e293b' }}>
-                      {(opcionSeleccionadaItem === 'OMITIDA'
-                        ? [...itemActivoModal.omitidasList, ...itemActivoModal.doblesList]
-                        : itemActivoModal.porOpcion[opcionSeleccionadaItem] || []
-                      ).map((st, idx) => (
-                        <div key={idx} style={{ padding: '3px 0', borderBottom: '1px solid #dbeafe' }}>
-                          - {st.nombre} ({st.curso || '-'})
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '12px' }}>
-                  <div style={{ fontSize: '11.5px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', marginBottom: '6px' }}>
-                    Objetivo de Aprendizaje
-                  </div>
-                  <span style={{ background: '#dbeafe', color: '#1e40af', padding: '3px 9px', borderRadius: '6px', fontSize: '12px', fontWeight: '800' }}>
-                    {itemActivoModal.oa}
-                  </span>
-                  {itemActivoModal.descripcion && (
-                    <p style={{ margin: '6px 0 0 0', fontSize: '12.5px', color: '#334155' }}>
-                      {itemActivoModal.descripcion}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {pdfPruebaUrl && (
-                <div style={{ borderLeft: '1px solid #e2e8f0', background: '#f1f5f9', minHeight: '420px' }}>
-                  <iframe
-                    src={pdfPruebaUrl}
-                    title="Vista previa de la evaluación"
-                    style={{ width: '100%', height: '100%', minHeight: '480px', border: 'none' }}
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ===================================================================== */}
-      {/* MODAL 3: DESGLOSE INDIVIDUAL + VISOR DE HOJA Y EDICIÓN DE RESPUESTAS  */}
-      {/* ===================================================================== */}
-      {modalAlumno && (
-        <div
-          onClick={() => setModalAlumno(null)}
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 70, padding: '16px'
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: '#ffffff', borderRadius: '16px', width: '100%',
-              maxWidth: modalAlumno.imagenProcesada ? '1180px' : '740px',
-              maxHeight: '90vh', display: 'flex', flexDirection: 'column',
-              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.28)', overflow: 'hidden'
-            }}
-          >
-            {/* Cabecera */}
-            <div style={{ padding: '18px 22px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a' }}>
-                  {modalAlumno.nombre}
-                </h3>
-                <div style={{ fontSize: '12.5px', color: '#64748b', marginTop: '2px' }}>
-                  RUT: {modalAlumno.rut} &nbsp;|&nbsp; Curso: {modalAlumno.curso || '-'} &nbsp;|&nbsp; Puntaje: <strong>{modalAlumno.puntaje}/{modalAlumno.total}</strong> &nbsp;|&nbsp; Nota: <strong style={{ color: Number(modalAlumno.nota) >= notaAprob ? '#16a34a' : '#dc2626' }}>{Number(modalAlumno.nota).toFixed(1)}</strong>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                {puedeEditar && editandoRespuestas && (
-                  <button
-                    onClick={guardarCambiosEstudiante}
-                    disabled={guardandoEdicion}
-                    style={{
-                      background: '#16a34a', color: 'white', border: 'none',
-                      padding: '8px 16px', borderRadius: '8px', fontWeight: '700',
-                      cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px'
-                    }}
-                  >
-                    <Save size={16} />
-                    {guardandoEdicion ? 'Guardando...' : 'Guardar Cambios'}
-                  </button>
-                )}
-
-                <button
-                  onClick={() => setModalAlumno(null)}
-                  style={{ background: '#f1f5f9', border: 'none', borderRadius: '8px', padding: '6px 10px', cursor: 'pointer' }}
-                >
-                  <X size={18} color="#475569" />
-                </button>
-              </div>
-            </div>
-
-            {/* Cuerpo en 2 columnas: Izquierda edición / Derecha foto de la hoja leída */}
+            {/* Cuerpo en 2 columnas: Izquierda confirmar/modificar clave | Derecha hoja del estudiante */}
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: modalAlumno.imagenProcesada ? '1.15fr 0.85fr' : '1fr',
+                gridTemplateColumns: imagenDudaModal ? '0.95fr 1.05fr' : '1fr',
                 gap: '20px',
-                padding: '18px 22px',
+                padding: '20px 22px',
                 overflowY: 'auto',
                 flex: 1
               }}
             >
+              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '16px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '12px 14px', fontSize: '13px' }}>
+                    <div><strong>RUT:</strong> {dudaActiva.alumno.rut} • <strong>Curso:</strong> {dudaActiva.alumno.curso || '-'}</div>
+                    <div style={{ marginTop: '4px' }}>
+                      <strong>Clave correcta en pauta (P{dudaActiva.numeroPregunta}):</strong>{' '}
+                      <span style={{ color: '#16a34a', fontWeight: '800' }}>
+                        {obtenerClavesCorrectasItem(pauta[dudaActiva.numeroPregunta]).join(' / ') || '-'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '800', color: '#0f172a', marginBottom: '8px' }}>
+                      Selecciona o modifica la alternativa para P{dudaActiva.numeroPregunta}:
+                    </label>
+
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      {opciones.map((op) => {
+                        const activa = claveDudaSeleccionada === op;
+                        return (
+                          <button
+                            key={op}
+                            type="button"
+                            onClick={() => setClaveDudaSeleccionada(activa ? '' : op)}
+                            style={{
+                              flex: 1,
+                              minWidth: '52px',
+                              padding: '11px 0',
+                              borderRadius: '10px',
+                              border: activa ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                              background: activa ? '#2563eb' : '#ffffff',
+                              color: activa ? '#ffffff' : '#0f172a',
+                              fontWeight: '800',
+                              fontSize: '15px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            {op}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid #e2e8f0', paddingTop: '14px' }}>
+                  <button
+                    type="button"
+                    disabled={guardandoDuda}
+                    onClick={() => confirmarYAvanzarDuda(false)}
+                    style={{
+                      width: '100%',
+                      background: '#16a34a',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '10px',
+                      padding: '12px 16px',
+                      fontSize: '14px',
+                      fontWeight: '800',
+                      cursor: guardandoDuda ? 'wait' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px'
+                    }}
+                  >
+                    <Check size={17} />
+                    {guardandoDuda
+                      ? 'Guardando...'
+                      : claveDudaSeleccionada
+                      ? `Confirmar "${claveDudaSeleccionada}" y Siguiente`
+                      : 'Confirmar como BLANCO / Omitida y Siguiente'}
+                    <ArrowRight size={17} />
+                  </button>
+
+                  {claveDudaSeleccionada && (
+                    <button
+                      type="button"
+                      disabled={guardandoDuda}
+                      onClick={() => confirmarYAvanzarDuda(true)}
+                      style={{
+                        width: '100%',
+                        background: '#f1f5f9',
+                        color: '#475569',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: '9px',
+                        padding: '9px 14px',
+                        fontSize: '12.5px',
+                        fontWeight: '700',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Dejar en BLANCO (sin respuesta) y marcar revisada
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {imagenDudaModal && (
+                <div style={{ background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569' }}>
+                      Hoja del estudiante (Pregunta {dudaActiva.numeroPregunta})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setZoomDudaImagen(!zoomDudaImagen)}
+                      style={{ background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '4px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                    >
+                      <ZoomIn size={13} /> {zoomDudaImagen ? 'Ajustar' : 'Ampliar'}
+                    </button>
+                  </div>
+                  <div style={{ width: '100%', maxHeight: '62vh', overflow: 'auto', textAlign: 'center' }}>
+                    <img
+                      src={imagenDudaModal}
+                      alt={`Hoja de ${dudaActiva.alumno.nombre}`}
+                      style={{ width: zoomDudaImagen ? '160%' : '100%', maxWidth: zoomDudaImagen ? 'none' : '100%', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 1: GRUPO DE DESEMPEÑO */}
+      {modalGrupo && (
+        <div onClick={() => setModalGrupo(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '640px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                {/* Logro por OA del estudiante */}
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
-                  {listaOAs.map((oaObj) => {
-                    const mapaActual = editandoRespuestas ? respuestasEditadas : modalAlumno.respuestas;
-                    const pct = calcularLogroAlumnoEnOA(modalAlumno, oaObj, mapaActual);
-                    return (
-                      <div key={oaObj.oa} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '7px 12px', fontSize: '12.5px' }}>
-                        <strong>{oaObj.oa}:</strong> <span style={{ color: oaObj.color, fontWeight: '800' }}>{pct}%</span>
+                <h3 style={{ margin: 0, fontSize: '17px', color: modalGrupo.color }}>
+                  Grupo: {modalGrupo.label} ({modalGrupo.rango})
+                </h3>
+                <p style={{ margin: '2px 0 0 0', fontSize: '12.5px', color: '#64748b' }}>
+                  {modalGrupo.cantidad} estudiante(s) en este nivel
+                </p>
+              </div>
+              <button type="button" onClick={() => setModalGrupo(null)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '8px', padding: '6px 10px', cursor: 'pointer' }}>
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ padding: '16px 20px', overflowY: 'auto' }}>
+              {modalGrupo.estudiantes.length === 0 ? (
+                <p style={{ color: '#64748b', fontSize: '14px' }}>No hay estudiantes en este grupo.</p>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13.5px' }}>
+                  <thead>
+                    <tr style={{ background: '#f8fafc', textAlign: 'left' }}>
+                      <th style={{ padding: '8px' }}>Estudiante</th>
+                      <th style={{ padding: '8px', textAlign: 'center' }}>Logro</th>
+                      <th style={{ padding: '8px', textAlign: 'center' }}>Nota</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modalGrupo.estudiantes.map((est, i) => (
+                      <tr key={est.id || i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '8px' }}>
+                          <button type="button" onClick={() => { setModalGrupo(null); abrirModalAlumno(est); }} style={{ background: 'none', border: 'none', padding: 0, color: '#1d4ed8', fontWeight: '700', textDecoration: 'underline', cursor: 'pointer' }}>
+                            {est.nombre}
+                          </button>
+                        </td>
+                        <td style={{ padding: '8px', textAlign: 'center' }}>{est.porcentaje}%</td>
+                        <td style={{ padding: '8px', textAlign: 'center', fontWeight: '800' }}>{Number(est.nota).toFixed(1)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: DETALLE DE ÍTEM Y DISTRACTORES */}
+      {itemActivoModal && (
+        <div onClick={() => setModalItemNum(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '720px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '18px' }}>
+                  Pregunta {itemActivoModal.numero} — Clave: <span style={{ color: '#16a34a' }}>{itemActivoModal.claveTexto}</span>
+                </h3>
+                <p style={{ margin: '2px 0 0 0', fontSize: '12.5px', color: '#64748b' }}>
+                  {itemActivoModal.anulada ? 'Pregunta anulada (0 pts)' : `Logro: ${itemActivoModal.pctLogro}% (${itemActivoModal.aciertos}/${itemActivoModal.total})`} • {itemActivoModal.oa}
+                </p>
+              </div>
+              <button type="button" onClick={() => setModalItemNum(null)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '8px', padding: '6px 10px', cursor: 'pointer' }}>
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ padding: '18px 20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {opciones.map((op) => {
+                const listaOp = itemActivoModal.porOpcion[op] || [];
+                const esCorrecta = itemActivoModal.clavesCorrectas.includes(op);
+                const abierta = opcionSeleccionadaItem === op;
+                return (
+                  <div key={op} style={{ border: `1px solid ${esCorrecta ? '#86efac' : '#e2e8f0'}`, borderRadius: '10px', background: esCorrecta ? '#f0fdf4' : '#f8fafc' }}>
+                    <div onClick={() => setOpcionSeleccionadaItem(abierta ? null : op)} style={{ padding: '10px 14px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', fontWeight: '700', fontSize: '13.5px' }}>
+                      <span>Alternativa {op} {esCorrecta ? '(Correcta)' : ''}</span>
+                      <span>{listaOp.length} alumno(s)</span>
+                    </div>
+                    {abierta && (
+                      <div style={{ padding: '8px 14px 12px 14px', borderTop: '1px solid #e2e8f0', fontSize: '12.5px', color: '#334155' }}>
+                        {listaOp.length > 0 ? listaOp.map((x) => x.nombre).join(', ') : 'Ningún estudiante marcó esta opción.'}
                       </div>
-                    );
-                  })}
-                </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
-                <div style={{ fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '10px' }}>
-                  {puedeEditar
-                    ? 'Haz clic en una alternativa para corregir la lectura (clic de nuevo para dejar omitida):'
-                    : 'Detalle de respuestas registradas por pregunta (Modo supervisión):'}
+      {/* MODAL 3: DETALLE INDIVIDUAL + VISOR DE HOJA + EDICIÓN */}
+      {modalAlumno && (
+        <div onClick={() => setModalAlumno(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: imagenAlumnoModal ? '1180px' : '740px', maxHeight: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ padding: '18px 22px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800' }}>{modalAlumno.nombre}</h3>
+                <div style={{ fontSize: '12.5px', color: '#64748b' }}>
+                  RUT: {modalAlumno.rut} • Puntaje: <strong>{modalAlumno.puntaje}/{modalAlumno.total}</strong> • Nota: <strong>{Number(modalAlumno.nota).toFixed(1)}</strong>
                 </div>
+              </div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                {editandoRespuestas && puedeEditar && (
+                  <button type="button" onClick={guardarCambiosAlumno} disabled={guardandoEdicion} style={{ background: '#16a34a', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                    <Save size={16} /> {guardandoEdicion ? 'Guardando...' : 'Guardar Cambios'}
+                  </button>
+                )}
+                <button type="button" onClick={() => setModalAlumno(null)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '8px', padding: '6px 10px', cursor: 'pointer' }}>
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
 
-                {/* Grilla pregunta por pregunta */}
+            <div style={{ display: 'grid', gridTemplateColumns: imagenAlumnoModal ? '1.15fr 0.85fr' : '1fr', gap: '20px', padding: '18px 22px', overflowY: 'auto', flex: 1 }}>
+              <div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(156px, 1fr))', gap: '8px' }}>
                   {Array.from({ length: numPreguntas }, (_, i) => {
                     const p = i + 1;
                     const resp = (editandoRespuestas ? respuestasEditadas[p] : modalAlumno.respuestas?.[p]) || '';
                     const itemPauta = pauta[p];
-                    const clavesValidas = obtenerClavesItem(itemPauta);
-                    const ptsItem = obtenerPuntajeItem(itemPauta);
-                    const esAnulada = ptsItem === 0;
-                    const esBuena = !esAnulada && clavesValidas.includes(resp);
+                    const clavesCorrectas = obtenerClavesCorrectasItem(itemPauta);
+                    const esBuena = clavesCorrectas.includes(resp);
                     const esOmitida = resp === '' || resp === '-';
 
                     return (
-                      <div
-                        key={p}
-                        style={{
-                          padding: '8px 10px',
-                          borderRadius: '10px',
-                          border: `1px solid ${esAnulada ? '#cbd5e1' : esBuena ? '#86efac' : esOmitida ? '#cbd5e1' : '#fecaca'}`,
-                          background: esAnulada ? '#f1f5f9' : esBuena ? '#f0fdf4' : esOmitida ? '#f8fafc' : '#fef2f2',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '6px'
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
-                          <span style={{ fontWeight: '800', color: '#334155' }}>P{p}</span>
-                          <span style={{ fontWeight: '700', color: esAnulada ? '#64748b' : esBuena ? '#166534' : esOmitida ? '#64748b' : '#991b1b', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
-                            {esAnulada ? 'ANULADA' : (
-                              <>
-                                {resp === 'DOBLE' ? 'DUP' : resp || '-'} <span style={{ fontSize: '11px', opacity: 0.8 }}>({clavesValidas.join('/') || '-'})</span>
-                                {esBuena ? (
-                                  <CheckCircle2 size={13} color="#16a34a" />
-                                ) : esOmitida ? (
-                                  <MinusCircle size={13} color="#94a3b8" />
-                                ) : (
-                                  <XCircle size={13} color="#dc2626" />
-                                )}
-                              </>
-                            )}
+                      <div key={p} style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${esBuena ? '#86efac' : esOmitida ? '#cbd5e1' : '#fecaca'}`, background: esBuena ? '#f0fdf4' : esOmitida ? '#f8fafc' : '#fef2f2', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: '800' }}>
+                          <span>P{p} <small style={{ color: '#64748b', fontWeight: '500' }}>({clavesCorrectas.join('/') || '-'})</small></span>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', color: esBuena ? '#166534' : esOmitida ? '#64748b' : '#991b1b' }}>
+                            {resp === 'DOBLE' ? 'DUP' : resp || '-'}
+                            {esBuena ? <CheckCircle2 size={13} color="#16a34a" /> : esOmitida ? <MinusCircle size={13} color="#94a3b8" /> : <XCircle size={13} color="#dc2626" />}
                           </span>
                         </div>
-
                         <div style={{ display: 'flex', gap: '4px' }}>
                           {opciones.map((op) => {
                             const seleccionado = resp === op;
                             return (
                               <button
                                 key={op}
+                                type="button"
                                 disabled={!puedeEditar}
                                 onClick={() => {
-                                  if (!puedeEditar) return;
-                                  const base = editandoRespuestas
-                                    ? respuestasEditadas
-                                    : { ...(modalAlumno.respuestas || {}) };
+                                  const base = editandoRespuestas ? respuestasEditadas : { ...(modalAlumno.respuestas || {}) };
                                   const nuevo = { ...base, [p]: seleccionado ? '' : op };
                                   setRespuestasEditadas(nuevo);
                                   setEditandoRespuestas(true);
                                 }}
-                                style={{
-                                  flex: 1,
-                                  padding: '3px 0',
-                                  fontSize: '11px',
-                                  fontWeight: '700',
-                                  borderRadius: '5px',
-                                  cursor: puedeEditar ? 'pointer' : 'default',
-                                  border: seleccionado ? '1px solid #1d4ed8' : '1px solid #cbd5e1',
-                                  background: seleccionado ? '#2563eb' : '#ffffff',
-                                  color: seleccionado ? '#ffffff' : '#334155'
-                                }}
+                                style={{ flex: 1, padding: '3px 0', fontSize: '11px', fontWeight: '700', borderRadius: '5px', cursor: puedeEditar ? 'pointer' : 'not-allowed', border: seleccionado ? '1px solid #1d4ed8' : '1px solid #cbd5e1', background: seleccionado ? '#2563eb' : '#ffffff', color: seleccionado ? '#ffffff' : '#334155' }}
                               >
                                 {op}
                               </button>
@@ -1625,36 +1032,16 @@ export default function AnalisisPanel({
                 </div>
               </div>
 
-              {/* Columna Derecha: Foto guardada por el visor OMR */}
-              {modalAlumno.imagenProcesada && (
+              {imagenAlumnoModal && (
                 <div style={{ background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                   <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569' }}>
-                      Hoja leída (Verde = Buena | Rojo = Mala | Azul = Clave)
-                    </span>
-                    <button
-                      onClick={() => setZoomImagen(!zoomImagen)}
-                      style={{
-                        background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px',
-                        padding: '4px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer',
-                        display: 'inline-flex', alignItems: 'center', gap: '4px'
-                      }}
-                    >
+                    <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569' }}>Hoja procesada</span>
+                    <button type="button" onClick={() => setZoomImagen(!zoomImagen)} style={{ background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '4px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                       <ZoomIn size={13} /> {zoomImagen ? 'Ajustar' : 'Ampliar'}
                     </button>
                   </div>
-
                   <div style={{ width: '100%', maxHeight: '68vh', overflow: 'auto', textAlign: 'center' }}>
-                    <img
-                      src={modalAlumno.imagenProcesada}
-                      alt={`Hoja de ${modalAlumno.nombre}`}
-                      style={{
-                        width: zoomImagen ? '160%' : '100%',
-                        maxWidth: zoomImagen ? 'none' : '100%',
-                        borderRadius: '8px',
-                        border: '1px solid #cbd5e1'
-                      }}
-                    />
+                    <img src={imagenAlumnoModal} alt={`Hoja de ${modalAlumno.nombre}`} style={{ width: zoomImagen ? '160%' : '100%', maxWidth: zoomImagen ? 'none' : '100%', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
                   </div>
                 </div>
               )}

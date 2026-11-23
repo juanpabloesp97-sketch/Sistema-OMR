@@ -31,7 +31,7 @@ export async function convertirPdfAImagenes(pdfFile, onProgreso = null) {
     if (onProgreso) onProgreso(numPag, totalPaginas);
 
     const page = await pdf.getPage(numPag);
-    const viewport = page.getViewport({ scale: 3.0 });
+    const viewport = page.getViewport({ scale: 2.2 });
 
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d', { willReadFrequently: true });
@@ -91,8 +91,8 @@ export async function convertirPdfAImagenes(pdfFile, onProgreso = null) {
       }
     }
 
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
-    const imageFile = new File([blob], `${pdfFile.name}_pag_${numPag}.png`, { type: 'image/png' });
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+    const imageFile = new File([blob], `${pdfFile.name}_pag_${numPag}.jpg`, { type: 'image/jpeg' });
     imageFile.qrPreDetectado = qrDetectado;
     archivosImagenes.push(imageFile);
   }

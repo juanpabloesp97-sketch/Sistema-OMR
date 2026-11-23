@@ -1,11 +1,24 @@
-import cvModule from '@techstark/opencv-js';
 import jsQR from 'jsqr';
 
+let cvCache = null;
+
 async function obtenerOpenCV() {
-  if (cvModule && cvModule.Mat) return cvModule;
-  if (cvModule instanceof Promise) return await cvModule;
+  if (cvCache && cvCache.Mat) return cvCache;
+  const mod = await import('@techstark/opencv-js');
+  const cvModule = mod.default || mod;
+  if (cvModule && cvModule.Mat) {
+    cvCache = cvModule;
+    return cvCache;
+  }
+  if (cvModule instanceof Promise) {
+    cvCache = await cvModule;
+    return cvCache;
+  }
   return new Promise((resolve) => {
-    cvModule.onRuntimeInitialized = () => resolve(cvModule);
+    cvModule.onRuntimeInitialized = () => {
+      cvCache = cvModule;
+      resolve(cvCache);
+    };
   });
 }
 
@@ -268,7 +281,7 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   const outCtx = outCanvas.getContext('2d');
 
   const radioPx = 21;
-  const radioNucleoPx = 9;
+  const radioNucleoPx = 11;
   const respuestas = {};
 
   for (let p = 1; p <= totalPreguntas; p++) {
@@ -315,12 +328,16 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     const ordenadosRatio = [...densidades].sort((a, b) => a.ratio - b.ratio);
     const fondoFilaRatio = (ordenadosRatio[0].ratio + ordenadosRatio[1].ratio) / 2;
 
-    const ordenadosBrillo = [...densidades].sort((a, b) => b.brilloNucleo - a.brilloNucleo);
-    const fondoFilaBrillo = (ordenadosBrillo[0].brilloNucleo + ordenadosBrillo[1].brilloNucleo) / 2;
+    const ordenadosOscuridad = [...densidades].sort((a, b) => a.brilloNucleo - b.brilloNucleo);
+    const segundaMasOscuraBrillo = ordenadosOscuridad[1].brilloNucleo;
+    const fondoFilaBrillo = (ordenadosOscuridad[2].brilloNucleo + ordenadosOscuridad[3].brilloNucleo) / 2;
 
     const marcadas = densidades.filter((d) => {
-      const marcaFuerte = d.ratio > 0.38 && d.ratio - fondoFilaRatio > 0.17;
-      const marcaTenueGrafito = d.brilloNucleo < 178 && fondoFilaBrillo - d.brilloNucleo > 42;
+      const marcaFuerte = d.ratio > 0.36 && d.ratio - fondoFilaRatio > 0.16;
+      const marcaTenueGrafito =
+        d.brilloNucleo < 208 &&
+        fondoFilaBrillo - d.brilloNucleo > 32 &&
+        segundaMasOscuraBrillo - d.brilloNucleo >= 22;
       return marcaFuerte || marcaTenueGrafito;
     });
 
@@ -379,6 +396,12 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     }
   }
 
+  const previewCanvas = document.createElement('canvas');
+  previewCanvas.width = Math.round(W * 0.5);
+  previewCanvas.height = Math.round(H * 0.5);
+  const previewCtx = previewCanvas.getContext('2d');
+  previewCtx.drawImage(outCanvas, 0, 0, previewCanvas.width, previewCanvas.height);
+
   src.delete();
   gray.delete();
   blurred.delete();
@@ -392,6 +415,6 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   return {
     qrData,
     respuestas,
-    imagenProcesada: outCanvas.toDataURL('image/jpeg', 0.6)
+    imagenProcesada: previewCanvas.toDataURL('image/jpeg', 0.5)
   };
 }
