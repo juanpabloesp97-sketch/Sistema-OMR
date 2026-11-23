@@ -1,16 +1,17 @@
 import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import {
-  BarChart3, Download, ArrowUpDown, ArrowUp, ArrowDown, X,
-  CheckCircle2, XCircle, MinusCircle, SlidersHorizontal, Search,
-  Eye, Save, ZoomIn, AlertTriangle, ArrowRight, Check
+  BarChart3, Download, ArrowUpDown, ArrowUp, ArrowDown, X, FileText,
+  CheckCircle2, XCircle, MinusCircle, SlidersHorizontal, ExternalLink,
+  Search, Eye, Save, ZoomIn, Table, AlertTriangle, ArrowRight, Check
 } from 'lucide-react';
 
 export default function AnalisisPanel({
   resultados = [],
   config = {},
   onActualizarRespuesta,
-  puedeEditar = true
+  puedeEditar = true,
+  esVistaNivelCompleto = false
 }) {
   const [cortes, setCortes] = useState({
     muyBueno: 85,
@@ -20,23 +21,30 @@ export default function AnalisisPanel({
   });
   const [mostrarConfigCortes, setMostrarConfigCortes] = useState(false);
 
+  // Modales interactivos
   const [modalGrupo, setModalGrupo] = useState(null);
   const [modalItemNum, setModalItemNum] = useState(null);
   const [opcionSeleccionadaItem, setOpcionSeleccionadaItem] = useState(null);
   const [modalAlumno, setModalAlumno] = useState(null);
+  const [modalTableroMaestro, setModalTableroMaestro] = useState(false);
 
+  // Modal "Revisar preguntas dobles y blancas"
+  const [modalDudasAbierto, setModalDudasAbierto] = useState(false);
+  const [claveDudaSeleccionada, setClaveDudaSeleccionada] = useState('');
+  const [guardandoDuda, setGuardandoDuda] = useState(false);
+  const [zoomDudaImagen, setZoomDudaImagen] = useState(false);
+
+  // Edición individual y zoom en modal alumno
   const [editandoRespuestas, setEditandoRespuestas] = useState(false);
   const [respuestasEditadas, setRespuestasEditadas] = useState({});
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
   const [zoomImagen, setZoomImagen] = useState(false);
 
-  // Estados para el modal "Revisar preguntas dobles y blancas"
-  const [modalDudasAbierto, setModalDudasAbierto] = useState(false);
-  const [indiceDudaActual, setIndiceDudaActual] = useState(0);
-  const [claveDudaSeleccionada, setClaveDudaSeleccionada] = useState('');
-  const [guardandoDuda, setGuardandoDuda] = useState(false);
-  const [zoomDudaImagen, setZoomDudaImagen] = useState(false);
+  // Visor PDF de la prueba original
+  const [pdfPruebaUrl, setPdfPruebaUrl] = useState(config.pdfPruebaUrl || null);
+  const [pdfPruebaNombre, setPdfPruebaNombre] = useState(config.pdfPruebaNombre || '');
 
+  // Filtros y ordenamiento
   const [busqueda, setBusqueda] = useState('');
   const [ordenTabla, setOrdenTabla] = useState({ col: 'nombre', dir: 'asc' });
   const [ordenItems, setOrdenItems] = useState('numero');
@@ -61,9 +69,10 @@ export default function AnalisisPanel({
     return 1;
   };
 
-  const obtenerImagenHoja = (obj) => obj?.imagenProcesada || obj?.imagenUrl || obj?.imagen_corregida || null;
+  const obtenerImagenHoja = (obj) =>
+    obj?.imagenProcesada || obj?.imagenUrl || obj?.imagen_corregida || null;
 
-  // Lista de todas las preguntas DOBLE o BLANCO que aún NO han sido confirmadas/revisadas
+  // Lista de todas las preguntas DOBLE o BLANCO que aún NO han sido confirmadas
   const pendientesDoblesYBlancas = useMemo(() => {
     const lista = [];
     resultados.forEach((alumno) => {
@@ -90,12 +99,11 @@ export default function AnalisisPanel({
     return lista;
   }, [resultados, numPreguntas]);
 
-  const dudaActiva = pendientesDoblesYBlancas[indiceDudaActual] || pendientesDoblesYBlancas[0] || null;
+  const dudaActiva = pendientesDoblesYBlancas[0] || null;
 
   const abrirModalDudas = () => {
     if (pendientesDoblesYBlancas.length === 0) return;
     const primera = pendientesDoblesYBlancas[0];
-    setIndiceDudaActual(0);
     setClaveDudaSeleccionada(primera.estadoActual === 'DOBLE' ? '' : primera.respuestaActual);
     setZoomDudaImagen(false);
     setModalDudasAbierto(true);
@@ -119,13 +127,13 @@ export default function AnalisisPanel({
     setGuardandoDuda(true);
     try {
       await onActualizarRespuesta(alumno.id, nuevasRespuestas);
-      setIndiceDudaActual(0);
       setClaveDudaSeleccionada('');
     } finally {
       setGuardandoDuda(false);
     }
   };
 
+  // Clasificador de los 5 grupos de desempeño
   const clasificarDesempeno = (pct) => {
     const val = Number(pct || 0);
     if (val >= cortes.muyBueno) {
@@ -143,6 +151,7 @@ export default function AnalisisPanel({
     return { id: 'muy_insuficiente', label: 'Muy Insuficiente', rango: `0-${cortes.insuficiente - 1}%`, color: '#ef4444', bg: '#fee2e2', text: '#991b1b' };
   };
 
+  // Indicadores consolidados
   const promedioNota = totalAlumnos > 0
     ? (resultados.reduce((acc, r) => acc + Number(r.nota || 1.0), 0) / totalAlumnos).toFixed(1)
     : '0.0';
@@ -151,226 +160,254 @@ export default function AnalisisPanel({
     ? Math.round(resultados.reduce((acc, r) => acc + Number(r.porcentaje || 0), 0) / totalAlumnos)
     : 0;
 
-  const aprobadosCount = resultados.filter((r) => Number(r.nota || 1.0) >= notaAprob).length;
-  const pctAprobacion = totalAlumnos > 0 ? Math.round((aprobadosCount / totalAlumnos) * 100) : 0;
-
+  // Los 5 grupos de desempeño
   const gruposDesempeno = useMemo(() => {
-    const base = [
-      { id: 'muy_insuficiente', label: 'Muy Insuficiente', rango: `0-${cortes.insuficiente - 1}%`, color: '#ef4444', bg: '#fee2e2', text: '#991b1b', estudiantes: [] },
-      { id: 'insuficiente', label: 'Insuficiente', rango: `${cortes.insuficiente}-${cortes.aceptable - 1}%`, color: '#f97316', bg: '#ffedd5', text: '#9a3412', estudiantes: [] },
-      { id: 'aceptable', label: 'Aceptable', rango: `${cortes.aceptable}-${cortes.bueno - 1}%`, color: '#eab308', bg: '#fef9c3', text: '#854d0e', estudiantes: [] },
-      { id: 'bueno', label: 'Bueno', rango: `${cortes.bueno}-${cortes.muyBueno - 1}%`, color: '#3b82f6', bg: '#dbeafe', text: '#1e40af', estudiantes: [] },
-      { id: 'muy_bueno', label: 'Muy Bueno', rango: `${cortes.muyBueno}-100%`, color: '#10b981', bg: '#d1fae5', text: '#065f46', estudiantes: [] }
+    const definiciones = [
+      { id: 'muy_insuficiente', label: 'Muy Insuficiente', rango: `0-${cortes.insuficiente - 1}%`, color: '#ef4444', bg: '#fee2e2', text: '#991b1b' },
+      { id: 'insuficiente', label: 'Insuficiente', rango: `${cortes.insuficiente}-${cortes.aceptable - 1}%`, color: '#f97316', bg: '#ffedd5', text: '#9a3412' },
+      { id: 'aceptable', label: 'Aceptable', rango: `${cortes.aceptable}-${cortes.bueno - 1}%`, color: '#eab308', bg: '#fef9c3', text: '#854d0e' },
+      { id: 'bueno', label: 'Bueno', rango: `${cortes.bueno}-${cortes.muyBueno - 1}%`, color: '#3b82f6', bg: '#dbeafe', text: '#1e40af' },
+      { id: 'muy_bueno', label: 'Muy Bueno', rango: `${cortes.muyBueno}-100%`, color: '#10b981', bg: '#d1fae5', text: '#065f46' }
     ];
 
+    return definiciones.map((def) => ({
+      ...def,
+      estudiantes: resultados
+        .filter((r) => clasificarDesempeno(r.porcentaje).id === def.id)
+        .sort((a, b) => a.nombre.localeCompare(b.nombre))
+    }));
+  }, [resultados, cortes]);
+
+  const maxAlumnosGrupo = Math.max(1, ...gruposDesempeno.map((g) => g.estudiantes.length));
+
+  // Comparativo de cursos (barras apiladas al 100% para nivel completo)
+  const comparativoCursosApilado = useMemo(() => {
+    const mapa = new Map();
     resultados.forEach((r) => {
-      const cat = clasificarDesempeno(r.porcentaje);
-      const encontrado = base.find((g) => g.id === cat.id);
-      if (encontrado) encontrado.estudiantes.push(r);
+      const nombreCurso = (r.curso || 'Sin Curso').trim();
+      if (!mapa.has(nombreCurso)) mapa.set(nombreCurso, []);
+      mapa.get(nombreCurso).push(r);
     });
 
-    return base.map((g) => ({
-      ...g,
-      cantidad: g.estudiantes.length,
-      porcentajeCurso: totalAlumnos > 0 ? Math.round((g.estudiantes.length / totalAlumnos) * 100) : 0
-    }));
-  }, [resultados, cortes, totalAlumnos]);
+    const filas = Array.from(mapa.entries())
+      .sort((a, b) => a[0].localeCompare(b[0], 'es', { numeric: true }))
+      .map(([nombreCurso, listaAl]) => {
+        const total = listaAl.length || 1;
+        const conteos = {
+          muy_insuficiente: 0,
+          insuficiente: 0,
+          aceptable: 0,
+          bueno: 0,
+          muy_bueno: 0
+        };
+        let sumaNotas = 0;
+        listaAl.forEach((al) => {
+          const cat = clasificarDesempeno(al.porcentaje).id;
+          conteos[cat]++;
+          sumaNotas += Number(al.nota || 1.0);
+        });
+        return {
+          curso: nombreCurso,
+          total: listaAl.length,
+          promedio: (sumaNotas / total).toFixed(1),
+          tramos: [
+            { id: 'muy_insuficiente', count: conteos.muy_insuficiente, pct: Math.round((conteos.muy_insuficiente / total) * 100), color: '#ef4444' },
+            { id: 'insuficiente', count: conteos.insuficiente, pct: Math.round((conteos.insuficiente / total) * 100), color: '#f97316' },
+            { id: 'aceptable', count: conteos.aceptable, pct: Math.round((conteos.aceptable / total) * 100), color: '#eab308' },
+            { id: 'bueno', count: conteos.bueno, pct: Math.round((conteos.bueno / total) * 100), color: '#3b82f6' },
+            { id: 'muy_bueno', count: conteos.muy_bueno, pct: Math.round((conteos.muy_bueno / total) * 100), color: '#10b981' }
+          ]
+        };
+      });
 
-  const listaOAs = useMemo(() => {
-    const map = new Map();
-    const coloresOA = ['#2563eb', '#059669', '#7c3aed', '#d97706', '#dc2626', '#0891b2'];
-    for (let p = 1; p <= numPreguntas; p++) {
-      const item = pauta[p];
-      const oaCod = (typeof item === 'object' && item?.oa) ? item.oa.trim() : 'OA General';
-      const desc = (typeof item === 'object' && item?.habilidad) ? item.habilidad.trim() : '';
-      if (!map.has(oaCod)) {
-        map.set(oaCod, {
-          oa: oaCod,
-          descripcion: desc,
-          preguntas: [],
-          color: coloresOA[map.size % coloresOA.length]
-        });
-      }
-      map.get(oaCod).preguntas.push(p);
+    if (filas.length > 1) {
+      const total = resultados.length || 1;
+      filas.push({
+        curso: 'Consolidado Nivel',
+        esConsolidado: true,
+        total: resultados.length,
+        promedio: promedioNota,
+        tramos: gruposDesempeno.map((g) => ({
+          id: g.id,
+          count: g.estudiantes.length,
+          pct: Math.round((g.estudiantes.length / total) * 100),
+          color: g.color
+        }))
+      });
     }
-    return Array.from(map.values()).map((entry) => {
-      let sumaPct = 0;
-      let validos = 0;
+
+    return filas;
+  }, [resultados, cortes, gruposDesempeno, promedioNota]);
+
+  // Procesamiento de OAs y preguntas
+  const { listaOAs, analisisPreguntas } = useMemo(() => {
+    const mapaOA = {};
+    const preguntasArr = [];
+
+    for (let p = 1; p <= numPreguntas; p++) {
+      const itemPauta = pauta[p];
+      const clavesCorrectas = obtenerClavesCorrectasItem(itemPauta);
+      const puntajeItem = obtenerPuntajeItem(itemPauta);
+      const esAnulada = puntajeItem === 0;
+      const oaNombre = (typeof itemPauta === 'object' && itemPauta?.oa) ? itemPauta.oa.trim() : 'General';
+      const oaDesc = (typeof itemPauta === 'object' && itemPauta?.habilidad) ? itemPauta.habilidad.trim() : '';
+
+      let aciertos = 0;
+      const porOpcion = {};
+      opciones.forEach((op) => { porOpcion[op] = []; });
+      const omitidasList = [];
+      const doblesList = [];
+
       resultados.forEach((r) => {
-        let ptsObtenidos = 0;
-        let ptsTotales = 0;
-        entry.preguntas.forEach((numP) => {
-          const it = pauta[numP];
-          const pts = obtenerPuntajeItem(it);
-          const claves = obtenerClavesCorrectasItem(it);
-          if (pts > 0 && claves.length > 0) {
-            ptsTotales += pts;
-            if (claves.includes(r.respuestas?.[numP])) ptsObtenidos += pts;
-          }
-        });
-        if (ptsTotales > 0) {
-          sumaPct += (ptsObtenidos / ptsTotales) * 100;
-          validos++;
+        const resp = (r.respuestas && r.respuestas[p]) || '';
+        if (!resp) {
+          omitidasList.push(r);
+        } else if (resp === 'DOBLE') {
+          doblesList.push(r);
+        } else {
+          if (porOpcion[resp]) porOpcion[resp].push(r);
+          if (!esAnulada && clavesCorrectas.includes(resp)) aciertos++;
         }
       });
-      return {
-        ...entry,
-        promedioLogro: validos > 0 ? Math.round(sumaPct / validos) : 0
-      };
-    });
-  }, [pauta, numPreguntas, resultados]);
 
+      const pctLogro = !esAnulada && totalAlumnos > 0 ? Math.round((aciertos / totalAlumnos) * 100) : 0;
+      const colorInfo = esAnulada
+        ? { id: 'anulada', label: 'Anulada', rango: '0 pts', color: '#94a3b8', bg: '#f1f5f9', text: '#475569' }
+        : clasificarDesempeno(pctLogro);
+
+      preguntasArr.push({
+        numero: p,
+        clavesCorrectas,
+        claveTexto: clavesCorrectas.length > 0 ? clavesCorrectas.join(' / ') : '-',
+        anulada: esAnulada,
+        oa: oaNombre,
+        descripcion: oaDesc,
+        aciertos,
+        pctLogro,
+        colorInfo,
+        porOpcion,
+        omitidasList,
+        doblesList
+      });
+
+      if (!mapaOA[oaNombre]) {
+        mapaOA[oaNombre] = {
+          oa: oaNombre,
+          descripcion: oaDesc,
+          preguntas: [],
+          preguntasValidas: 0,
+          sumaLogros: 0
+        };
+      }
+      mapaOA[oaNombre].preguntas.push(p);
+      if (!esAnulada) {
+        mapaOA[oaNombre].preguntasValidas++;
+        mapaOA[oaNombre].sumaLogros += pctLogro;
+      }
+      if (oaDesc && !mapaOA[oaNombre].descripcion) {
+        mapaOA[oaNombre].descripcion = oaDesc;
+      }
+    }
+
+    const paletaOA = ['#4f46e5', '#06b6d4', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899'];
+    const oasCalculados = Object.values(mapaOA).map((g, idx) => ({
+      ...g,
+      promedioLogro: g.preguntasValidas > 0 ? Math.round(g.sumaLogros / g.preguntasValidas) : 0,
+      color: paletaOA[idx % paletaOA.length]
+    }));
+
+    return { listaOAs: oasCalculados, analisisPreguntas: preguntasArr };
+  }, [resultados, numPreguntas, pauta, opciones, totalAlumnos, cortes]);
+
+  // Preguntas ordenadas para el gráfico de barras
+  const preguntasOrdenadas = useMemo(() => {
+    const copia = [...analisisPreguntas];
+    if (ordenItems === 'asc') return copia.sort((a, b) => a.pctLogro - b.pctLogro);
+    if (ordenItems === 'desc') return copia.sort((a, b) => b.pctLogro - a.pctLogro);
+    return copia.sort((a, b) => a.numero - b.numero);
+  }, [analisisPreguntas, ordenItems]);
+
+  // Tablero Maestro ordenado de mayor a menor en ambos ejes
+  const preguntasTableroOrdenadas = useMemo(() => {
+    return [...analisisPreguntas].sort((a, b) => {
+      if (a.anulada !== b.anulada) return a.anulada ? 1 : -1;
+      if (b.pctLogro !== a.pctLogro) return b.pctLogro - a.pctLogro;
+      return a.numero - b.numero;
+    });
+  }, [analisisPreguntas]);
+
+  const alumnosTableroOrdenados = useMemo(() => {
+    return [...resultados].sort((a, b) => {
+      const diffPct = Number(b.porcentaje || 0) - Number(a.porcentaje || 0);
+      if (diffPct !== 0) return diffPct;
+      return a.nombre.localeCompare(b.nombre);
+    });
+  }, [resultados]);
+
+  // Calcular % logro por cada OA para un estudiante
   const calcularLogroAlumnoEnOA = (alumno, oaObj, mapaRespuestasOverride = null) => {
     const mapa = mapaRespuestasOverride || alumno.respuestas || {};
     let ptsObtenidos = 0;
     let ptsTotales = 0;
     oaObj.preguntas.forEach((numP) => {
-      const it = pauta[numP];
-      const pts = obtenerPuntajeItem(it);
-      const claves = obtenerClavesCorrectasItem(it);
+      const itemPauta = pauta[numP];
+      const claves = obtenerClavesCorrectasItem(itemPauta);
+      const pts = obtenerPuntajeItem(itemPauta);
       if (pts > 0 && claves.length > 0) {
         ptsTotales += pts;
-        if (claves.includes(mapa[numP])) ptsObtenidos += pts;
+        if (claves.includes(mapa[numP])) {
+          ptsObtenidos += pts;
+        }
       }
     });
     return ptsTotales > 0 ? Math.round((ptsObtenidos / ptsTotales) * 100) : 0;
   };
 
-  const datosItems = useMemo(() => {
-    const arr = [];
-    for (let p = 1; p <= numPreguntas; p++) {
-      const item = pauta[p];
-      const clavesCorrectas = obtenerClavesCorrectasItem(item);
-      const pts = obtenerPuntajeItem(item);
-      const anulada = pts === 0;
-      const oaCod = (typeof item === 'object' && item?.oa) ? item.oa.trim() : 'OA General';
-      const desc = (typeof item === 'object' && item?.habilidad) ? item.habilidad.trim() : '';
-
-      let aciertos = 0;
-      const porOpcion = {};
-      opciones.forEach((op) => { porOpcion[op] = []; });
-      const omitidas = [];
-      const dobles = [];
-
-      resultados.forEach((r) => {
-        const resp = r.respuestas?.[p] || '';
-        if (!resp) {
-          omitidas.push(r);
-        } else if (resp === 'DOBLE') {
-          dobles.push(r);
-        } else {
-          if (!porOpcion[resp]) porOpcion[resp] = [];
-          porOpcion[resp].push(r);
-          if (!anulada && clavesCorrectas.includes(resp)) aciertos++;
-        }
-      });
-
-      const pctLogro = !anulada && totalAlumnos > 0 ? Math.round((aciertos / totalAlumnos) * 100) : 0;
-      arr.push({
-        numero: p,
-        clavesCorrectas,
-        claveTexto: clavesCorrectas.length > 0 ? clavesCorrectas.join(' / ') : '-',
-        anulada,
-        oa: oaCod,
-        descripcion: desc,
-        aciertos,
-        total: totalAlumnos,
-        pctLogro,
-        porOpcion,
-        omitidas,
-        dobles
-      });
-    }
-
-    if (ordenItems === 'asc') return [...arr].sort((a, b) => a.pctLogro - b.pctLogro);
-    if (ordenItems === 'desc') return [...arr].sort((a, b) => b.pctLogro - a.pctLogro);
-    return arr;
-  }, [numPreguntas, pauta, opciones, resultados, totalAlumnos, ordenItems]);
-
-  const filasOrdenadas = useMemo(() => {
-    const q = busqueda.trim().toLowerCase();
-    const filtradas = resultados.filter(
-      (r) =>
-        !q ||
-        (r.nombre || '').toLowerCase().includes(q) ||
-        (r.rut || '').toLowerCase().includes(q) ||
-        (r.curso || '').toLowerCase().includes(q)
-    );
-
-    return [...filtradas].sort((a, b) => {
-      let valA;
-      let valB;
-      if (ordenTabla.col.startsWith('oa_')) {
-        const cod = ordenTabla.col.replace('oa_', '');
-        const oaObj = listaOAs.find((x) => x.oa === cod);
-        valA = oaObj ? calcularLogroAlumnoEnOA(a, oaObj) : 0;
-        valB = oaObj ? calcularLogroAlumnoEnOA(b, oaObj) : 0;
-      } else if (ordenTabla.col === 'nombre') {
-        valA = (a.nombre || '').toLowerCase();
-        valB = (b.nombre || '').toLowerCase();
-      } else if (ordenTabla.col === 'curso') {
-        valA = (a.curso || '').toLowerCase();
-        valB = (b.curso || '').toLowerCase();
-      } else if (ordenTabla.col === 'puntaje') {
-        valA = Number(a.puntaje || 0);
-        valB = Number(b.puntaje || 0);
-      } else if (ordenTabla.col === 'porcentaje') {
-        valA = Number(a.porcentaje || 0);
-        valB = Number(b.porcentaje || 0);
-      } else {
-        valA = Number(a.nota || 1);
-        valB = Number(b.nota || 1);
-      }
-
-      if (valA < valB) return ordenTabla.dir === 'asc' ? -1 : 1;
-      if (valA > valB) return ordenTabla.dir === 'asc' ? 1 : -1;
-      return 0;
-    });
-  }, [resultados, busqueda, ordenTabla, listaOAs]);
-
-  const alternarOrdenColumna = (col) => {
+  // Ordenamiento de la nómina individual
+  const toggleOrdenTabla = (col) => {
     setOrdenTabla((prev) => ({
       col,
       dir: prev.col === col && prev.dir === 'asc' ? 'desc' : 'asc'
     }));
   };
 
-  const renderIconoOrden = (col) => {
-    if (ordenTabla.col !== col) return <ArrowUpDown size={13} style={{ opacity: 0.45 }} />;
-    return ordenTabla.dir === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />;
-  };
-
-  const exportarExcel = () => {
-    const filas = filasOrdenadas.map((r) => {
-      const cat = clasificarDesempeno(r.porcentaje);
-      const filaObj = {
-        RUT: r.rut,
-        Estudiante: r.nombre,
-        Curso: r.curso || '',
-        Puntaje: r.puntaje,
-        Total: r.total,
-        Logro_Pct: r.porcentaje,
-        Nota: Number(r.nota).toFixed(1),
-        Grupo_Desempeno: cat.label
-      };
-      listaOAs.forEach((oaObj) => {
-        filaObj[`OA_${oaObj.oa}_Pct`] = calcularLogroAlumnoEnOA(r, oaObj);
+  const alumnosFiltradosYOrdenados = useMemo(() => {
+    return resultados
+      .filter((r) =>
+        r.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
+        r.rut.toLowerCase().includes(busqueda.toLowerCase()) ||
+        (r.curso || '').toLowerCase().includes(busqueda.toLowerCase())
+      )
+      .sort((a, b) => {
+        let cmp = 0;
+        if (ordenTabla.col === 'nombre') cmp = a.nombre.localeCompare(b.nombre);
+        else if (ordenTabla.col === 'curso') cmp = (a.curso || '').localeCompare(b.curso || '');
+        else if (ordenTabla.col === 'puntaje') cmp = Number(a.puntaje) - Number(b.puntaje);
+        else if (ordenTabla.col === 'porcentaje') cmp = Number(a.porcentaje) - Number(b.porcentaje);
+        else if (ordenTabla.col === 'nota') cmp = Number(a.nota) - Number(b.nota);
+        else if (ordenTabla.col.startsWith('oa_')) {
+          const oaNombre = ordenTabla.col.replace('oa_', '');
+          const oaObj = listaOAs.find((o) => o.oa === oaNombre);
+          if (oaObj) {
+            cmp = calcularLogroAlumnoEnOA(a, oaObj) - calcularLogroAlumnoEnOA(b, oaObj);
+          }
+        }
+        return ordenTabla.dir === 'asc' ? cmp : -cmp;
       });
-      for (let p = 1; p <= numPreguntas; p++) {
-        filaObj[`P${p}`] = r.respuestas?.[p] || '-';
-      }
-      return filaObj;
-    });
+  }, [resultados, busqueda, ordenTabla, listaOAs]);
 
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(filas);
-    XLSX.utils.book_append_sheet(wb, ws, 'Resultados');
-    XLSX.writeFile(wb, `Analisis_${(config.tituloPrueba || 'Evaluacion').replace(/\s+/g, '_')}.xlsx`);
+  const manejarSubirPdfPrueba = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (pdfPruebaUrl && pdfPruebaUrl.startsWith('blob:')) URL.revokeObjectURL(pdfPruebaUrl);
+    const url = URL.createObjectURL(file);
+    setPdfPruebaUrl(url);
+    setPdfPruebaNombre(file.name);
   };
 
-  const abrirModalAlumno = (alumno) => {
-    setModalAlumno(alumno);
-    setRespuestasEditadas({ ...(alumno.respuestas || {}) });
+  const abrirModalAlumno = (al) => {
+    setModalAlumno(al);
+    setRespuestasEditadas({ ...(al.respuestas || {}) });
     setEditandoRespuestas(false);
     setZoomImagen(false);
   };
@@ -393,163 +430,362 @@ export default function AnalisisPanel({
     }
   };
 
-  const itemActivoModal = modalItemNum !== null
-    ? datosItems.find((d) => d.numero === modalItemNum) || null
-    : null;
+  const exportarExcel = () => {
+    if (resultados.length === 0) return;
 
+    const hojaAlumnos = alumnosFiltradosYOrdenados.map((r) => {
+      const des = clasificarDesempeno(r.porcentaje);
+      const fila = {
+        Estudiante: r.nombre,
+        RUT: r.rut,
+        Curso: r.curso || '-',
+        Puntaje: `${r.puntaje}/${r.total}`,
+        '% Logro': Number(r.porcentaje),
+        Nota: Number(r.nota).toFixed(1),
+        Desempeño: des.label
+      };
+      listaOAs.forEach((oa) => {
+        fila[`% ${oa.oa}`] = calcularLogroAlumnoEnOA(r, oa);
+      });
+      for (let p = 1; p <= numPreguntas; p++) {
+        fila[`P${p}`] = (r.respuestas && r.respuestas[p]) || '-';
+      }
+      return fila;
+    });
+
+    const hojaItems = analisisPreguntas.map((it) => {
+      const fila = {
+        Pregunta: `P${it.numero}`,
+        'Clave Correcta': it.anulada ? 'ANULADA' : it.claveTexto,
+        OA: it.oa,
+        '% Logro': it.anulada ? 'ANULADA' : it.pctLogro,
+        Aciertos: it.aciertos
+      };
+      opciones.forEach((op) => {
+        fila[`Alt ${op}`] = it.porOpcion[op]?.length || 0;
+      });
+      fila['Omitidas'] = it.omitidasList.length;
+      fila['Dobles'] = it.doblesList.length;
+      return fila;
+    });
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaAlumnos), 'Nomina_Resultados');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaItems), 'Logro_Por_Pregunta');
+    XLSX.writeFile(wb, `Reporte_${(config.tituloPrueba || 'Evaluacion').replace(/\s+/g, '_')}.xlsx`);
+  };
+
+  if (totalAlumnos === 0) {
+    return (
+      <div style={{ background: '#ffffff', padding: '44px 24px', borderRadius: '14px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
+        <BarChart3 size={44} color="#94a3b8" style={{ marginBottom: '12px' }} />
+        <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', color: '#0f172a' }}>Aún no hay resultados escaneados</h3>
+        <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>
+          Sube las hojas de respuestas o el PDF escaneado en la pestaña <strong>Escanear Hojas</strong> para visualizar el panel interactivo.
+        </p>
+      </div>
+    );
+  }
+
+  const itemActivoModal = modalItemNum ? analisisPreguntas.find((it) => it.numero === modalItemNum) : null;
   const imagenAlumnoModal = obtenerImagenHoja(modalAlumno);
   const imagenDudaModal = dudaActiva ? obtenerImagenHoja(dudaActiva.alumno) : null;
 
+  const IconoOrden = ({ col }) => {
+    if (ordenTabla.col !== col) return <ArrowUpDown size={12} color="#94a3b8" />;
+    return ordenTabla.dir === 'asc' ? <ArrowUp size={12} color="#2563eb" /> : <ArrowDown size={12} color="#2563eb" />;
+  };
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* BARRA SUPERIOR DE ACCIONES */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', background: '#ffffff', padding: '16px 20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: '19px', fontWeight: '800', color: '#0f172a' }}>
-            Análisis de Resultados — {config.tituloPrueba}
-          </h2>
-          <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#64748b' }}>
-            Haz clic en los gráficos de desempeño o en cada pregunta (P1–P{numPreguntas}) para inspeccionar estudiantes y distractores.
-          </p>
-        </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
+      {/* 1. CABECERA CONSOLIDADA Y 3 TARJETAS SUPERIORES */}
+      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '14px', marginBottom: '20px' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: '22px', fontWeight: '800', color: '#0f172a' }}>
+              {config.tituloPrueba || 'Evaluación'}
+            </h2>
+            <p style={{ margin: '4px 0 0 0', fontSize: '13.5px', color: '#64748b' }}>
+              Consolidado General — <strong>{totalAlumnos} alumnos evaluados</strong> &nbsp;|&nbsp; Exigencia: <strong>{config.exigencia || 60}%</strong> &nbsp;|&nbsp; Escala: <strong>{Number(config.notaMin || 1).toFixed(1)} - {Number(config.notaMax || 7).toFixed(1)}</strong>
+            </p>
+          </div>
 
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-          {puedeEditar && (
-            <button
-              type="button"
-              onClick={abrirModalDudas}
-              disabled={pendientesDoblesYBlancas.length === 0}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {puedeEditar && (
+              <button
+                type="button"
+                onClick={abrirModalDudas}
+                disabled={pendientesDoblesYBlancas.length === 0}
+                style={{
+                  background: pendientesDoblesYBlancas.length > 0 ? '#fef3c7' : '#f8fafc',
+                  color: pendientesDoblesYBlancas.length > 0 ? '#92400e' : '#94a3b8',
+                  border: `1px solid ${pendientesDoblesYBlancas.length > 0 ? '#f59e0b' : '#cbd5e1'}`,
+                  borderRadius: '8px',
+                  padding: '8px 12px',
+                  fontSize: '12.5px',
+                  fontWeight: '700',
+                  cursor: pendientesDoblesYBlancas.length > 0 ? 'pointer' : 'not-allowed',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <AlertTriangle size={15} />
+                Revisar preguntas dobles y blancas ({pendientesDoblesYBlancas.length})
+              </button>
+            )}
+
+            <label
               style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '8px 13px',
+                background: pdfPruebaUrl ? '#eff6ff' : '#f8fafc',
+                color: pdfPruebaUrl ? '#1d4ed8' : '#334155',
+                border: `1px solid ${pdfPruebaUrl ? '#93c5fd' : '#cbd5e1'}`,
                 borderRadius: '8px',
-                border: `1px solid ${pendientesDoblesYBlancas.length > 0 ? '#f59e0b' : '#cbd5e1'}`,
-                background: pendientesDoblesYBlancas.length > 0 ? '#fef3c7' : '#f8fafc',
-                color: pendientesDoblesYBlancas.length > 0 ? '#92400e' : '#94a3b8',
-                fontWeight: '700',
+                padding: '8px 12px',
                 fontSize: '12.5px',
-                cursor: pendientesDoblesYBlancas.length > 0 ? 'pointer' : 'not-allowed'
+                fontWeight: '600',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
               }}
             >
-              <AlertTriangle size={15} />
-              Revisar preguntas dobles y blancas ({pendientesDoblesYBlancas.length})
-            </button>
-          )}
+              <FileText size={15} />
+              {pdfPruebaNombre ? `PDF: ${pdfPruebaNombre.slice(0, 18)}...` : 'Adjuntar PDF Prueba'}
+              <input type="file" accept="application/pdf" onChange={manejarSubirPdfPrueba} style={{ display: 'none' }} />
+            </label>
 
-          <button
-            type="button"
-            onClick={() => setMostrarConfigCortes(!mostrarConfigCortes)}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: '6px',
-              padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1',
-              background: mostrarConfigCortes ? '#eff6ff' : '#ffffff', color: '#334155',
-              fontWeight: '700', fontSize: '12.5px', cursor: 'pointer'
-            }}
-          >
-            <SlidersHorizontal size={15} /> Límites de Logro
-          </button>
-
-          <button
-            type="button"
-            onClick={exportarExcel}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: '6px',
-              padding: '8px 14px', borderRadius: '8px', border: 'none',
-              background: '#16a34a', color: '#ffffff', fontWeight: '700',
-              fontSize: '12.5px', cursor: 'pointer'
-            }}
-          >
-            <Download size={15} /> Exportar Excel
-          </button>
-        </div>
-      </div>
-
-      {/* CONFIGURADOR DE LÍMITES DE DESEMPEÑO */}
-      {mostrarConfigCortes && (
-        <div style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '12px', padding: '16px 20px', display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'center' }}>
-          <strong style={{ fontSize: '13px', color: '#0f172a' }}>Cortes de Logro (%):</strong>
-          <label style={{ fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            Muy Bueno desde:
-            <input type="number" min="1" max="100" value={cortes.muyBueno} onChange={(e) => setCortes({ ...cortes, muyBueno: Number(e.target.value) })} style={{ width: '54px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />%
-          </label>
-          <label style={{ fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            Bueno desde:
-            <input type="number" min="1" max="100" value={cortes.bueno} onChange={(e) => setCortes({ ...cortes, bueno: Number(e.target.value) })} style={{ width: '54px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />%
-          </label>
-          <label style={{ fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            Aceptable desde:
-            <input type="number" min="1" max="100" value={cortes.aceptable} onChange={(e) => setCortes({ ...cortes, aceptable: Number(e.target.value) })} style={{ width: '54px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />%
-          </label>
-          <label style={{ fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            Insuficiente desde:
-            <input type="number" min="0" max="100" value={cortes.insuficiente} onChange={(e) => setCortes({ ...cortes, insuficiente: Number(e.target.value) })} style={{ width: '54px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />%
-          </label>
-        </div>
-      )}
-
-      {/* TARJETAS KPI */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '14px' }}>
-        <div style={{ background: '#ffffff', padding: '18px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-          <div style={{ fontSize: '12px', fontWeight: '700', color: '#64748b' }}>PROMEDIO NOTA</div>
-          <div style={{ fontSize: '28px', fontWeight: '800', color: Number(promedioNota) >= notaAprob ? '#16a34a' : '#dc2626', marginTop: '4px' }}>{promedioNota}</div>
-        </div>
-        <div style={{ background: '#ffffff', padding: '18px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-          <div style={{ fontSize: '12px', fontWeight: '700', color: '#64748b' }}>LOGRO PROMEDIO</div>
-          <div style={{ fontSize: '28px', fontWeight: '800', color: '#2563eb', marginTop: '4px' }}>{promedioLogro}%</div>
-        </div>
-        <div style={{ background: '#ffffff', padding: '18px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-          <div style={{ fontSize: '12px', fontWeight: '700', color: '#64748b' }}>APROBACIÓN</div>
-          <div style={{ fontSize: '28px', fontWeight: '800', color: '#0f172a', marginTop: '4px' }}>{pctAprobacion}%</div>
-        </div>
-        <div style={{ background: '#ffffff', padding: '18px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-          <div style={{ fontSize: '12px', fontWeight: '700', color: '#64748b' }}>HOJAS CORREGIDAS</div>
-          <div style={{ fontSize: '28px', fontWeight: '800', color: '#0f172a', marginTop: '4px' }}>{totalAlumnos}</div>
-        </div>
-      </div>
-
-      {/* GRÁFICO DE GRUPOS DE DESEMPEÑO (CLICABLE) */}
-      <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-        <h3 style={{ margin: '0 0 14px 0', fontSize: '16px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <BarChart3 size={18} color="#2563eb" /> Grupos de Desempeño (Haz clic en un grupo para ver los estudiantes)
-        </h3>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '12px' }}>
-          {gruposDesempeno.map((g) => (
-            <div
-              key={g.id}
-              onClick={() => setModalGrupo(g)}
+            <button
+              onClick={() => setMostrarConfigCortes(!mostrarConfigCortes)}
               style={{
-                padding: '14px', borderRadius: '10px', border: `1px solid ${g.color}`,
-                background: g.bg, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '4px'
+                background: '#f8fafc',
+                color: '#334155',
+                border: '1px solid #cbd5e1',
+                borderRadius: '8px',
+                padding: '8px 12px',
+                fontSize: '12.5px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
               }}
             >
-              <div style={{ fontSize: '12px', fontWeight: '800', color: g.text }}>{g.label}</div>
-              <div style={{ fontSize: '11px', color: g.text, opacity: 0.85 }}>{g.rango}</div>
-              <div style={{ fontSize: '22px', fontWeight: '900', color: g.text, marginTop: '4px' }}>
-                {g.cantidad} <span style={{ fontSize: '13px', fontWeight: '700' }}>({g.porcentajeCurso}%)</span>
+              <SlidersHorizontal size={15} />
+              Límites de Logro
+            </button>
+
+            <button
+              onClick={exportarExcel}
+              style={{
+                background: '#16a34a',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '8px 14px',
+                fontSize: '12.5px',
+                fontWeight: '700',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <Download size={15} />
+              Exportar Excel
+            </button>
+          </div>
+        </div>
+
+        {/* Panel editable de límites de los 5 niveles */}
+        {mostrarConfigCortes && (
+          <div style={{ background: '#f8fafc', padding: '14px', borderRadius: '10px', border: '1px solid #cbd5e1', marginBottom: '18px', display: 'flex', flexWrap: 'wrap', gap: '14px', alignItems: 'center', fontSize: '12.5px' }}>
+            <strong style={{ color: '#0f172a' }}>Cortes mínimos (%):</strong>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ color: '#10b981', fontWeight: '700' }}>Muy Bueno ≥</span>
+              <input type="number" value={cortes.muyBueno} onChange={(e) => setCortes({ ...cortes, muyBueno: Number(e.target.value) })} style={{ width: '50px', padding: '4px', borderRadius: '5px', border: '1px solid #cbd5e1' }} />%
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ color: '#3b82f6', fontWeight: '700' }}>Bueno ≥</span>
+              <input type="number" value={cortes.bueno} onChange={(e) => setCortes({ ...cortes, bueno: Number(e.target.value) })} style={{ width: '50px', padding: '4px', borderRadius: '5px', border: '1px solid #cbd5e1' }} />%
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ color: '#eab308', fontWeight: '700' }}>Aceptable ≥</span>
+              <input type="number" value={cortes.aceptable} onChange={(e) => setCortes({ ...cortes, aceptable: Number(e.target.value) })} style={{ width: '50px', padding: '4px', borderRadius: '5px', border: '1px solid #cbd5e1' }} />%
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ color: '#f97316', fontWeight: '700' }}>Insuficiente ≥</span>
+              <input type="number" value={cortes.insuficiente} onChange={(e) => setCortes({ ...cortes, insuficiente: Number(e.target.value) })} style={{ width: '50px', padding: '4px', borderRadius: '5px', border: '1px solid #cbd5e1' }} />%
+            </label>
+            <span style={{ color: '#ef4444', fontWeight: '700' }}>(Muy Insuficiente: 0 - {cortes.insuficiente - 1}%)</span>
+          </div>
+        )}
+
+        {/* 3 Tarjetas Principales */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+          <div style={{ background: '#f8fafc', padding: '18px', borderRadius: '12px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
+            <div style={{ fontSize: '12px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              RINDIERON
+            </div>
+            <div style={{ fontSize: '34px', fontWeight: '800', color: '#0f172a', marginTop: '4px' }}>
+              {totalAlumnos}
+            </div>
+          </div>
+
+          <div style={{ background: '#f8fafc', padding: '18px', borderRadius: '12px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
+            <div style={{ fontSize: '12px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              PROMEDIO DE NOTAS
+            </div>
+            <div style={{ fontSize: '34px', fontWeight: '800', color: Number(promedioNota) >= notaAprob ? '#16a34a' : '#dc2626', marginTop: '4px' }}>
+              {promedioNota}
+            </div>
+          </div>
+
+          <div style={{ background: '#f8fafc', padding: '18px', borderRadius: '12px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
+            <div style={{ fontSize: '12px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              PORCENTAJE DE LOGRO
+            </div>
+            <div style={{ fontSize: '34px', fontWeight: '800', color: '#2563eb', marginTop: '4px' }}>
+              {promedioLogro}%
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. PORCENTAJE DE LOGRO POR OA + COMPARATIVO DE BARRAS */}
+      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+        <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase' }}>
+          Porcentaje de Logro por Objetivo de Aprendizaje (OA)
+        </h3>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px', marginBottom: '24px' }}>
+          {listaOAs.map((oaObj) => (
+            <div key={oaObj.oa} style={{ padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#f8fafc', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '10px' }}>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <span style={{ background: oaObj.color, color: '#ffffff', padding: '3px 10px', borderRadius: '6px', fontSize: '12.5px', fontWeight: '800' }}>
+                    {oaObj.oa}
+                  </span>
+                  <span style={{ fontSize: '22px', fontWeight: '800', color: oaObj.color }}>
+                    {oaObj.promedioLogro}%
+                  </span>
+                </div>
+                {oaObj.descripcion && (
+                  <p style={{ margin: '6px 0', fontSize: '12.5px', color: '#334155', lineHeight: '1.45' }}>
+                    {oaObj.descripcion}
+                  </p>
+                )}
+              </div>
+              <div style={{ fontSize: '12px', color: '#64748b', borderTop: '1px solid #e2e8f0', paddingTop: '8px' }}>
+                Preguntas: <strong>{oaObj.preguntas.join(', ')}</strong> ({oaObj.preguntas.length} ítems)
               </div>
             </div>
           ))}
         </div>
+
+        <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '18px' }}>
+          <div style={{ fontSize: '13px', fontWeight: '800', color: '#475569', textTransform: 'uppercase', marginBottom: '12px' }}>
+            Comparativo de Logro entre OAs
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-around', height: '190px', padding: '20px 16px 0 16px', background: '#f8fafc', borderRadius: '10px', borderBottom: '2px solid #cbd5e1' }}>
+            {listaOAs.map((oaObj) => (
+              <div key={oaObj.oa} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, maxWidth: '180px' }}>
+                <span style={{ fontSize: '13px', fontWeight: '800', color: '#0f172a', marginBottom: '6px' }}>
+                  {oaObj.promedioLogro}%
+                </span>
+                <div
+                  style={{
+                    width: '70%',
+                    height: `${Math.max(8, Math.round((oaObj.promedioLogro / 100) * 145))}px`,
+                    background: oaObj.color,
+                    borderRadius: '8px 8px 0 0',
+                    transition: 'height 0.3s ease'
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-around', padding: '8px 16px 0 16px' }}>
+            {listaOAs.map((oaObj) => (
+              <div key={oaObj.oa} style={{ flex: 1, maxWidth: '180px', textAlign: 'center', fontSize: '13px', fontWeight: '700', color: '#334155' }}>
+                {oaObj.oa}
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
-      {/* LOGRO POR OA */}
-      {listaOAs.length > 0 && (
-        <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-          <h3 style={{ margin: '0 0 14px 0', fontSize: '16px', fontWeight: '800' }}>Logro por Objetivo de Aprendizaje (OA)</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-            {listaOAs.map((oaObj) => (
-              <div key={oaObj.oa} style={{ padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0', background: '#f8fafc' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '800', fontSize: '14px', marginBottom: '6px' }}>
-                  <span>{oaObj.oa}</span>
-                  <span style={{ color: oaObj.color }}>{oaObj.promedioLogro}%</span>
+      {/* 3. COMPARATIVO DE CURSOS (BARRAS APILADAS AL 100% EN NIVEL COMPLETO) */}
+      {(esVistaNivelCompleto || comparativoCursosApilado.length > 1) && comparativoCursosApilado.length > 1 && (
+        <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase' }}>
+                Comparativo de Cursos (Distribución por Nivel de Logro)
+              </h3>
+              <p style={{ margin: '4px 0 0 0', fontSize: '12.5px', color: '#64748b' }}>
+                Porcentaje y cantidad de estudiantes por tramo en cada curso y consolidado del nivel
+              </p>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', fontSize: '11.5px' }}>
+              {gruposDesempeno.map((g) => (
+                <span key={g.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontWeight: '600', color: '#334155' }}>
+                  <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: g.color }} />
+                  {g.label}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {comparativoCursosApilado.map((fila) => (
+              <div
+                key={fila.curso}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '170px 1fr 90px',
+                  alignItems: 'center',
+                  gap: '12px',
+                  padding: fila.esConsolidado ? '10px' : '4px 10px',
+                  borderRadius: '10px',
+                  background: fila.esConsolidado ? '#eff6ff' : 'transparent',
+                  border: fila.esConsolidado ? '1px solid #bfdbfe' : 'none'
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: '800', fontSize: '13.5px', color: fila.esConsolidado ? '#1e40af' : '#0f172a' }}>
+                    {fila.curso}
+                  </div>
+                  <div style={{ fontSize: '11.5px', color: '#64748b' }}>{fila.total} est.</div>
                 </div>
-                <div style={{ width: '100%', height: '8px', background: '#e2e8f0', borderRadius: '999px', overflow: 'hidden', marginBottom: '6px' }}>
-                  <div style={{ width: `${oaObj.promedioLogro}%`, height: '100%', background: oaObj.color }} />
+
+                <div style={{ display: 'flex', width: '100%', height: '30px', borderRadius: '8px', overflow: 'hidden', background: '#f1f5f9' }}>
+                  {fila.tramos.map((t) =>
+                    t.count > 0 ? (
+                      <div
+                        key={t.id}
+                        style={{
+                          width: `${t.pct}%`,
+                          background: t.color,
+                          color: '#ffffff',
+                          fontSize: '11px',
+                          fontWeight: '800',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden'
+                        }}
+                        title={`${t.pct}% (${t.count} estudiantes)`}
+                      >
+                        {t.pct >= 11 ? `${t.pct}% (${t.count})` : t.pct >= 6 ? `${t.pct}%` : ''}
+                      </div>
+                    ) : null
+                  )}
                 </div>
-                <div style={{ fontSize: '11.5px', color: '#64748b' }}>
-                  Ítems: {oaObj.preguntas.join(', ')}
+
+                <div style={{ textAlign: 'right', fontSize: '12.5px', fontWeight: '800', color: '#334155' }}>
+                  Prom: {fila.promedio}
                 </div>
               </div>
             ))}
@@ -557,128 +793,302 @@ export default function AnalisisPanel({
         </div>
       )}
 
-      {/* GRÁFICO DE LOGRO POR PREGUNTA (CLICABLE + ORDENABLE) */}
-      <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '14px' }}>
-          <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800' }}>
-            Porcentaje de Logro por Pregunta (Haz clic para ver distractores)
-          </h3>
-          <div style={{ display: 'flex', gap: '6px' }}>
-            <button type="button" onClick={() => setOrdenItems('numero')} style={{ padding: '5px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', background: ordenItems === 'numero' ? '#0f172a' : '#fff', color: ordenItems === 'numero' ? '#fff' : '#334155', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>
-              Orden P1..P{numPreguntas}
-            </button>
-            <button type="button" onClick={() => setOrdenItems('asc')} style={{ padding: '5px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', background: ordenItems === 'asc' ? '#0f172a' : '#fff', color: ordenItems === 'asc' ? '#fff' : '#334155', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>
-              Menor a Mayor %
-            </button>
-            <button type="button" onClick={() => setOrdenItems('desc')} style={{ padding: '5px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', background: ordenItems === 'desc' ? '#0f172a' : '#fff', color: ordenItems === 'desc' ? '#fff' : '#334155', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>
-              Mayor a Menor %
-            </button>
+      {/* 4. GRUPOS DE DESEMPEÑO (5 BARRAS VERTICALES INTERACTIVAS) */}
+      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase' }}>
+              Grupos de Desempeño
+            </h3>
+            <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#2563eb', fontWeight: '600' }}>
+              Haz clic en una barra para ver la nómina de estudiantes del grupo
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', fontSize: '11.5px' }}>
+            {gruposDesempeno.map((g) => (
+              <span key={g.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontWeight: '600', color: '#334155' }}>
+                <span style={{ width: '10px', height: '10px', borderRadius: '999px', background: g.color }} />
+                {g.label} ({g.rango})
+              </span>
+            ))}
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))', gap: '10px' }}>
-          {datosItems.map((it) => {
-            const colorBarra = it.anulada ? '#94a3b8' : it.pctLogro >= 70 ? '#16a34a' : it.pctLogro >= 50 ? '#2563eb' : '#dc2626';
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-around', height: '210px', padding: '24px 12px 0 12px', background: '#f8fafc', borderRadius: '10px', borderBottom: '2px solid #cbd5e1' }}>
+          {gruposDesempeno.map((g) => {
+            const cant = g.estudiantes.length;
+            const pctGrupo = totalAlumnos > 0 ? Math.round((cant / totalAlumnos) * 100) : 0;
+            const alturaPx = Math.round((cant / maxAlumnosGrupo) * 155);
+
             return (
               <div
-                key={it.numero}
-                onClick={() => {
-                  setModalItemNum(it.numero);
-                  setOpcionSeleccionadaItem(null);
-                }}
+                key={g.id}
+                onClick={() => setModalGrupo(g)}
                 style={{
-                  padding: '10px', borderRadius: '10px', border: '1px solid #e2e8f0',
-                  background: it.anulada ? '#f1f5f9' : '#ffffff', cursor: 'pointer', textAlign: 'center'
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  width: '18%',
+                  cursor: 'pointer'
                 }}
+                title={`Clic para ver los ${cant} estudiantes en ${g.label}`}
               >
-                <div style={{ fontSize: '12px', fontWeight: '800', color: '#334155' }}>P{it.numero}</div>
-                <div style={{ fontSize: '17px', fontWeight: '900', color: colorBarra, margin: '3px 0' }}>
-                  {it.anulada ? 'ANUL' : `${it.pctLogro}%`}
-                </div>
-                <div style={{ fontSize: '11px', color: '#64748b' }}>Clave: <strong>{it.claveTexto}</strong></div>
+                <span style={{ fontSize: '12.5px', fontWeight: '800', color: '#0f172a', marginBottom: '6px', textAlign: 'center' }}>
+                  {cant} ({pctGrupo}%)
+                </span>
+                <div
+                  style={{
+                    width: '65%',
+                    maxWidth: '90px',
+                    height: `${Math.max(8, alturaPx)}px`,
+                    background: g.color,
+                    borderRadius: '8px 8px 0 0',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.08)'
+                  }}
+                />
               </div>
             );
           })}
         </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-around', padding: '10px 12px 0 12px' }}>
+          {gruposDesempeno.map((g) => (
+            <div
+              key={g.id}
+              onClick={() => setModalGrupo(g)}
+              style={{ width: '18%', textAlign: 'center', cursor: 'pointer' }}
+            >
+              <div style={{ fontSize: '12.5px', fontWeight: '700', color: '#1e293b' }}>{g.label}</div>
+              <div style={{ fontSize: '11px', color: '#64748b' }}>{g.rango}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
-      {/* NÓMINA INDIVIDUAL ORDENABLE */}
-      <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
-          <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800' }}>
-            Resultados por Estudiante ({filasOrdenadas.length})
-          </h3>
-          <div style={{ position: 'relative', minWidth: '240px' }}>
+      {/* 5. PORCENTAJE DE LOGRO POR PREGUNTA + BOTÓN VER TABLERO MAESTRO */}
+      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase' }}>
+              Porcentaje de Logro por Pregunta
+            </h3>
+            <p style={{ margin: '4px 0 0 0', fontSize: '12.5px', color: '#64748b' }}>
+              Coloreado por nivel de logro. <strong>Haz clic en cualquier barra</strong> para ver el detalle de distractores y alternativas.
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => setModalTableroMaestro(true)}
+              style={{
+                background: '#1e3a8a',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '8px 14px',
+                fontSize: '12.5px',
+                fontWeight: '700',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <Table size={15} />
+              Ver Tablero Maestro
+            </button>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', padding: '4px', borderRadius: '10px' }}>
+              <span style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', padding: '0 8px' }}>Ordenar:</span>
+              {[
+                { id: 'numero', label: 'N° Pregunta' },
+                { id: 'asc', label: 'Menor a Mayor' },
+                { id: 'desc', label: 'Mayor a Menor' }
+              ].map((btn) => (
+                <button
+                  key={btn.id}
+                  onClick={() => setOrdenItems(btn.id)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '12.5px',
+                    fontWeight: '700',
+                    background: ordenItems === btn.id ? '#ffffff' : 'transparent',
+                    color: ordenItems === btn.id ? '#2563eb' : '#475569',
+                    boxShadow: ordenItems === btn.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+                  }}
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ overflowX: 'auto', paddingBottom: '8px' }}>
+          <div style={{ minWidth: `${Math.max(650, numPreguntas * 32)}px` }}>
+            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', height: '210px', padding: '24px 8px 0 8px', background: '#f8fafc', borderRadius: '10px', borderBottom: '2px solid #cbd5e1', gap: '4px' }}>
+              {preguntasOrdenadas.map((it) => (
+                <div
+                  key={it.numero}
+                  onClick={() => {
+                    setModalItemNum(it.numero);
+                    setOpcionSeleccionadaItem(null);
+                  }}
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    cursor: 'pointer',
+                    minWidth: '24px'
+                  }}
+                  title={`P${it.numero}: ${it.anulada ? 'ANULADA' : `${it.pctLogro}% logro`} (Clave: ${it.claveTexto})`}
+                >
+                  <span style={{ fontSize: '10px', fontWeight: '800', color: '#334155', marginBottom: '4px' }}>
+                    {it.anulada ? 'ANUL' : `${it.pctLogro}%`}
+                  </span>
+                  <div
+                    style={{
+                      width: '78%',
+                      maxWidth: '28px',
+                      height: `${Math.max(6, Math.round((it.pctLogro / 100) * 160))}px`,
+                      background: it.colorInfo.color,
+                      borderRadius: '5px 5px 0 0',
+                      transition: 'height 0.25s ease'
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px 0 8px', gap: '4px' }}>
+              {preguntasOrdenadas.map((it) => (
+                <div
+                  key={it.numero}
+                  onClick={() => {
+                    setModalItemNum(it.numero);
+                    setOpcionSeleccionadaItem(null);
+                  }}
+                  style={{ flex: 1, textAlign: 'center', fontSize: '11px', fontWeight: '700', color: '#475569', cursor: 'pointer', minWidth: '24px' }}
+                >
+                  P{it.numero}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 6. NÓMINA DE RESULTADOS INDIVIDUALES */}
+      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase' }}>
+              Nómina de Resultados Individuales
+            </h3>
+            <p style={{ margin: '4px 0 0 0', fontSize: '12.5px', color: '#2563eb', fontWeight: '600' }}>
+              Haz clic en el nombre de cualquier alumno para ver su hoja escaneada y editar sus respuestas
+            </p>
+          </div>
+
+          <div style={{ position: 'relative' }}>
             <Search size={15} color="#94a3b8" style={{ position: 'absolute', left: '10px', top: '9px' }} />
             <input
               type="text"
-              placeholder="Buscar alumno o RUT..."
+              placeholder="Buscar estudiante o curso..."
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              style={{ width: '100%', padding: '7px 10px 7px 32px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }}
+              style={{ padding: '7px 12px 7px 32px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', minWidth: '230px' }}
             />
           </div>
         </div>
 
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13.5px' }}>
-            <thead style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+            <thead style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
               <tr>
-                <th onClick={() => alternarOrdenColumna('nombre')} style={{ padding: '10px', textAlign: 'left', cursor: 'pointer' }}>
-                  Estudiante {renderIconoOrden('nombre')}
+                <th onClick={() => toggleOrdenTabla('nombre')} style={{ padding: '10px', textAlign: 'left', cursor: 'pointer' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>ESTUDIANTE <IconoOrden col="nombre" /></div>
                 </th>
-                <th onClick={() => alternarOrdenColumna('curso')} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
-                  Curso {renderIconoOrden('curso')}
+                <th onClick={() => toggleOrdenTabla('curso')} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>CURSO <IconoOrden col="curso" /></div>
                 </th>
-                <th onClick={() => alternarOrdenColumna('puntaje')} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
-                  Puntaje {renderIconoOrden('puntaje')}
+                <th onClick={() => toggleOrdenTabla('puntaje')} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>PUNTAJE <IconoOrden col="puntaje" /></div>
                 </th>
-                <th onClick={() => alternarOrdenColumna('porcentaje')} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
-                  % Logro {renderIconoOrden('porcentaje')}
+                <th onClick={() => toggleOrdenTabla('porcentaje')} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>% LOGRO <IconoOrden col="porcentaje" /></div>
                 </th>
-                <th onClick={() => alternarOrdenColumna('nota')} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
-                  Nota {renderIconoOrden('nota')}
+                <th onClick={() => toggleOrdenTabla('nota')} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>NOTA <IconoOrden col="nota" /></div>
                 </th>
-                <th style={{ padding: '10px', textAlign: 'center' }}>Grupo</th>
+                <th style={{ padding: '10px', textAlign: 'center' }}>DESEMPEÑO</th>
                 {listaOAs.map((oaObj) => (
-                  <th key={oaObj.oa} onClick={() => alternarOrdenColumna(`oa_${oaObj.oa}`)} style={{ padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
-                    {oaObj.oa} {renderIconoOrden(`oa_${oaObj.oa}`)}
+                  <th
+                    key={oaObj.oa}
+                    onClick={() => toggleOrdenTabla(`oa_${oaObj.oa}`)}
+                    style={{ padding: '10px', textAlign: 'center', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                      % {oaObj.oa} <IconoOrden col={`oa_${oaObj.oa}`} />
+                    </div>
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {filasOrdenadas.map((r, idx) => {
-                const cat = clasificarDesempeno(r.porcentaje);
-                const imgHoja = obtenerImagenHoja(r);
+              {alumnosFiltradosYOrdenados.map((al, idx) => {
+                const des = clasificarDesempeno(al.porcentaje);
+                const notaNum = Number(al.nota || 1.0);
+                const imgHoja = obtenerImagenHoja(al);
                 return (
-                  <tr key={r.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '10px' }}>
+                  <tr key={al.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '10px', fontWeight: '700' }}>
                       <button
-                        type="button"
-                        onClick={() => abrirModalAlumno(r)}
-                        style={{ background: 'none', border: 'none', padding: 0, color: '#1d4ed8', fontWeight: '700', textDecoration: 'underline', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                        onClick={() => abrirModalAlumno(al)}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          padding: 0,
+                          color: '#1e3a8a',
+                          fontWeight: '700',
+                          fontSize: '13.5px',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          textDecoration: 'underline',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px'
+                        }}
                       >
-                        {r.nombre}
+                        {al.nombre}
                         {imgHoja && <Eye size={14} color="#64748b" />}
                       </button>
                     </td>
-                    <td style={{ padding: '10px', textAlign: 'center', color: '#475569' }}>{r.curso || '-'}</td>
-                    <td style={{ padding: '10px', textAlign: 'center', fontWeight: '600' }}>{r.puntaje}/{r.total}</td>
-                    <td style={{ padding: '10px', textAlign: 'center', fontWeight: '700' }}>{r.porcentaje}%</td>
-                    <td style={{ padding: '10px', textAlign: 'center', fontWeight: '800', color: Number(r.nota) >= notaAprob ? '#16a34a' : '#dc2626' }}>
-                      {Number(r.nota).toFixed(1)}
+                    <td style={{ padding: '10px', textAlign: 'center', color: '#475569' }}>{al.curso || '-'}</td>
+                    <td style={{ padding: '10px', textAlign: 'center', fontWeight: '600' }}>{al.puntaje}/{al.total}</td>
+                    <td style={{ padding: '10px', textAlign: 'center', fontWeight: '700' }}>{Number(al.porcentaje).toFixed(1)}%</td>
+                    <td style={{ padding: '10px', textAlign: 'center', fontWeight: '800', fontSize: '14.5px', color: notaNum >= notaAprob ? '#16a34a' : '#dc2626' }}>
+                      {notaNum.toFixed(1)}
                     </td>
                     <td style={{ padding: '10px', textAlign: 'center' }}>
-                      <span style={{ padding: '3px 9px', borderRadius: '999px', fontSize: '11.5px', fontWeight: '700', background: cat.bg, color: cat.text }}>
-                        {cat.label}
+                      <span style={{ background: des.bg, color: des.text, padding: '3px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: '700', whiteSpace: 'nowrap' }}>
+                        {des.label}
                       </span>
                     </td>
-                    {listaOAs.map((oaObj) => (
-                      <td key={oaObj.oa} style={{ padding: '10px', textAlign: 'center', fontWeight: '700' }}>
-                        {calcularLogroAlumnoEnOA(r, oaObj)}%
-                      </td>
-                    ))}
+                    {listaOAs.map((oaObj) => {
+                      const pctOA = calcularLogroAlumnoEnOA(al, oaObj);
+                      return (
+                        <td key={oaObj.oa} style={{ padding: '10px', textAlign: 'center', fontWeight: '700', color: '#334155' }}>
+                          {pctOA}%
+                        </td>
+                      );
+                    })}
                   </tr>
                 );
               })}
@@ -707,7 +1117,6 @@ export default function AnalisisPanel({
               overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.35)'
             }}
           >
-            {/* Cabecera del Modal de Dobles y Blancas */}
             <div style={{ padding: '16px 22px', background: '#fffbeb', borderBottom: '1px solid #fde68a', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
               <div>
                 <div style={{ fontSize: '11.5px', fontWeight: '800', color: '#92400e', textTransform: 'uppercase' }}>
@@ -734,7 +1143,6 @@ export default function AnalisisPanel({
               </button>
             </div>
 
-            {/* Cuerpo en 2 columnas: Izquierda confirmar/modificar clave | Derecha hoja del estudiante */}
             <div
               style={{
                 display: 'grid',
@@ -872,154 +1280,544 @@ export default function AnalisisPanel({
         </div>
       )}
 
-      {/* MODAL 1: GRUPO DE DESEMPEÑO */}
-      {modalGrupo && (
-        <div onClick={() => setModalGrupo(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '640px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ padding: '16px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      {/* ===================================================================== */}
+      {/* MODAL TABLERO MAESTRO (MATRIZ ESTUDIANTES X PREGUNTAS)                */}
+      {/* ===================================================================== */}
+      {modalTableroMaestro && (
+        <div
+          onClick={() => setModalTableroMaestro(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.7)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1050, padding: '16px'
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#ffffff', borderRadius: '16px', width: '98vw', maxWidth: '1400px',
+              maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden'
+            }}
+          >
+            <div style={{ padding: '16px 22px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <h3 style={{ margin: 0, fontSize: '17px', color: modalGrupo.color }}>
-                  Grupo: {modalGrupo.label} ({modalGrupo.rango})
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a' }}>
+                  Tablero Maestro — {config.tituloPrueba}
                 </h3>
                 <p style={{ margin: '2px 0 0 0', fontSize: '12.5px', color: '#64748b' }}>
-                  {modalGrupo.cantidad} estudiante(s) en este nivel
+                  Ordenado de mayor a menor % de logro en ambos ejes (ítems arriba, estudiantes abajo)
                 </p>
               </div>
-              <button type="button" onClick={() => setModalGrupo(null)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '8px', padding: '6px 10px', cursor: 'pointer' }}>
-                <X size={18} />
+              <button
+                onClick={() => setModalTableroMaestro(false)}
+                style={{ background: '#f1f5f9', border: 'none', borderRadius: '8px', padding: '7px 10px', cursor: 'pointer' }}
+              >
+                <X size={18} color="#475569" />
               </button>
             </div>
-            <div style={{ padding: '16px 20px', overflowY: 'auto' }}>
-              {modalGrupo.estudiantes.length === 0 ? (
-                <p style={{ color: '#64748b', fontSize: '14px' }}>No hay estudiantes en este grupo.</p>
-              ) : (
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13.5px' }}>
-                  <thead>
-                    <tr style={{ background: '#f8fafc', textAlign: 'left' }}>
-                      <th style={{ padding: '8px' }}>Estudiante</th>
-                      <th style={{ padding: '8px', textAlign: 'center' }}>Logro</th>
-                      <th style={{ padding: '8px', textAlign: 'center' }}>Nota</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {modalGrupo.estudiantes.map((est, i) => (
-                      <tr key={est.id || i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                        <td style={{ padding: '8px' }}>
-                          <button type="button" onClick={() => { setModalGrupo(null); abrirModalAlumno(est); }} style={{ background: 'none', border: 'none', padding: 0, color: '#1d4ed8', fontWeight: '700', textDecoration: 'underline', cursor: 'pointer' }}>
-                            {est.nombre}
-                          </button>
-                        </td>
-                        <td style={{ padding: '8px', textAlign: 'center' }}>{est.porcentaje}%</td>
-                        <td style={{ padding: '8px', textAlign: 'center', fontWeight: '800' }}>{Number(est.nota).toFixed(1)}</td>
-                      </tr>
+
+            <div style={{ overflow: 'auto', flex: 1, padding: '12px' }}>
+              <table style={{ borderCollapse: 'collapse', fontSize: '11.5px', width: '100%' }}>
+                <thead>
+                  <tr style={{ background: '#0f172a', color: '#ffffff' }}>
+                    <th style={{ padding: '8px 10px', textAlign: 'left', position: 'sticky', left: 0, background: '#0f172a', zIndex: 2, minWidth: '190px' }}>
+                      Estudiante
+                    </th>
+                    <th style={{ padding: '8px 6px', textAlign: 'center', minWidth: '50px' }}>Logro</th>
+                    <th style={{ padding: '8px 6px', textAlign: 'center', minWidth: '45px' }}>Nota</th>
+                    {preguntasTableroOrdenadas.map((it) => (
+                      <th
+                        key={it.numero}
+                        style={{
+                          padding: '6px 4px',
+                          textAlign: 'center',
+                          minWidth: '38px',
+                          borderLeft: '1px solid #334155',
+                          background: it.anulada ? '#475569' : '#0f172a'
+                        }}
+                      >
+                        <div>P{it.numero}</div>
+                        <div style={{ fontSize: '10px', color: '#93c5fd', fontWeight: '600' }}>
+                          {it.anulada ? 'ANUL' : `${it.pctLogro}%`}
+                        </div>
+                      </th>
                     ))}
-                  </tbody>
-                </table>
+                  </tr>
+                </thead>
+                <tbody>
+                  {alumnosTableroOrdenados.map((al, idx) => (
+                    <tr key={al.id || idx} style={{ borderBottom: '1px solid #e2e8f0', background: idx % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
+                      <td
+                        onClick={() => {
+                          setModalTableroMaestro(false);
+                          abrirModalAlumno(al);
+                        }}
+                        style={{
+                          padding: '7px 10px',
+                          fontWeight: '700',
+                          color: '#1e3a8a',
+                          cursor: 'pointer',
+                          position: 'sticky',
+                          left: 0,
+                          background: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+                          zIndex: 1,
+                          whiteSpace: 'nowrap'
+                        }}
+                      >
+                        {al.nombre}
+                      </td>
+                      <td style={{ padding: '7px 6px', textAlign: 'center', fontWeight: '700' }}>{al.porcentaje}%</td>
+                      <td style={{ padding: '7px 6px', textAlign: 'center', fontWeight: '800', color: Number(al.nota) >= notaAprob ? '#16a34a' : '#dc2626' }}>
+                        {Number(al.nota).toFixed(1)}
+                      </td>
+                      {preguntasTableroOrdenadas.map((it) => {
+                        const resp = al.respuestas?.[it.numero] || '';
+                        const ok = !it.anulada && it.clavesCorrectas.includes(resp);
+                        const vacia = !resp;
+                        return (
+                          <td
+                            key={it.numero}
+                            style={{
+                              padding: '6px 3px',
+                              textAlign: 'center',
+                              borderLeft: '1px solid #f1f5f9',
+                              fontWeight: '800',
+                              background: it.anulada ? '#f1f5f9' : ok ? '#dcfce7' : vacia ? '#f8fafc' : '#fee2e2',
+                              color: it.anulada ? '#64748b' : ok ? '#166534' : vacia ? '#94a3b8' : '#991b1b'
+                            }}
+                          >
+                            {it.anulada ? 'ANUL' : ok ? '✓' : vacia ? '-' : resp === 'DOBLE' ? 'DUP' : `✗${resp}`}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* MODAL 1: GRUPO DE DESEMPEÑO                                           */}
+      {/* ===================================================================== */}
+      {modalGrupo && (
+        <div
+          onClick={() => setModalGrupo(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px'
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '520px',
+              maxHeight: '82vh', display: 'flex', flexDirection: 'column',
+              boxShadow: '0 20px 25px -5px rgba(0,0,0,0.2)', overflow: 'hidden'
+            }}
+          >
+            <div style={{ padding: '18px 22px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a' }}>
+                  Grupo: {modalGrupo.label}
+                </h3>
+                <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#64748b' }}>
+                  {modalGrupo.estudiantes.length} estudiante(s) en este nivel ({modalGrupo.rango})
+                </p>
+              </div>
+              <button
+                onClick={() => setModalGrupo(null)}
+                style={{ background: '#f1f5f9', border: 'none', borderRadius: '8px', padding: '6px', cursor: 'pointer' }}
+              >
+                <X size={18} color="#475569" />
+              </button>
+            </div>
+
+            <div style={{ padding: '12px 22px', overflowY: 'auto', flex: 1 }}>
+              {modalGrupo.estudiantes.length === 0 ? (
+                <p style={{ textAlign: 'center', color: '#64748b', padding: '20px 0' }}>
+                  No hay estudiantes en este nivel de desempeño.
+                </p>
+              ) : (
+                modalGrupo.estudiantes.map((est, i) => (
+                  <div
+                    key={est.id || i}
+                    onClick={() => {
+                      setModalGrupo(null);
+                      abrirModalAlumno(est);
+                    }}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '12px 4px', borderBottom: '1px solid #f1f5f9', cursor: 'pointer'
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: '700', fontSize: '14px', color: '#0f172a' }}>{est.nombre}</div>
+                      <div style={{ fontSize: '12px', color: '#64748b' }}>Curso: {est.curso || '-'}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontWeight: '800', fontSize: '15px', color: '#0f172a' }}>
+                        {Number(est.nota).toFixed(1)}
+                      </div>
+                      <div style={{ fontSize: '11.5px', color: '#64748b' }}>
+                        {Number(est.porcentaje).toFixed(1)}%
+                      </div>
+                    </div>
+                  </div>
+                ))
               )}
             </div>
           </div>
         </div>
       )}
 
-      {/* MODAL 2: DETALLE DE ÍTEM Y DISTRACTORES */}
+      {/* ===================================================================== */}
+      {/* MODAL 2: DETALLE DEL ÍTEM P_X + ELECCIÓN POR ALTERNATIVA + VISOR PDF  */}
+      {/* ===================================================================== */}
       {itemActivoModal && (
-        <div onClick={() => setModalItemNum(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '720px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ padding: '16px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: '18px' }}>
-                  Pregunta {itemActivoModal.numero} — Clave: <span style={{ color: '#16a34a' }}>{itemActivoModal.claveTexto}</span>
-                </h3>
-                <p style={{ margin: '2px 0 0 0', fontSize: '12.5px', color: '#64748b' }}>
-                  {itemActivoModal.anulada ? 'Pregunta anulada (0 pts)' : `Logro: ${itemActivoModal.pctLogro}% (${itemActivoModal.aciertos}/${itemActivoModal.total})`} • {itemActivoModal.oa}
-                </p>
-              </div>
-              <button type="button" onClick={() => setModalItemNum(null)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '8px', padding: '6px 10px', cursor: 'pointer' }}>
-                <X size={18} />
-              </button>
-            </div>
-            <div style={{ padding: '18px 20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {opciones.map((op) => {
-                const listaOp = itemActivoModal.porOpcion[op] || [];
-                const esCorrecta = itemActivoModal.clavesCorrectas.includes(op);
-                const abierta = opcionSeleccionadaItem === op;
-                return (
-                  <div key={op} style={{ border: `1px solid ${esCorrecta ? '#86efac' : '#e2e8f0'}`, borderRadius: '10px', background: esCorrecta ? '#f0fdf4' : '#f8fafc' }}>
-                    <div onClick={() => setOpcionSeleccionadaItem(abierta ? null : op)} style={{ padding: '10px 14px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', fontWeight: '700', fontSize: '13.5px' }}>
-                      <span>Alternativa {op} {esCorrecta ? '(Correcta)' : ''}</span>
-                      <span>{listaOp.length} alumno(s)</span>
-                    </div>
-                    {abierta && (
-                      <div style={{ padding: '8px 14px 12px 14px', borderTop: '1px solid #e2e8f0', fontSize: '12.5px', color: '#334155' }}>
-                        {listaOp.length > 0 ? listaOp.map((x) => x.nombre).join(', ') : 'Ningún estudiante marcó esta opción.'}
-                      </div>
-                    )}
+        <div
+          onClick={() => setModalItemNum(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px'
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#ffffff', borderRadius: '16px', width: '100%',
+              maxWidth: pdfPruebaUrl ? '1020px' : '560px',
+              maxHeight: '88vh', display: 'flex', flexDirection: 'column',
+              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', overflow: 'hidden'
+            }}
+          >
+            <div style={{ padding: '16px 22px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span style={{ background: '#2563eb', color: '#ffffff', padding: '5px 12px', borderRadius: '8px', fontWeight: '800', fontSize: '15px' }}>
+                  P{itemActivoModal.numero}
+                </span>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '17px', fontWeight: '800', color: '#0f172a' }}>
+                    Detalle del Ítem P{itemActivoModal.numero}
+                  </h3>
+                  <div style={{ fontSize: '12px', color: '#64748b' }}>
+                    {itemActivoModal.anulada ? 'Pregunta anulada (0 pts)' : 'Rendimiento en el curso evaluado'}
                   </div>
-                );
-              })}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {pdfPruebaUrl && (
+                  <a
+                    href={pdfPruebaUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 10px',
+                      borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '12px',
+                      fontWeight: '600', color: '#334155', textDecoration: 'none'
+                    }}
+                  >
+                    <ExternalLink size={14} /> Abrir PDF
+                  </a>
+                )}
+                <button
+                  onClick={() => setModalItemNum(null)}
+                  style={{ background: '#f1f5f9', border: 'none', borderRadius: '8px', padding: '6px', cursor: 'pointer' }}
+                >
+                  <X size={18} color="#475569" />
+                </button>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: pdfPruebaUrl ? '1fr 1fr' : '1fr', overflowY: 'auto', flex: 1 }}>
+              <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
+                <div style={{ background: '#f8fafc', padding: '14px 16px', borderRadius: '10px', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: '11.5px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>% Logro General</div>
+                    <div style={{ fontSize: '13px', color: '#334155', marginTop: '2px' }}>
+                      Aciertos: <strong>{itemActivoModal.aciertos} de {totalAlumnos}</strong> estudiantes
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '26px', fontWeight: '800', color: '#0f172a' }}>
+                      {itemActivoModal.anulada ? 'ANUL' : `${itemActivoModal.pctLogro}%`}
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#64748b' }}>
+                      Clave correcta: <strong style={{ color: '#16a34a' }}>{itemActivoModal.claveTexto}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                    <span style={{ fontSize: '12px', fontWeight: '800', color: '#475569', textTransform: 'uppercase' }}>
+                      Elección por Alternativa
+                    </span>
+                    <span style={{ fontSize: '11.5px', color: '#2563eb' }}>Haz clic en una opción para ver quién la marcó</span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {opciones.map((op) => {
+                      const alumnosOp = itemActivoModal.porOpcion[op] || [];
+                      const pctOp = totalAlumnos > 0 ? Math.round((alumnosOp.length / totalAlumnos) * 100) : 0;
+                      const esCorrecta = !itemActivoModal.anulada && itemActivoModal.clavesCorrectas.includes(op);
+                      const activa = opcionSeleccionadaItem === op;
+
+                      return (
+                        <div
+                          key={op}
+                          onClick={() => setOpcionSeleccionadaItem(activa ? null : op)}
+                          style={{
+                            padding: '10px 12px',
+                            borderRadius: '10px',
+                            border: activa ? '2px solid #2563eb' : esCorrecta ? '1px solid #86efac' : '1px solid #e2e8f0',
+                            background: esCorrecta ? '#f0fdf4' : '#ffffff',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', marginBottom: '6px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ width: '22px', height: '22px', borderRadius: '6px', background: esCorrecta ? '#16a34a' : '#f1f5f9', color: esCorrecta ? '#fff' : '#334155', fontWeight: '800', fontSize: '12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                                {op}
+                              </span>
+                              <span style={{ fontWeight: '700', color: '#0f172a' }}>Alternativa {op}</span>
+                              {esCorrecta && (
+                                <span style={{ background: '#dcfce7', color: '#166534', fontSize: '10.5px', fontWeight: '800', padding: '2px 7px', borderRadius: '4px' }}>
+                                  CORRECTA
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ fontWeight: '700', color: '#334155' }}>
+                              <span style={{ fontSize: '12px', color: '#64748b', marginRight: '8px' }}>{alumnosOp.length} alumnos</span>
+                              {pctOp}%
+                            </div>
+                          </div>
+                          <div style={{ width: '100%', height: '7px', background: '#e2e8f0', borderRadius: '999px', overflow: 'hidden' }}>
+                            <div style={{ width: `${pctOp}%`, height: '100%', background: esCorrecta ? '#16a34a' : '#94a3b8' }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    <div
+                      onClick={() => setOpcionSeleccionadaItem(opcionSeleccionadaItem === 'OMITIDA' ? null : 'OMITIDA')}
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: '10px',
+                        border: opcionSeleccionadaItem === 'OMITIDA' ? '2px solid #2563eb' : '1px solid #e2e8f0',
+                        background: '#f8fafc',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
+                        <span style={{ fontWeight: '600', color: '#475569' }}>Omitida / Blanco / Doble</span>
+                        <span style={{ fontWeight: '700', color: '#475569' }}>
+                          {itemActivoModal.omitidasList.length + itemActivoModal.doblesList.length} alumno(s)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {opcionSeleccionadaItem && (
+                  <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px', padding: '12px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '800', color: '#1e40af', marginBottom: '6px' }}>
+                      {opcionSeleccionadaItem === 'OMITIDA'
+                        ? 'Estudiantes que omitieron o marcaron doble:'
+                        : `Estudiantes que marcaron la alternativa ${opcionSeleccionadaItem}:`}
+                    </div>
+                    <div style={{ maxHeight: '110px', overflowY: 'auto', fontSize: '12.5px', color: '#1e293b' }}>
+                      {(opcionSeleccionadaItem === 'OMITIDA'
+                        ? [...itemActivoModal.omitidasList, ...itemActivoModal.doblesList]
+                        : itemActivoModal.porOpcion[opcionSeleccionadaItem] || []
+                      ).map((st, idx) => (
+                        <div key={idx} style={{ padding: '3px 0', borderBottom: '1px solid #dbeafe' }}>
+                          • {st.nombre} ({st.curso || '-'})
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '12px' }}>
+                  <div style={{ fontSize: '11.5px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', marginBottom: '6px' }}>
+                    Objetivo de Aprendizaje
+                  </div>
+                  <span style={{ background: '#dbeafe', color: '#1e40af', padding: '3px 9px', borderRadius: '6px', fontSize: '12px', fontWeight: '800' }}>
+                    {itemActivoModal.oa}
+                  </span>
+                  {itemActivoModal.descripcion && (
+                    <p style={{ margin: '6px 0 0 0', fontSize: '12.5px', color: '#334155' }}>
+                      {itemActivoModal.descripcion}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {pdfPruebaUrl && (
+                <div style={{ borderLeft: '1px solid #e2e8f0', background: '#f1f5f9', minHeight: '420px' }}>
+                  <iframe
+                    src={pdfPruebaUrl}
+                    title="Vista previa de la evaluación"
+                    style={{ width: '100%', height: '100%', minHeight: '480px', border: 'none' }}
+                  />
+                </div>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* MODAL 3: DETALLE INDIVIDUAL + VISOR DE HOJA + EDICIÓN */}
+      {/* ===================================================================== */}
+      {/* MODAL 3: DETALLE INDIVIDUAL + VISOR DE HOJA + EDICIÓN DE RESPUESTAS   */}
+      {/* ===================================================================== */}
       {modalAlumno && (
-        <div onClick={() => setModalAlumno(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: imagenAlumnoModal ? '1180px' : '740px', maxHeight: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ padding: '18px 22px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+        <div
+          onClick={() => setModalAlumno(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.65)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px'
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#ffffff', borderRadius: '16px', width: '100%',
+              maxWidth: imagenAlumnoModal ? '1180px' : '820px',
+              maxHeight: '92vh', display: 'flex', flexDirection: 'column',
+              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.3)', overflow: 'hidden'
+            }}
+          >
+            <div style={{ padding: '18px 24px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
               <div>
-                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800' }}>{modalAlumno.nombre}</h3>
-                <div style={{ fontSize: '12.5px', color: '#64748b' }}>
-                  RUT: {modalAlumno.rut} • Puntaje: <strong>{modalAlumno.puntaje}/{modalAlumno.total}</strong> • Nota: <strong>{Number(modalAlumno.nota).toFixed(1)}</strong>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a' }}>
+                  {modalAlumno.nombre}
+                </h3>
+                <div style={{ fontSize: '13px', color: '#64748b', marginTop: '3px' }}>
+                  RUT: {modalAlumno.rut} &nbsp;|&nbsp; Curso: {modalAlumno.curso || '-'} &nbsp;|&nbsp; Puntaje: <strong>{modalAlumno.puntaje}/{modalAlumno.total}</strong> &nbsp;|&nbsp; Nota: <strong style={{ color: Number(modalAlumno.nota) >= notaAprob ? '#16a34a' : '#dc2626' }}>{Number(modalAlumno.nota).toFixed(1)}</strong>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '10px' }}>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 {editandoRespuestas && puedeEditar && (
-                  <button type="button" onClick={guardarCambiosAlumno} disabled={guardandoEdicion} style={{ background: '#16a34a', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                    <Save size={16} /> {guardandoEdicion ? 'Guardando...' : 'Guardar Cambios'}
+                  <button
+                    onClick={guardarCambiosAlumno}
+                    disabled={guardandoEdicion}
+                    style={{
+                      background: '#16a34a', color: 'white', border: 'none',
+                      padding: '9px 16px', borderRadius: '8px', fontWeight: '700',
+                      cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px'
+                    }}
+                  >
+                    <Save size={16} />
+                    {guardandoEdicion ? 'Guardando...' : 'Guardar Cambios'}
                   </button>
                 )}
-                <button type="button" onClick={() => setModalAlumno(null)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '8px', padding: '6px 10px', cursor: 'pointer' }}>
-                  <X size={18} />
+
+                <button
+                  onClick={() => setModalAlumno(null)}
+                  style={{ background: '#f1f5f9', border: 'none', borderRadius: '8px', padding: '8px 12px', cursor: 'pointer' }}
+                >
+                  <X size={18} color="#475569" />
                 </button>
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: imagenAlumnoModal ? '1.15fr 0.85fr' : '1fr', gap: '20px', padding: '18px 22px', overflowY: 'auto', flex: 1 }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: imagenAlumnoModal ? '1.15fr 0.85fr' : '1fr',
+                gap: '20px',
+                padding: '20px 24px',
+                overflowY: 'auto',
+                flex: 1
+              }}
+            >
               <div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(156px, 1fr))', gap: '8px' }}>
-                  {Array.from({ length: numPreguntas }, (_, i) => {
-                    const p = i + 1;
-                    const resp = (editandoRespuestas ? respuestasEditadas[p] : modalAlumno.respuestas?.[p]) || '';
-                    const itemPauta = pauta[p];
-                    const clavesCorrectas = obtenerClavesCorrectasItem(itemPauta);
-                    const esBuena = clavesCorrectas.includes(resp);
-                    const esOmitida = resp === '' || resp === '-';
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
+                  {listaOAs.map((oaObj) => {
+                    const pct = calcularLogroAlumnoEnOA(
+                      modalAlumno,
+                      oaObj,
+                      editandoRespuestas ? respuestasEditadas : null
+                    );
+                    return (
+                      <div key={oaObj.oa} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '7px 11px', fontSize: '12.5px' }}>
+                        <strong>{oaObj.oa}:</strong> <span style={{ color: oaObj.color, fontWeight: '800' }}>{pct}%</span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {puedeEditar && (
+                  <div style={{ fontSize: '12.5px', fontWeight: '700', color: '#334155', marginBottom: '10px' }}>
+                    Haz clic en una alternativa para corregir lo que leyó el escáner (clic de nuevo para dejar omitida):
+                  </div>
+                )}
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: '8px' }}>
+                  {Array.from({ length: numPreguntas }, (_, i) => i + 1).map((numP) => {
+                    const actual = (editandoRespuestas ? respuestasEditadas[numP] : modalAlumno.respuestas?.[numP]) || '';
+                    const itemPauta = pauta[numP];
+                    const claves = obtenerClavesCorrectasItem(itemPauta);
+                    const esAnulada = obtenerPuntajeItem(itemPauta) === 0;
+                    const esOk = !esAnulada && claves.includes(actual);
 
                     return (
-                      <div key={p} style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${esBuena ? '#86efac' : esOmitida ? '#cbd5e1' : '#fecaca'}`, background: esBuena ? '#f0fdf4' : esOmitida ? '#f8fafc' : '#fef2f2', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: '800' }}>
-                          <span>P{p} <small style={{ color: '#64748b', fontWeight: '500' }}>({clavesCorrectas.join('/') || '-'})</small></span>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', color: esBuena ? '#166534' : esOmitida ? '#64748b' : '#991b1b' }}>
-                            {resp === 'DOBLE' ? 'DUP' : resp || '-'}
-                            {esBuena ? <CheckCircle2 size={13} color="#16a34a" /> : esOmitida ? <MinusCircle size={13} color="#94a3b8" /> : <XCircle size={13} color="#dc2626" />}
+                      <div
+                        key={numP}
+                        style={{
+                          padding: '8px 10px',
+                          borderRadius: '10px',
+                          border: `1px solid ${esAnulada ? '#cbd5e1' : esOk ? '#86efac' : actual ? '#fecaca' : '#cbd5e1'}`,
+                          background: esAnulada ? '#f1f5f9' : esOk ? '#f0fdf4' : actual ? '#fef2f2' : '#f8fafc',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', fontWeight: '700' }}>
+                          <span>
+                            P{numP}{' '}
+                            <small style={{ color: '#64748b', fontWeight: '500' }}>
+                              ({esAnulada ? 'ANUL' : claves.join('/') || '-'})
+                            </small>
+                          </span>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', color: esAnulada ? '#64748b' : esOk ? '#16a34a' : actual ? '#dc2626' : '#64748b' }}>
+                            {actual === 'DOBLE' ? 'DUP' : actual || '-'}
+                            {esOk ? <CheckCircle2 size={13} /> : actual ? <XCircle size={13} /> : <MinusCircle size={13} />}
                           </span>
                         </div>
+
                         <div style={{ display: 'flex', gap: '4px' }}>
                           {opciones.map((op) => {
-                            const seleccionado = resp === op;
+                            const seleccionado = actual === op;
                             return (
                               <button
                                 key={op}
                                 type="button"
                                 disabled={!puedeEditar}
                                 onClick={() => {
-                                  const base = editandoRespuestas ? respuestasEditadas : { ...(modalAlumno.respuestas || {}) };
-                                  const nuevo = { ...base, [p]: seleccionado ? '' : op };
+                                  const base = editandoRespuestas
+                                    ? respuestasEditadas
+                                    : { ...(modalAlumno.respuestas || {}) };
+                                  const nuevo = { ...base, [numP]: seleccionado ? '' : op };
                                   setRespuestasEditadas(nuevo);
                                   setEditandoRespuestas(true);
                                 }}
-                                style={{ flex: 1, padding: '3px 0', fontSize: '11px', fontWeight: '700', borderRadius: '5px', cursor: puedeEditar ? 'pointer' : 'not-allowed', border: seleccionado ? '1px solid #1d4ed8' : '1px solid #cbd5e1', background: seleccionado ? '#2563eb' : '#ffffff', color: seleccionado ? '#ffffff' : '#334155' }}
+                                style={{
+                                  flex: 1,
+                                  padding: '3px 0',
+                                  fontSize: '11px',
+                                  fontWeight: '700',
+                                  borderRadius: '5px',
+                                  cursor: puedeEditar ? 'pointer' : 'not-allowed',
+                                  border: seleccionado ? '1px solid #1d4ed8' : '1px solid #cbd5e1',
+                                  background: seleccionado ? '#2563eb' : '#ffffff',
+                                  color: seleccionado ? '#ffffff' : '#334155'
+                                }}
                               >
                                 {op}
                               </button>
@@ -1035,13 +1833,33 @@ export default function AnalisisPanel({
               {imagenAlumnoModal && (
                 <div style={{ background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                   <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569' }}>Hoja procesada</span>
-                    <button type="button" onClick={() => setZoomImagen(!zoomImagen)} style={{ background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '4px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569' }}>
+                      Hoja leída (Verde = Buena | Rojo = Mala | Azul = Clave)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setZoomImagen(!zoomImagen)}
+                      style={{
+                        background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px',
+                        padding: '4px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer',
+                        display: 'inline-flex', alignItems: 'center', gap: '4px'
+                      }}
+                    >
                       <ZoomIn size={13} /> {zoomImagen ? 'Ajustar' : 'Ampliar'}
                     </button>
                   </div>
+
                   <div style={{ width: '100%', maxHeight: '68vh', overflow: 'auto', textAlign: 'center' }}>
-                    <img src={imagenAlumnoModal} alt={`Hoja de ${modalAlumno.nombre}`} style={{ width: zoomImagen ? '160%' : '100%', maxWidth: zoomImagen ? 'none' : '100%', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
+                    <img
+                      src={imagenAlumnoModal}
+                      alt={`Hoja de ${modalAlumno.nombre}`}
+                      style={{
+                        width: zoomImagen ? '160%' : '100%',
+                        maxWidth: zoomImagen ? 'none' : '100%',
+                        borderRadius: '8px',
+                        border: '1px solid #cbd5e1'
+                      }}
+                    />
                   </div>
                 </div>
               )}
