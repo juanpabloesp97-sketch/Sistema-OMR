@@ -241,8 +241,8 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   cv.imshow(outCanvas, warped);
   const outCtx = outCanvas.getContext('2d');
 
-  const radioPx = 21;
-  const radioNucleoPx = 12;
+const radioPx = 21;
+  const radioNucleoPx = 9;
   const respuestas = {};
 
   for (let p = 1; p <= totalPreguntas; p++) {
@@ -293,12 +293,10 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     const ordenadosBrillo = [...densidades].sort((a, b) => b.brilloNucleo - a.brilloNucleo);
     const fondoFilaBrillo = (ordenadosBrillo[0].brilloNucleo + ordenadosBrillo[1].brilloNucleo) / 2;
 
-    // Criterio anti falsos positivos:
-    // 1) Marca estándar: > 32% tinta y al menos +14% más oscura que las burbujas vacías
-    // 2) Marca suave grafito: núcleo < 195 de brillo y al menos 32 niveles más oscuro que las vacías
+    // Calibrado para impresoras con tóner oscuro (evita falsos positivos en la letra B)
     const marcadas = densidades.filter((d) => {
-      const marcaFuerte = d.ratio > 0.32 && d.ratio - fondoFilaRatio > 0.14;
-      const marcaTenueGrafito = d.brilloNucleo < 195 && fondoFilaBrillo - d.brilloNucleo > 32;
+      const marcaFuerte = d.ratio > 0.38 && d.ratio - fondoFilaRatio > 0.17;
+      const marcaTenueGrafito = d.brilloNucleo < 178 && fondoFilaBrillo - d.brilloNucleo > 42;
       return marcaFuerte || marcaTenueGrafito;
     });
 
