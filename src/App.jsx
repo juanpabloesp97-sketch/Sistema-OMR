@@ -191,10 +191,10 @@ export default function App() {
     if (ev.curso_id && idsCursosProfe.has(ev.curso_id)) return true;
 
     if (!ev.curso_id && ev.nivel_id) {
-      const nivelesAula = new Set(
-        listaCursos.filter((c) => idsCursosProfe.has(c.id)).map((c) => c.nivel_id)
+      const tieneCursoEnNivel = listaCursos.some(
+        (c) => c.nivel_id === ev.nivel_id && idsCursosProfe.has(c.id)
       );
-      if (nivelesAula.has(ev.nivel_id)) return true;
+      if (tieneCursoEnNivel) return true;
     }
 
     return false;
@@ -736,7 +736,12 @@ export default function App() {
     }
     setEximidosRuts(Array.isArray(ev.eximidos) ? ev.eximidos : []);
 
-    const deSuAula = esEvaluacionDeSuAula(ev, perfilUsuario, idsCursosProfe, listaCursos);
+    const tieneCursoEnVista =
+      (cursoFiltradoId && idsCursosProfe.has(cursoFiltradoId)) ||
+      (ev.curso_id && idsCursosProfe.has(ev.curso_id)) ||
+      (ev.nivel_id && listaCursos.some((c) => c.nivel_id === ev.nivel_id && idsCursosProfe.has(c.id)));
+
+    const deSuAula = esEvaluacionDeSuAula(ev, perfilUsuario, idsCursosProfe, listaCursos) || tieneCursoEnVista;
     const asigUsr = (perfilUsuario?.asignatura || '').trim().toLowerCase();
     const asigEv = (ev?.asignatura || '').trim().toLowerCase();
     const mismaAsig = Boolean(asigUsr && asigEv && asigUsr === asigEv);
@@ -1536,7 +1541,16 @@ export default function App() {
     );
   }
 
-  const esEvaluacionPropia = esEvaluacionDeSuAula(config, profesor, cursosAsignadosAula, cursos);
+  const tieneCursoAsignadoEnVista =
+    (cursoActivoId && cursosAsignadosAula.has(cursoActivoId)) ||
+    (config.cursoId && cursosAsignadosAula.has(config.cursoId)) ||
+    (config.nivelId &&
+      cursos.some((c) => c.nivel_id === config.nivelId && cursosAsignadosAula.has(c.id)));
+
+  const esEvaluacionPropia =
+    esEvaluacionDeSuAula(config, profesor, cursosAsignadosAula, cursos) ||
+    tieneCursoAsignadoEnVista;
+
   const esSuperAdmin = profesor.rol === 'admin';
   const asigUsuarioNorm = (profesor?.asignatura || '').trim().toLowerCase();
   const asigEvalNorm = (config?.asignatura || '').trim().toLowerCase();
