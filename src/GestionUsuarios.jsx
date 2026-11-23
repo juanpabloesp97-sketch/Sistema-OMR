@@ -1,52 +1,119 @@
 import React, { useState, useEffect } from 'react';
+import { createClient } from '@supabase/supabase-js';
 import {
-  Users, UserPlus, Shield, Save, CheckCircle2, XCircle,
-  BookOpen, Search, RefreshCw, KeyRound
+  UserPlus, Users, BookOpen, CheckCircle2, XCircle,
+  GraduationCap, RefreshCw, ShieldCheck, Save, RotateCcw,
+  KeyRound, Mail, Eye, EyeOff, Copy
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
-import { CATEGORIAS_PERMISOS, PERMISOS_RESPALDO } from './permisosConfig';
 
-const ROLES_CONFIG = [
-  { id: 'docente', label: 'Docente', color: '#2563eb', bg: '#eff6ff' },
-  { id: 'jefe_depto', label: 'Jefe Depto', color: '#7c3aed', bg: '#f5f3ff' },
-  { id: 'utp', label: 'UTP', color: '#059669', bg: '#ecfdf5' },
-  { id: 'admin', label: 'Admin', color: '#dc2626', bg: '#fef2f2' }
+const CLAVE_INICIAL_DEFAULT = 'evaluacionesatualcance';
+
+const PERMISOS_DEFAULT = {
+  admin: {
+    gestionar_usuarios: true,
+    configurar_cursos: true,
+    ver_todos_cursos: true,
+    editar_nominas: true,
+    eximir_estudiantes: true,
+    crear_evaluaciones: true,
+    ver_evals_colegio: true,
+    ver_evals_depto: true,
+    editar_evals_ajenas: true,
+    escanear_hojas: true,
+    corregir_manual_propias: true,
+    corregir_manual_ajenas: true,
+    descargar_reportes: true
+  },
+  utp: {
+    gestionar_usuarios: false,
+    configurar_cursos: false,
+    ver_todos_cursos: true,
+    editar_nominas: false,
+    eximir_estudiantes: false,
+    crear_evaluaciones: true,
+    ver_evals_colegio: true,
+    ver_evals_depto: true,
+    editar_evals_ajenas: false,
+    escanear_hojas: true,
+    corregir_manual_propias: true,
+    corregir_manual_ajenas: false,
+    descargar_reportes: true
+  },
+  jefe_depto: {
+    gestionar_usuarios: false,
+    configurar_cursos: false,
+    ver_todos_cursos: true,
+    editar_nominas: true,
+    eximir_estudiantes: true,
+    crear_evaluaciones: true,
+    ver_evals_colegio: false,
+    ver_evals_depto: true,
+    editar_evals_ajenas: false,
+    escanear_hojas: true,
+    corregir_manual_propias: true,
+    corregir_manual_ajenas: false,
+    descargar_reportes: true
+  },
+  docente: {
+    gestionar_usuarios: false,
+    configurar_cursos: false,
+    ver_todos_cursos: false,
+    editar_nominas: true,
+    eximir_estudiantes: true,
+    crear_evaluaciones: true,
+    ver_evals_colegio: false,
+    ver_evals_depto: false,
+    editar_evals_ajenas: false,
+    escanear_hojas: true,
+    corregir_manual_propias: true,
+    corregir_manual_ajenas: false,
+    descargar_reportes: true
+  }
+};
+
+const FILAS_PERMISOS = [
+  { key: 'gestionar_usuarios', categoria: '1. Cuentas y Permisos', label: 'Crear/suspender cuentas y asignar roles/cursos' },
+  { key: 'configurar_cursos', categoria: '2. Estructura y Nóminas', label: 'Crear o eliminar Niveles y Cursos del colegio' },
+  { key: 'ver_todos_cursos', categoria: '2. Estructura y Nóminas', label: 'Ver todos los niveles y cursos (no solo los asignados)' },
+  { key: 'editar_nominas', categoria: '2. Estructura y Nóminas', label: 'Subir Excel de estudiantes y agregar alumnos a listas' },
+  { key: 'eximir_estudiantes', categoria: '2. Estructura y Nóminas', label: 'Eximir / deseximir estudiantes en evaluaciones' },
+  { key: 'crear_evaluaciones', categoria: '3. Evaluaciones y Pautas', label: 'Crear evaluaciones propias y compartir/importar pautas' },
+  { key: 'ver_evals_colegio', categoria: '3. Evaluaciones y Pautas', label: 'Supervisar evaluaciones de TODO el colegio (todas las asignaturas)' },
+  { key: 'ver_evals_depto', categoria: '3. Evaluaciones y Pautas', label: 'Supervisar evaluaciones de su Departamento / Asignatura' },
+  { key: 'editar_evals_ajenas', categoria: '3. Evaluaciones y Pautas', label: 'Editar pauta, escala, PDF o eliminar evaluaciones de otros' },
+  { key: 'escanear_hojas', categoria: '4. Escaneo y Reportes', label: 'Imprimir hojas y escanear (cámara / PDF) en sus pruebas' },
+  { key: 'corregir_manual_propias', categoria: '4. Escaneo y Reportes', label: 'Corregir lectura manual (P1–P30) o borrar escaneos en pruebas propias' },
+  { key: 'corregir_manual_ajenas', categoria: '4. Escaneo y Reportes', label: 'Corregir lectura manual (P1–P30) o borrar escaneos en pruebas ajenas' },
+  { key: 'descargar_reportes', categoria: '4. Escaneo y Reportes', label: 'Ver gráficos, visor de hoja escaneada y descargar Excel / PDFs' }
 ];
 
-export default function GestionUsuarios({ perfilActual, permisosActuales = {}, onPermisosActualizados }) {
-  const esAdmin = perfilActual?.rol === 'admin';
-  const puedeCrearPerfiles = esAdmin || Boolean(permisosActuales?.crear_perfiles);
-  const puedeEditarPerfiles = esAdmin || Boolean(permisosActuales?.editar_perfiles);
-  const puedeGestionarPermisos = esAdmin || Boolean(permisosActuales?.gestionar_permisos);
+const ROLES_META = [
+  { id: 'admin', label: 'Administrador', color: '#1e3a8a', bg: '#dbeafe' },
+  { id: 'utp', label: 'UTP', color: '#6d28d9', bg: '#ede9fe' },
+  { id: 'jefe_depto', label: 'Jefe de Depto.', color: '#047857', bg: '#d1fae5' },
+  { id: 'docente', label: 'Docente', color: '#334155', bg: '#f1f5f9' }
+];
 
-  const [pestana, setPestana] = useState('perfiles'); // 'perfiles' | 'matriz'
-  const [perfiles, setPerfiles] = useState([]);
+export default function GestionUsuarios({ perfilActual, onPermisosActualizados }) {
+  const [listaUsuarios, setListaUsuarios] = useState([]);
   const [niveles, setNiveles] = useState([]);
   const [cursos, setCursos] = useState([]);
-  const [asignacionesMap, setAsignacionesMap] = useState({});
-  const [busqueda, setBusqueda] = useState('');
-  const [cargando, setCargando] = useState(true);
+  const [asignaciones, setAsignaciones] = useState([]);
+  const [cargandoLista, setCargandoLista] = useState(false);
 
-  // Formulario nuevo perfil docente
-  const [nuevoEmail, setNuevoEmail] = useState('');
-  const [nuevoNombre, setNuevoNombre] = useState('');
-  const [nuevaAsignatura, setNuevaAsignatura] = useState('Matemática');
-  const [nuevoRol, setNuevoRol] = useState('docente');
-  const [creandoPerfil, setCreandoPerfil] = useState(false);
+  const [matrizPermisos, setMatrizPermisos] = useState(PERMISOS_DEFAULT);
+  const [guardandoPermisos, setGuardandoPermisos] = useState(false);
 
-  // Modal asignación de cursos a un docente
-  const [docenteAsignando, setDocenteAsignando] = useState(null);
-  const [cursosSeleccionadosModal, setCursosSeleccionadosModal] = useState(new Set());
-  const [guardandoCursos, setGuardandoCursos] = useState(false);
+  const [nombre, setNombre] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState(CLAVE_INICIAL_DEFAULT);
+  const [asignatura, setAsignatura] = useState('Matemática');
+  const [rol, setRol] = useState('docente');
+  const [creando, setCreando] = useState(false);
 
-  // Estado de la Matriz de Permisos
-  const [matrizPermisos, setMatrizPermisos] = useState({
-    docente: { ...PERMISOS_RESPALDO.docente },
-    jefe_depto: { ...PERMISOS_RESPALDO.jefe_depto },
-    utp: { ...PERMISOS_RESPALDO.utp },
-    admin: { ...PERMISOS_RESPALDO.admin }
-  });
-  const [guardandoMatriz, setGuardandoMatriz] = useState(false);
+  const [clavesVisibles, setClavesVisibles] = useState({});
+  const [enviandoResetId, setEnviandoResetId] = useState(null);
 
   useEffect(() => {
     cargarTodo();
@@ -54,176 +121,45 @@ export default function GestionUsuarios({ perfilActual, permisosActuales = {}, o
 
   const cargarTodo = async () => {
     if (!supabase) return;
-    setCargando(true);
+    setCargandoLista(true);
     try {
-      const [
-        { data: listaPerfiles },
-        { data: listaNiveles },
-        { data: listaCursos },
-        { data: listaAsignaciones },
-        { data: listaRolesPerms }
-      ] = await Promise.all([
-        supabase.from('perfiles').select('*').order('nombre'),
-        supabase.from('niveles').select('*').order('orden', { ascending: true }).order('nombre'),
+      const { data: users, error: errUsers } = await supabase
+        .from('perfiles')
+        .select('*');
+
+      if (errUsers) {
+        console.error('Error cargando perfiles:', errUsers);
+      } else if (users) {
+        setListaUsuarios(users);
+      }
+
+      const [{ data: niv }, { data: cur }, { data: asig }, { data: permsDB }] = await Promise.all([
+        supabase.from('niveles').select('*').order('orden', { ascending: true }),
         supabase.from('cursos').select('*').order('nombre'),
         supabase.from('docente_cursos').select('*'),
         supabase.from('roles_permisos').select('*')
       ]);
 
-      setPerfiles(listaPerfiles || []);
-      setNiveles(listaNiveles || []);
-      setCursos(listaCursos || []);
+      if (niv) setNiveles(niv);
+      if (cur) setCursos(cur);
+      if (asig) setAsignaciones(asig);
 
-      const mapaAsig = {};
-      (listaAsignaciones || []).forEach((a) => {
-        if (!mapaAsig[a.docente_id]) mapaAsig[a.docente_id] = [];
-        mapaAsig[a.docente_id].push(a.curso_id);
-      });
-      setAsignacionesMap(mapaAsig);
-
-      const nuevaMatriz = {
-        docente: { ...PERMISOS_RESPALDO.docente },
-        jefe_depto: { ...PERMISOS_RESPALDO.jefe_depto },
-        utp: { ...PERMISOS_RESPALDO.utp },
-        admin: { ...PERMISOS_RESPALDO.admin }
-      };
-
-      (listaRolesPerms || []).forEach((row) => {
-        if (nuevaMatriz[row.rol] && row.permisos) {
-          nuevaMatriz[row.rol] = {
-            ...nuevaMatriz[row.rol],
-            ...row.permisos
-          };
-        }
-      });
-
-      setMatrizPermisos(nuevaMatriz);
-    } finally {
-      setCargando(false);
-    }
-  };
-
-  const crearNuevoPerfil = async (e) => {
-    e.preventDefault();
-    if (!puedeCrearPerfiles || !nuevoEmail.trim() || !nuevoNombre.trim()) return;
-
-    setCreandoPerfil(true);
-    try {
-      const emailNorm = nuevoEmail.trim().toLowerCase();
-      const { error } = await supabase
-        .from('perfiles')
-        .upsert(
-          [
-            {
-              email: emailNorm,
-              nombre: nuevoNombre.trim(),
-              asignatura: nuevaAsignatura.trim() || 'Matemática',
-              rol: nuevoRol,
-              activo: true
-            }
-          ],
-          { onConflict: 'email' }
-        );
-
-      if (error) {
-        alert('Error al crear perfil: ' + error.message);
-        return;
+      if (permsDB && permsDB.length > 0) {
+        const nuevaMatriz = { ...PERMISOS_DEFAULT };
+        permsDB.forEach((row) => {
+          if (nuevaMatriz[row.rol]) {
+            nuevaMatriz[row.rol] = { ...nuevaMatriz[row.rol], ...(row.permisos || {}) };
+          }
+        });
+        setMatrizPermisos(nuevaMatriz);
       }
-
-      setNuevoEmail('');
-      setNuevoNombre('');
-      await cargarTodo();
-      alert(`✅ Perfil docente pre-registrado para ${emailNorm}. Cuando inicie sesión con este correo asumirá automáticamente su rol y cursos asignados.`);
     } finally {
-      setCreandoPerfil(false);
+      setCargandoLista(false);
     }
   };
 
-  const actualizarCampoPerfil = async (perfilId, campo, valor) => {
-    if (!puedeEditarPerfiles || !supabase) return;
-    const { error } = await supabase
-      .from('perfiles')
-      .update({ [campo]: valor })
-      .eq('id', perfilId);
-
-    if (error) {
-      alert('Error al actualizar perfil: ' + error.message);
-      return;
-    }
-
-    setPerfiles((prev) =>
-      prev.map((p) => (p.id === perfilId ? { ...p, [campo]: valor } : p))
-    );
-  };
-
-  const abrirModalCursos = (docente) => {
-    const actuales = asignacionesMap[docente.id] || [];
-    setCursosSeleccionadosModal(new Set(actuales));
-    setDocenteAsignando(docente);
-  };
-
-  const toggleCursoModal = (cursoId) => {
-    setCursosSeleccionadosModal((prev) => {
-      const copia = new Set(prev);
-      if (copia.has(cursoId)) copia.delete(cursoId);
-      else copia.add(cursoId);
-      return copia;
-    });
-  };
-
-  const toggleNivelCompletoModal = (nivelId) => {
-    const cursosDelNiv = cursos.filter((c) => c.nivel_id === nivelId).map((c) => c.id);
-    if (cursosDelNiv.length === 0) return;
-
-    setCursosSeleccionadosModal((prev) => {
-      const copia = new Set(prev);
-      const todosSeleccionados = cursosDelNiv.every((id) => copia.has(id));
-      if (todosSeleccionados) {
-        cursosDelNiv.forEach((id) => copia.delete(id));
-      } else {
-        cursosDelNiv.forEach((id) => copia.add(id));
-      }
-      return copia;
-    });
-  };
-
-  const guardarAsignacionCursos = async () => {
-    if (!docenteAsignando || !supabase) return;
-    setGuardandoCursos(true);
-    try {
-      await supabase
-        .from('docente_cursos')
-        .delete()
-        .eq('docente_id', docenteAsignando.id);
-
-      const filas = Array.from(cursosSeleccionadosModal).map((cId) => ({
-        docente_id: docenteAsignando.id,
-        curso_id: cId
-      }));
-
-      if (filas.length > 0) {
-        const { error } = await supabase.from('docente_cursos').insert(filas);
-        if (error) {
-          alert('Error al guardar cursos: ' + error.message);
-          return;
-        }
-      }
-
-      setAsignacionesMap((prev) => ({
-        ...prev,
-        [docenteAsignando.id]: Array.from(cursosSeleccionadosModal)
-      }));
-      setDocenteAsignando(null);
-      alert('✅ Cursos y niveles asignados correctamente.');
-    } finally {
-      setGuardandoCursos(false);
-    }
-  };
-
-  const togglePermisoCelda = (rolId, permisoKey) => {
-    if (!puedeGestionarPermisos) return;
-    // Evitar bloquear al propio administrador en la gestión de permisos
-    if (rolId === 'admin' && permisoKey === 'gestionar_permisos') return;
+  const togglePermiso = (rolId, permisoKey) => {
+    if (rolId === 'admin' && permisoKey === 'gestionar_usuarios') return;
 
     setMatrizPermisos((prev) => ({
       ...prev,
@@ -235,12 +171,14 @@ export default function GestionUsuarios({ perfilActual, permisosActuales = {}, o
   };
 
   const guardarMatrizPermisos = async () => {
-    if (!puedeGestionarPermisos || !supabase) return;
-    setGuardandoMatriz(true);
+    if (!supabase) return;
+    setGuardandoPermisos(true);
     try {
-      const filasUpsert = ROLES_CONFIG.map((r) => ({
+      const filasUpsert = ROLES_META.map((r) => ({
         rol: r.id,
-        permisos: matrizPermisos[r.id]
+        nombre_mostrar: r.label,
+        permisos: matrizPermisos[r.id] || PERMISOS_DEFAULT[r.id],
+        updated_at: new Date().toISOString()
       }));
 
       const { error } = await supabase
@@ -248,507 +186,456 @@ export default function GestionUsuarios({ perfilActual, permisosActuales = {}, o
         .upsert(filasUpsert, { onConflict: 'rol' });
 
       if (error) {
-        alert('Error al guardar matriz de permisos: ' + error.message);
+        alert('Error al guardar permisos: ' + error.message);
         return;
       }
 
       if (onPermisosActualizados) {
         onPermisosActualizados(matrizPermisos);
       }
-      alert('✅ Matriz de permisos actualizada en todo el establecimiento.');
+      alert('✅ Matriz de permisos por rol actualizada en la nube.');
     } finally {
-      setGuardandoMatriz(false);
+      setGuardandoPermisos(false);
     }
   };
 
-  const perfilesFiltrados = perfiles.filter(
-    (p) =>
-      (p.nombre || '').toLowerCase().includes(busqueda.toLowerCase()) ||
-      (p.email || '').toLowerCase().includes(busqueda.toLowerCase()) ||
-      (p.asignatura || '').toLowerCase().includes(busqueda.toLowerCase())
-  );
+  const restaurarPermisosDefault = () => {
+    if (!confirm('¿Restaurar las casillas de los 4 roles a la configuración recomendada inicial?')) return;
+    setMatrizPermisos(PERMISOS_DEFAULT);
+  };
+
+  const toggleCursoDocente = async (docenteId, cursoId) => {
+    const yaAsignado = asignaciones.some(
+      (a) => a.docente_id === docenteId && a.curso_id === cursoId
+    );
+
+    if (yaAsignado) {
+      await supabase
+        .from('docente_cursos')
+        .delete()
+        .eq('docente_id', docenteId)
+        .eq('curso_id', cursoId);
+    } else {
+      await supabase
+        .from('docente_cursos')
+        .insert([{ docente_id: docenteId, curso_id: cursoId }]);
+    }
+
+    const { data: asig } = await supabase.from('docente_cursos').select('*');
+    if (asig) setAsignaciones(asig);
+  };
+
+  const crearNuevaCuenta = async (e) => {
+    e.preventDefault();
+    const claveAUsar = password.trim() || CLAVE_INICIAL_DEFAULT;
+    if (!nombre.trim() || !email.trim() || claveAUsar.length < 6) {
+      alert('Completa todos los campos. La contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
+
+    setCreando(true);
+    try {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const tempClient = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false }
+      });
+
+      const { data, error } = await tempClient.auth.signUp({
+        email: email.trim(),
+        password: claveAUsar,
+        options: {
+          data: {
+            nombre: nombre.trim(),
+            asignatura: asignatura.trim(),
+            rol
+          }
+        }
+      });
+
+      if (error) {
+        alert('Error al crear cuenta: ' + error.message);
+        return;
+      }
+
+      if (data?.user) {
+        await supabase.from('perfiles').upsert([
+          {
+            id: data.user.id,
+            email: email.trim(),
+            nombre: nombre.trim(),
+            asignatura: asignatura.trim(),
+            rol,
+            activo: true,
+            clave_referencia: claveAUsar
+          }
+        ]);
+      }
+
+      alert(`✅ Cuenta creada para ${nombre.trim()}.\nContraseña inicial: ${claveAUsar}`);
+      setNombre('');
+      setEmail('');
+      setPassword(CLAVE_INICIAL_DEFAULT);
+      await cargarTodo();
+    } catch (err) {
+      alert('Error inesperado: ' + err.message);
+    } finally {
+      setCreando(false);
+    }
+  };
+
+  const enviarCorreoRestablecer = async (u) => {
+    if (!confirm(`¿Enviar correo de restablecimiento de contraseña a ${u.email}?`)) return;
+    setEnviandoResetId(u.id);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(u.email.trim(), {
+        redirectTo: window.location.origin
+      });
+
+      if (error) {
+        alert('No se pudo enviar el correo: ' + error.message);
+      } else {
+        await supabase
+          .from('perfiles')
+          .update({ clave_referencia: 'Restablecida por enlace de correo' })
+          .eq('id', u.id);
+        alert(`✅ Enlace de restablecimiento enviado a ${u.email}. El docente debe revisar su bandeja (o Spam) para definir su nueva contraseña.`);
+        cargarTodo();
+      }
+    } finally {
+      setEnviandoResetId(null);
+    }
+  };
+
+  const copiarTexto = (texto) => {
+    navigator.clipboard.writeText(texto);
+    alert(`📋 Copiado: ${texto}`);
+  };
+
+  const cambiarRolUsuario = async (idUsuario, nuevoRol) => {
+    if (idUsuario === perfilActual?.id) return;
+    await supabase.from('perfiles').update({ rol: nuevoRol }).eq('id', idUsuario);
+    cargarTodo();
+  };
+
+  const toggleEstadoUsuario = async (u) => {
+    if (u.id === perfilActual?.id) return;
+    await supabase.from('perfiles').update({ activo: !u.activo }).eq('id', u.id);
+    cargarTodo();
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Cabecera */}
-      <div style={{ background: '#ffffff', padding: '22px 24px', borderRadius: '14px', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: '22px', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <Shield size={24} color="#2563eb" />
-            Gestión de Docentes y Matriz de Permisos
-          </h1>
-          <p style={{ margin: '4px 0 0 0', fontSize: '13.5px', color: '#64748b' }}>
-            Administra los perfiles del establecimiento, asigna cursos/niveles y configura los permisos por rol.
-          </p>
+      {/* 1. FORMULARIO DE CREACIÓN DE CUENTA */}
+      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+        <h2 style={{ margin: '0 0 8px 0', fontSize: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <UserPlus size={22} color="#2563eb" />
+          Crear Nueva Cuenta de Usuario
+        </h2>
+        <p style={{ margin: '0 0 18px 0', fontSize: '13.5px', color: '#64748b' }}>
+          Por defecto todas las cuentas nuevas se crean con la contraseña inicial <strong>evaluacionesatualcance</strong>.
+        </p>
+
+        <form onSubmit={crearNuevaCuenta} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
+          <div>
+            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Nombre Completo</label>
+            <input type="text" required placeholder="Ej: María José González" value={nombre} onChange={(e) => setNombre(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Correo Institucional</label>
+            <input type="email" required placeholder="mgonzalez@colegio.cl" value={email} onChange={(e) => setEmail(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Contraseña Inicial</label>
+            <input type="text" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box', fontWeight: '600', color: '#1e3a8a', background: '#f8fafc' }} />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Asignatura / Departamento</label>
+            <input type="text" value={asignatura} onChange={(e) => setAsignatura(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Rol</label>
+            <select value={rol} onChange={(e) => setRol(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box', fontWeight: '600' }}>
+              <option value="docente">Docente</option>
+              <option value="jefe_depto">Jefe de Departamento</option>
+              <option value="utp">UTP</option>
+              <option value="admin">Administrador</option>
+            </select>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+            <button type="submit" disabled={creando} style={{ width: '100%', background: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 14px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+              <UserPlus size={17} /> {creando ? 'Creando...' : 'Crear Cuenta'}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {/* 2. LISTA DE USUARIOS, CONTRASEÑAS Y RESTABLECIMIENTO */}
+      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+          <h3 style={{ margin: 0, fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Users size={19} color="#0f172a" />
+            Usuarios, Contraseñas y Cursos ({listaUsuarios.length})
+          </h3>
+          <button
+            onClick={cargarTodo}
+            style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '7px', padding: '6px 10px', fontSize: '12.5px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}
+          >
+            <RefreshCw size={14} /> {cargandoLista ? 'Actualizando...' : 'Actualizar lista'}
+          </button>
         </div>
 
-        <div style={{ display: 'flex', gap: '8px', background: '#f1f5f9', padding: '5px', borderRadius: '10px' }}>
-          <button
-            onClick={() => setPestana('perfiles')}
-            style={{
-              padding: '8px 14px',
-              borderRadius: '8px',
-              border: 'none',
-              fontWeight: '700',
-              fontSize: '13px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              background: pestana === 'perfiles' ? '#ffffff' : 'transparent',
-              color: pestana === 'perfiles' ? '#1e3a8a' : '#475569',
-              boxShadow: pestana === 'perfiles' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
-            }}
-          >
-            <Users size={16} /> Perfiles y Cursos ({perfiles.length})
-          </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {listaUsuarios.map((u) => {
+            const cursosDelDocente = asignaciones
+              .filter((a) => a.docente_id === u.id)
+              .map((a) => a.curso_id);
+            const claveMostrar = u.clave_referencia || CLAVE_INICIAL_DEFAULT;
+            const visible = Boolean(clavesVisibles[u.id]);
 
-          {puedeGestionarPermisos && (
-            <button
-              onClick={() => setPestana('matriz')}
-              style={{
-                padding: '8px 14px',
-                borderRadius: '8px',
-                border: 'none',
-                fontWeight: '700',
-                fontSize: '13px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                background: pestana === 'matriz' ? '#ffffff' : 'transparent',
-                color: pestana === 'matriz' ? '#1e3a8a' : '#475569',
-                boxShadow: pestana === 'matriz' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
-              }}
-            >
-              <KeyRound size={16} /> Matriz de Permisos
-            </button>
-          )}
+            return (
+              <div key={u.id} style={{ padding: '16px', borderRadius: '10px', border: '1px solid #e2e8f0', background: u.activo === false ? '#f8fafc' : '#ffffff', opacity: u.activo === false ? 0.6 : 1 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '10px' }}>
+                  <div>
+                    <div style={{ fontWeight: '800', fontSize: '15px', color: '#0f172a' }}>{u.nombre}</div>
+                    <div style={{ fontSize: '12.5px', color: '#64748b' }}>
+                      {u.email} • <BookOpen size={12} style={{ verticalAlign: 'middle' }} /> {u.asignatura || 'Matemática'}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    {/* Visor de contraseña inicial */}
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '4px 10px', fontSize: '12px' }}>
+                      <KeyRound size={13} color="#475569" />
+                      <span style={{ color: '#64748b', fontWeight: '600' }}>Clave:</span>
+                      <code style={{ fontWeight: '700', color: '#0f172a' }}>
+                        {visible ? claveMostrar : '••••••••••••'}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={() => setClavesVisibles((prev) => ({ ...prev, [u.id]: !prev[u.id] }))}
+                        title={visible ? 'Ocultar clave' : 'Ver clave'}
+                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px', color: '#475569', display: 'flex' }}
+                      >
+                        {visible ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => copiarTexto(claveMostrar)}
+                        title="Copiar clave"
+                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px', color: '#2563eb', display: 'flex' }}
+                      >
+                        <Copy size={13} />
+                      </button>
+                    </div>
+
+                    {/* Botón enviar correo para restablecer */}
+                    <button
+                      type="button"
+                      onClick={() => enviarCorreoRestablecer(u)}
+                      disabled={enviandoResetId === u.id}
+                      style={{
+                        background: '#eff6ff',
+                        color: '#1d4ed8',
+                        border: '1px solid #bfdbfe',
+                        borderRadius: '8px',
+                        padding: '5px 10px',
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        cursor: enviandoResetId === u.id ? 'wait' : 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px'
+                      }}
+                    >
+                      <Mail size={13} />
+                      {enviandoResetId === u.id ? 'Enviando...' : 'Enviar a restablecer'}
+                    </button>
+
+                    <select
+                      value={u.rol}
+                      disabled={u.id === perfilActual?.id}
+                      onChange={(e) => cambiarRolUsuario(u.id, e.target.value)}
+                      style={{ padding: '5px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontWeight: '700', fontSize: '12px' }}
+                    >
+                      <option value="docente">Docente</option>
+                      <option value="jefe_depto">Jefe de Departamento</option>
+                      <option value="utp">UTP</option>
+                      <option value="admin">Administrador</option>
+                    </select>
+
+                    <button
+                      onClick={() => toggleEstadoUsuario(u)}
+                      disabled={u.id === perfilActual?.id}
+                      style={{
+                        background: u.activo !== false ? '#dcfce7' : '#fee2e2',
+                        color: u.activo !== false ? '#166534' : '#991b1b',
+                        border: 'none', borderRadius: '999px', padding: '5px 10px',
+                        fontSize: '12px', fontWeight: '700', cursor: 'pointer',
+                        display: 'inline-flex', alignItems: 'center', gap: '4px'
+                      }}
+                    >
+                      {u.activo !== false ? <><CheckCircle2 size={13} /> Activo</> : <><XCircle size={13} /> Suspendido</>}
+                    </button>
+                  </div>
+                </div>
+
+                {u.rol === 'admin' ? (
+                  <div style={{ fontSize: '12px', color: '#1d4ed8', fontWeight: '600', background: '#eff6ff', padding: '6px 10px', borderRadius: '6px' }}>
+                    Acceso completo a todos los niveles y cursos del establecimiento.
+                  </div>
+                ) : (
+                  <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: '10px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <GraduationCap size={14} /> Cursos de aula asignados directamente:
+                    </div>
+                    {cursos.length === 0 ? (
+                      <span style={{ fontSize: '12px', color: '#94a3b8' }}>Aún no hay cursos creados en Mis Cursos.</span>
+                    ) : (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                        {cursos.map((c) => {
+                          const marcado = cursosDelDocente.includes(c.id);
+                          const niv = niveles.find((n) => n.id === c.nivel_id);
+                          return (
+                            <label
+                              key={c.id}
+                              onClick={() => toggleCursoDocente(u.id, c.id)}
+                              style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                padding: '5px 10px', borderRadius: '8px', cursor: 'pointer',
+                                fontSize: '12.5px', fontWeight: '600',
+                                border: marcado ? '1px solid #2563eb' : '1px solid #cbd5e1',
+                                background: marcado ? '#eff6ff' : '#f8fafc',
+                                color: marcado ? '#1d4ed8' : '#475569'
+                              }}
+                            >
+                              <input type="checkbox" checked={marcado} readOnly />
+                              {niv ? `${niv.nombre} — ` : ''}{c.nombre}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* PESTAÑA 1: PERFILES DOCENTES Y ASIGNACIÓN DE CURSOS */}
-      {pestana === 'perfiles' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          {puedeCrearPerfiles && (
-            <form
-              onSubmit={crearNuevoPerfil}
-              style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #cbd5e1', display: 'flex', flexDirection: 'column', gap: '12px' }}
-            >
-              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <UserPlus size={18} color="#16a34a" /> Crear / Pre-registrar Perfil Docente
-              </h3>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '10px' }}>
-                <input
-                  type="email"
-                  required
-                  placeholder="Correo institucional (@colegio.cl)"
-                  value={nuevoEmail}
-                  onChange={(e) => setNuevoEmail(e.target.value)}
-                  style={{ padding: '9px 11px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px' }}
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Nombre completo docente"
-                  value={nuevoNombre}
-                  onChange={(e) => setNuevoNombre(e.target.value)}
-                  style={{ padding: '9px 11px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px' }}
-                />
-                <input
-                  type="text"
-                  placeholder="Asignatura / Depto (Ej: Matemática)"
-                  value={nuevaAsignatura}
-                  onChange={(e) => setNuevaAsignatura(e.target.value)}
-                  style={{ padding: '9px 11px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px' }}
-                />
-                <select
-                  value={nuevoRol}
-                  onChange={(e) => setNuevoRol(e.target.value)}
-                  style={{ padding: '9px 11px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px', fontWeight: '700' }}
-                >
-                  <option value="docente">Rol: Docente</option>
-                  <option value="jefe_depto">Rol: Jefe de Departamento</option>
-                  <option value="utp">Rol: UTP</option>
-                  {esAdmin && <option value="admin">Rol: Administrador</option>}
-                </select>
-                <button
-                  type="submit"
-                  disabled={creandoPerfil}
-                  style={{
-                    background: '#16a34a',
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: '8px',
-                    padding: '9px 14px',
-                    fontWeight: '700',
-                    fontSize: '13.5px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  {creandoPerfil ? 'Guardando...' : '+ Crear Perfil'}
-                </button>
-              </div>
-            </form>
-          )}
-
-          {/* Listado de perfiles */}
-          <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
-              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0f172a' }}>
-                Usuarios Registrados ({perfilesFiltrados.length})
-              </h3>
-              <div style={{ position: 'relative' }}>
-                <Search size={15} color="#94a3b8" style={{ position: 'absolute', left: '10px', top: '9px' }} />
-                <input
-                  type="text"
-                  placeholder="Buscar por nombre, correo o asignatura..."
-                  value={busqueda}
-                  onChange={(e) => setBusqueda(e.target.value)}
-                  style={{ padding: '7px 12px 7px 32px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', minWidth: '250px' }}
-                />
-              </div>
-            </div>
-
-            {cargando ? (
-              <p style={{ color: '#64748b', fontSize: '14px' }}>Cargando usuarios...</p>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13.5px' }}>
-                  <thead style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
-                    <tr>
-                      <th style={{ padding: '10px', textAlign: 'left' }}>Docente</th>
-                      <th style={{ padding: '10px', textAlign: 'left' }}>Asignatura / Depto</th>
-                      <th style={{ padding: '10px', textAlign: 'center' }}>Rol</th>
-                      <th style={{ padding: '10px', textAlign: 'left' }}>Cursos / Niveles Asignados</th>
-                      <th style={{ padding: '10px', textAlign: 'center' }}>Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {perfilesFiltrados.map((p) => {
-                      const idsCursosDoc = asignacionesMap[p.id] || [];
-                      const nombresCursos = cursos
-                        .filter((c) => idsCursosDoc.includes(c.id))
-                        .map((c) => c.nombre);
-                      const esCuentaPrincipal = p.email?.toLowerCase().trim() === 'juan.pabloesp97@gmail.com';
-
-                      return (
-                        <tr key={p.id || p.email} style={{ borderBottom: '1px solid #f1f5f9', opacity: p.activo === false ? 0.6 : 1 }}>
-                          <td style={{ padding: '10px' }}>
-                            {puedeEditarPerfiles && !esCuentaPrincipal ? (
-                              <input
-                                type="text"
-                                defaultValue={p.nombre}
-                                onBlur={(e) => {
-                                  if (e.target.value.trim() && e.target.value !== p.nombre) {
-                                    actualizarCampoPerfil(p.id, 'nombre', e.target.value.trim());
-                                  }
-                                }}
-                                style={{ fontWeight: '700', color: '#0f172a', border: '1px solid transparent', borderRadius: '6px', padding: '4px 6px', width: '100%', maxWidth: '210px', background: '#f8fafc' }}
-                              />
-                            ) : (
-                              <div style={{ fontWeight: '700', color: '#0f172a' }}>{p.nombre}</div>
-                            )}
-                            <div style={{ fontSize: '12px', color: '#64748b', paddingLeft: '6px' }}>{p.email}</div>
-                          </td>
-
-                          <td style={{ padding: '10px' }}>
-                            {puedeEditarPerfiles ? (
-                              <input
-                                type="text"
-                                defaultValue={p.asignatura || ''}
-                                onBlur={(e) => {
-                                  if (e.target.value !== (p.asignatura || '')) {
-                                    actualizarCampoPerfil(p.id, 'asignatura', e.target.value.trim());
-                                  }
-                                }}
-                                style={{ border: '1px solid #e2e8f0', borderRadius: '6px', padding: '5px 8px', width: '140px', fontSize: '13px' }}
-                              />
-                            ) : (
-                              <span>{p.asignatura || '-'}</span>
-                            )}
-                          </td>
-
-                          <td style={{ padding: '10px', textAlign: 'center' }}>
-                            <select
-                              disabled={!puedeEditarPerfiles || esCuentaPrincipal}
-                              value={p.rol || 'docente'}
-                              onChange={(e) => actualizarCampoPerfil(p.id, 'rol', e.target.value)}
-                              style={{ padding: '5px 8px', borderRadius: '7px', border: '1px solid #cbd5e1', fontWeight: '700', fontSize: '12.5px' }}
-                            >
-                              <option value="docente">Docente</option>
-                              <option value="jefe_depto">Jefe Depto</option>
-                              <option value="utp">UTP</option>
-                              <option value="admin">Admin</option>
-                            </select>
-                          </td>
-
-                          <td style={{ padding: '10px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                              <button
-                                type="button"
-                                disabled={!puedeCrearPerfiles && !puedeEditarPerfiles}
-                                onClick={() => abrirModalCursos(p)}
-                                style={{
-                                  background: '#eff6ff',
-                                  color: '#1d4ed8',
-                                  border: '1px solid #bfdbfe',
-                                  borderRadius: '7px',
-                                  padding: '5px 10px',
-                                  fontSize: '12px',
-                                  fontWeight: '700',
-                                  cursor: 'pointer',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '5px'
-                                }}
-                              >
-                                <BookOpen size={14} /> Asignar ({nombresCursos.length})
-                              </button>
-                              <span style={{ fontSize: '12px', color: '#475569' }}>
-                                {nombresCursos.length > 0 ? nombresCursos.join(', ') : 'Sin cursos asignados'}
-                              </span>
-                            </div>
-                          </td>
-
-                          <td style={{ padding: '10px', textAlign: 'center' }}>
-                            {esCuentaPrincipal ? (
-                              <span style={{ fontSize: '11.5px', fontWeight: '800', color: '#16a34a' }}>Principal</span>
-                            ) : (
-                              <button
-                                type="button"
-                                disabled={!puedeEditarPerfiles}
-                                onClick={() => actualizarCampoPerfil(p.id, 'activo', p.activo === false)}
-                                style={{
-                                  background: p.activo !== false ? '#dcfce7' : '#fee2e2',
-                                  color: p.activo !== false ? '#166534' : '#991b1b',
-                                  border: 'none',
-                                  borderRadius: '999px',
-                                  padding: '4px 10px',
-                                  fontSize: '12px',
-                                  fontWeight: '700',
-                                  cursor: puedeEditarPerfiles ? 'pointer' : 'default',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '4px'
-                                }}
-                              >
-                                {p.activo !== false ? <><CheckCircle2 size={13} /> Activo</> : <><XCircle size={13} /> Suspendido</>}
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
+      {/* 3. MATRIZ EDITABLE DE PERMISOS POR ROL */}
+      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: '20px', display: 'flex', alignItems: 'center', gap: '10px', color: '#0f172a' }}>
+              <ShieldCheck size={22} color="#2563eb" />
+              Matriz de Atribuciones por Rol (Editable)
+            </h2>
+            <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#64748b' }}>
+              Marca o desmarca las casillas para personalizar qué puede hacer cada perfil en el sistema.
+            </p>
           </div>
-        </div>
-      )}
 
-      {/* PESTAÑA 2: MATRIZ DE PERMISOS POR ROL */}
-      {pestana === 'matriz' && puedeGestionarPermisos && (
-        <div style={{ background: '#ffffff', padding: '22px', borderRadius: '14px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '18px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-            <div>
-              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a' }}>
-                Matriz de Permisos por Rol Escolar
-              </h3>
-              <p style={{ margin: '3px 0 0 0', fontSize: '13px', color: '#64748b' }}>
-                Define exactamente qué puede ver, crear, editar, escanear o borrar cada perfil en su aula, departamento o colegio.
-              </p>
-            </div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={restaurarPermisosDefault}
+              style={{
+                background: '#f8fafc',
+                color: '#475569',
+                border: '1px solid #cbd5e1',
+                borderRadius: '8px',
+                padding: '8px 12px',
+                fontSize: '12.5px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+            >
+              <RotateCcw size={14} /> Restaurar Base
+            </button>
 
             <button
               type="button"
               onClick={guardarMatrizPermisos}
-              disabled={guardandoMatriz}
+              disabled={guardandoPermisos}
               style={{
-                background: '#16a34a',
+                background: '#2563eb',
                 color: '#ffffff',
                 border: 'none',
-                borderRadius: '10px',
-                padding: '11px 18px',
-                fontWeight: '800',
-                fontSize: '13.5px',
-                cursor: guardandoMatriz ? 'wait' : 'pointer',
+                borderRadius: '8px',
+                padding: '8px 16px',
+                fontSize: '13px',
+                fontWeight: '700',
+                cursor: guardandoPermisos ? 'wait' : 'pointer',
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '7px',
-                boxShadow: '0 2px 6px rgba(22,163,74,0.25)'
+                gap: '6px'
               }}
             >
-              {guardandoMatriz ? <RefreshCw size={16} /> : <Save size={16} />}
-              {guardandoMatriz ? 'Guardando...' : 'Guardar Matriz de Permisos'}
+              <Save size={15} /> {guardandoPermisos ? 'Guardando...' : 'Guardar Permisos'}
             </button>
           </div>
-
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13.5px' }}>
-              <thead>
-                <tr style={{ background: '#0f172a', color: '#ffffff' }}>
-                  <th style={{ padding: '12px 14px', textAlign: 'left', minWidth: '320px' }}>Acción / Permiso del Sistema</th>
-                  {ROLES_CONFIG.map((r) => (
-                    <th key={r.id} style={{ padding: '12px 10px', textAlign: 'center', minWidth: '105px' }}>
-                      {r.label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {CATEGORIAS_PERMISOS.map((cat) => (
-                  <React.Fragment key={cat.titulo}>
-                    <tr style={{ background: '#f1f5f9' }}>
-                      <td colSpan={5} style={{ padding: '9px 14px', fontWeight: '800', color: '#1e3a8a', fontSize: '13px', borderTop: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1' }}>
-                        {cat.titulo}
-                      </td>
-                    </tr>
-                    {cat.items.map((item) => (
-                      <tr key={item.key} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                        <td style={{ padding: '9px 14px', color: '#1e293b', fontWeight: '500' }}>
-                          {item.label}
-                        </td>
-                        {ROLES_CONFIG.map((r) => {
-                          const activo = Boolean(matrizPermisos[r.id]?.[item.key]);
-                          const bloqueado = r.id === 'admin' && item.key === 'gestionar_permisos';
-                          return (
-                            <td key={r.id} style={{ padding: '8px 10px', textAlign: 'center' }}>
-                              <input
-                                type="checkbox"
-                                checked={activo}
-                                disabled={bloqueado}
-                                onChange={() => togglePermisoCelda(r.id, item.key)}
-                                style={{
-                                  width: '18px',
-                                  height: '18px',
-                                  cursor: bloqueado ? 'not-allowed' : 'pointer',
-                                  accentColor: r.color
-                                }}
-                              />
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
         </div>
-      )}
 
-      {/* MODAL PARA ASIGNAR NIVELES Y CURSOS A UN DOCENTE */}
-      {docenteAsignando && (
-        <div
-          onClick={() => setDocenteAsignando(null)}
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px'
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '520px',
-              maxHeight: '85vh', display: 'flex', flexDirection: 'column',
-              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', overflow: 'hidden'
-            }}
-          >
-            <div style={{ padding: '18px 22px', borderBottom: '1px solid #e2e8f0' }}>
-              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a' }}>
-                Asignar Cursos y Niveles
-              </h3>
-              <p style={{ margin: '3px 0 0 0', fontSize: '13px', color: '#64748b' }}>
-                Docente: <strong>{docenteAsignando.nombre}</strong>
-              </p>
-            </div>
-
-            <div style={{ padding: '16px 22px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              {niveles.map((niv) => {
-                const cursosNiv = cursos.filter((c) => c.nivel_id === niv.id);
-                if (cursosNiv.length === 0) return null;
-                const todosMarcados = cursosNiv.every((c) => cursosSeleccionadosModal.has(c.id));
-
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <thead>
+              <tr style={{ background: '#f8fafc', borderBottom: '2px solid #cbd5e1' }}>
+                <th style={{ padding: '10px 12px', textAlign: 'left', color: '#0f172a' }}>Módulo / Atribución</th>
+                {ROLES_META.map((r) => (
+                  <th key={r.id} style={{ padding: '10px 8px', textAlign: 'center', minWidth: '115px' }}>
+                    <span style={{ background: r.bg, color: r.color, padding: '4px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: '800' }}>
+                      {r.label}
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {FILAS_PERMISOS.map((fila, idx) => {
+                const mostrarCategoria = idx === 0 || FILAS_PERMISOS[idx - 1].categoria !== fila.categoria;
                 return (
-                  <div key={niv.id} style={{ border: '1px solid #cbd5e1', borderRadius: '10px', padding: '12px', background: '#f8fafc' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                      <strong style={{ fontSize: '14.5px', color: '#0f172a' }}>{niv.nombre}</strong>
-                      <button
-                        type="button"
-                        onClick={() => toggleNivelCompletoModal(niv.id)}
-                        style={{
-                          background: todosMarcados ? '#dbeafe' : '#ffffff',
-                          color: '#1d4ed8',
-                          border: '1px solid #93c5fd',
-                          borderRadius: '6px',
-                          padding: '3px 9px',
-                          fontSize: '11.5px',
-                          fontWeight: '700',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        {todosMarcados ? 'Desmarcar nivel' : 'Seleccionar nivel completo'}
-                      </button>
-                    </div>
-
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                      {cursosNiv.map((cur) => {
-                        const marcado = cursosSeleccionadosModal.has(cur.id);
+                  <React.Fragment key={fila.key}>
+                    {mostrarCategoria && (
+                      <tr style={{ background: '#f1f5f9' }}>
+                        <td colSpan={5} style={{ padding: '6px 12px', fontWeight: '800', fontSize: '11.5px', color: '#334155', textTransform: 'uppercase' }}>
+                          {fila.categoria}
+                        </td>
+                      </tr>
+                    )}
+                    <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '9px 12px', color: '#1e293b', fontWeight: '500' }}>{fila.label}</td>
+                      {ROLES_META.map((r) => {
+                        const checked = Boolean(matrizPermisos[r.id]?.[fila.key]);
+                        const bloqueado = r.id === 'admin' && fila.key === 'gestionar_usuarios';
                         return (
-                          <label
-                            key={cur.id}
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '6px',
-                              padding: '6px 10px',
-                              borderRadius: '8px',
-                              border: marcado ? '1px solid #2563eb' : '1px solid #cbd5e1',
-                              background: marcado ? '#eff6ff' : '#ffffff',
-                              fontSize: '13px',
-                              fontWeight: '600',
-                              cursor: 'pointer'
-                            }}
+                          <td
+                            key={r.id}
+                            onClick={() => !bloqueado && togglePermiso(r.id, fila.key)}
+                            style={{ padding: '9px 8px', textAlign: 'center', cursor: bloqueado ? 'not-allowed' : 'pointer' }}
                           >
                             <input
                               type="checkbox"
-                              checked={marcado}
-                              onChange={() => toggleCursoModal(cur.id)}
+                              checked={checked}
+                              disabled={bloqueado}
+                              onChange={() => {}}
+                              style={{ width: '17px', height: '17px', cursor: bloqueado ? 'not-allowed' : 'pointer', accentColor: r.color }}
                             />
-                            {cur.nombre}
-                          </label>
+                          </td>
                         );
                       })}
-                    </div>
-                  </div>
+                    </tr>
+                  </React.Fragment>
                 );
               })}
-            </div>
-
-            <div style={{ padding: '14px 22px', background: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button
-                type="button"
-                onClick={() => setDocenteAsignando(null)}
-                style={{ background: '#ffffff', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '8px 14px', fontWeight: '600', cursor: 'pointer' }}
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={guardarAsignacionCursos}
-                disabled={guardandoCursos}
-                style={{ background: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '8px', padding: '8px 16px', fontWeight: '700', cursor: 'pointer' }}
-              >
-                {guardandoCursos ? 'Guardando...' : 'Guardar Asignación'}
-              </button>
-            </div>
-          </div>
+            </tbody>
+          </table>
         </div>
-      )}
+      </div>
     </div>
   );
 }
