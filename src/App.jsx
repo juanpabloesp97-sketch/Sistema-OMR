@@ -97,6 +97,10 @@ function obtenerPuntajeItem(item) {
 
 export default function App() {
   const [sesion, setSesion] = useState(null);
+  const [modoRecuperacionClave, setModoRecuperacionClave] = useState(false);
+  const [nuevaClave, setNuevaClave] = useState('');
+  const [confirmarClave, setConfirmarClave] = useState('');
+  const [guardandoClave, setGuardandoClave] = useState(false);
   const [cargandoSesion, setCargandoSesion] = useState(true);
   const usuarioCargadoIdRef = useRef(null);
   const ignorarPushHistoryRef = useRef(false);
@@ -163,7 +167,6 @@ export default function App() {
   const [progresoLote, setProgresoLote] = useState('');
   const [camaraAbierta, setCamaraAbierta] = useState(false);
 
-  // Modal Asistente para Hojas Sin QR
   const [hojasSinQrPendientes, setHojasSinQrPendientes] = useState([]);
   const [indiceHojaSinQr, setIndiceHojaSinQr] = useState(0);
   const [busquedaAlumnoModal, setBusquedaAlumnoModal] = useState('');
@@ -336,6 +339,9 @@ export default function App() {
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSesion(session);
+      if (window.location.hash && window.location.hash.includes('type=recovery')) {
+        setModoRecuperacionClave(true);
+      }
       if (session?.user) {
         if (usuarioCargadoIdRef.current !== session.user.id) {
           usuarioCargadoIdRef.current = session.user.id;
@@ -353,6 +359,10 @@ export default function App() {
         usuarioCargadoIdRef.current = null;
         setCargandoSesion(false);
         return;
+      }
+
+      if (event === 'PASSWORD_RECOVERY') {
+        setModoRecuperacionClave(true);
       }
 
       if (event === 'TOKEN_REFRESHED') return;
@@ -518,6 +528,35 @@ export default function App() {
     usuarioCargadoIdRef.current = null;
     if (supabase) await supabase.auth.signOut();
     setSesion(null);
+  };
+
+  const manejarActualizarContrasena = async (e) => {
+    e.preventDefault();
+    if (!nuevaClave || nuevaClave.length < 6) {
+      alert('La nueva contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
+    if (nuevaClave !== confirmarClave) {
+      alert('Las contraseñas no coinciden.');
+      return;
+    }
+    setGuardandoClave(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: nuevaClave });
+      if (error) {
+        alert('Error al actualizar la contraseña: ' + error.message);
+        return;
+      }
+      setNuevaClave('');
+      setConfirmarClave('');
+      setModoRecuperacionClave(false);
+      if (window.location.hash) {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
+      alert('Contraseña actualizada correctamente.');
+    } finally {
+      setGuardandoClave(false);
+    }
   };
 
   const obtenerNombreNivelActivo = () => {
@@ -848,10 +887,10 @@ export default function App() {
           );
           await cargarResultadosNube(config.id);
           await cargarEvaluacionesNube(profesor, permisosActivos);
-          alert(`✅ Pauta guardada y ${resultadosCurso.length} nota(s) recalculadas automáticamente.`);
+          alert(`Pauta guardada y ${resultadosCurso.length} nota(s) recalculadas automáticamente.`);
         } else {
           await cargarEvaluacionesNube(profesor, permisosActivos);
-          alert('✅ Cambios guardados en la nube.');
+          alert('Cambios guardados en la nube.');
         }
       } finally {
         setRecalculando(false);
@@ -872,7 +911,7 @@ export default function App() {
       if (error) {
         alert('Error al crear evaluación: ' + error.message);
       } else if (data) {
-        alert('✅ Evaluación creada correctamente.');
+        alert('Evaluación creada correctamente.');
         await cargarEvaluacionesNube(profesor, permisosActivos);
         if (data.curso_id) {
           abrirEvaluacion(data, data.curso_id, 'curso');
@@ -917,7 +956,7 @@ export default function App() {
       pdfPruebaUrl: evCompartida.pdf_prueba_url || '',
       pdfPruebaNombre: evCompartida.pdf_prueba_nombre || ''
     });
-    alert(`✅ Pauta "${evCompartida.titulo}" cargada. Elige tu curso o nivel y presiona Guardar Evaluación.`);
+    alert(`Pauta "${evCompartida.titulo}" cargada. Elige tu curso o nivel y presiona Guardar Evaluación.`);
   };
 
   const eliminarEvaluacion = async () => {
@@ -992,7 +1031,7 @@ export default function App() {
 
   const eliminarTodosLosEscaneos = async (listaVisible) => {
     if (!listaVisible || listaVisible.length === 0) return;
-    if (!confirm(`⚠️ ¿Eliminar TODOS (${listaVisible.length}) los escaneos cargados en esta vista? Esta acción no se puede deshacer.`)) return;
+    if (!confirm(`¿Eliminar TODOS (${listaVisible.length}) los escaneos cargados en esta vista? Esta acción no se puede deshacer.`)) return;
 
     const idsABorrar = listaVisible.map((r) => r.id).filter(Boolean);
     if (supabase && idsABorrar.length > 0) {
@@ -1238,7 +1277,6 @@ export default function App() {
     doc.save(`Corregidas_${config.tituloPrueba.replace(/\s+/g, '_')}${sufijoArchivo}.pdf`);
   };
 
-  // --- FUNCIONES DEL MODAL DE ASIGNACIÓN DE HOJAS SIN QR ---
   const abrirAsistenteHojasSinQr = (listaResultadosActualizados) => {
     const sinQr = (listaResultadosActualizados || []).filter((r) => {
       const rutNorm = (r.rut || '').trim().toLowerCase();
@@ -1305,7 +1343,7 @@ export default function App() {
         setIndiceHojaSinQr(0);
         setRutSeleccionadoModal('');
         setBusquedaAlumnoModal('');
-        alert('✅ ¡Todas las hojas han sido asignadas a sus estudiantes!');
+        alert('Todas las hojas han sido asignadas a sus estudiantes.');
       } else {
         setHojasSinQrPendientes(restantes);
         setIndiceHojaSinQr(0);
@@ -1408,7 +1446,7 @@ export default function App() {
         if (duplicados.length > 0) {
           const nombresDup = duplicados.slice(0, 5).map((d) => `• ${d.nombre} (${d.rut})`).join('\n');
           sobreescribir = confirm(
-            `⚠️ Se detectaron ${duplicados.length} estudiante(s) ya escaneados:\n\n${nombresDup}\n\n¿Deseas SOBREESCRIBIR sus resultados anteriores?`
+            `Se detectaron ${duplicados.length} estudiante(s) ya escaneados:\n\n${nombresDup}\n\n¿Deseas SOBREESCRIBIR sus resultados anteriores?`
           );
         }
 
@@ -1452,7 +1490,7 @@ export default function App() {
             }
 
             if (insertError) {
-              alert('❌ Error al guardar en la nube: ' + insertError.message);
+              alert('Error al guardar en la nube: ' + insertError.message);
             } else {
               const listaActualizada = await cargarResultadosNube(config.id);
               const sinQrCount = listaActualizada.filter((r) => {
@@ -1463,7 +1501,7 @@ export default function App() {
               if (sinQrCount > 0) {
                 abrirAsistenteHojasSinQr(listaActualizada);
               } else {
-                alert(`✅ ${resultadosAGuardar.length} resultado(s) guardado(s) correctamente.`);
+                alert(`${resultadosAGuardar.length} resultado(s) guardado(s) correctamente.`);
               }
             }
           }
@@ -1488,6 +1526,58 @@ export default function App() {
 
   if (!sesion) {
     return <Login />;
+  }
+
+  if (modoRecuperacionClave) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif', padding: '16px' }}>
+        <form
+          onSubmit={manejarActualizarContrasena}
+          style={{ background: '#ffffff', padding: '28px', borderRadius: '14px', border: '1px solid #cbd5e1', width: '100%', maxWidth: '420px', display: 'flex', flexDirection: 'column', gap: '14px', boxShadow: '0 10px 25px rgba(15, 23, 42, 0.08)' }}
+        >
+          <h2 style={{ margin: 0, fontSize: '20px', color: '#0f172a' }}>
+            Cambia tu contraseña antes de continuar
+          </h2>
+          <p style={{ margin: 0, fontSize: '13.5px', color: '#64748b' }}>
+            Ingresa tu nueva contraseña para asegurar el acceso a tu cuenta ({profesor.email || sesion.user?.email}).
+          </p>
+
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Nueva contraseña (mínimo 6 caracteres)</label>
+            <input
+              type="password"
+              required
+              minLength={6}
+              value={nuevaClave}
+              onChange={(e) => setNuevaClave(e.target.value)}
+              placeholder="••••••••"
+              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+            />
+          </div>
+
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Confirmar nueva contraseña</label>
+            <input
+              type="password"
+              required
+              minLength={6}
+              value={confirmarClave}
+              onChange={(e) => setConfirmarClave(e.target.value)}
+              placeholder="••••••••"
+              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={guardandoClave}
+            style={{ marginTop: '6px', background: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '8px', padding: '12px', fontWeight: '700', fontSize: '14px', cursor: guardandoClave ? 'wait' : 'pointer' }}
+          >
+            {guardandoClave ? 'Guardando...' : 'Guardar Nueva Contraseña y Continuar'}
+          </button>
+        </form>
+      </div>
+    );
   }
 
   const esEvaluacionPropia = esEvaluacionDeSuAula(config, profesor, cursosAsignadosAula, cursos);
@@ -1627,7 +1717,6 @@ export default function App() {
       />
 
       <main style={{ flex: 1, padding: '24px', maxWidth: '1100px', margin: '0 auto', boxSizing: 'border-box' }}>
-        {/* VISTA INICIO */}
         {vistaActiva === 'inicio' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             <div
@@ -1809,7 +1898,6 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA A: PANEL DE NIVEL */}
         {vistaActiva === 'panel-nivel' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
@@ -1960,7 +2048,6 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA B: PANEL DE CURSO */}
         {vistaActiva === 'panel-curso' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -2080,7 +2167,6 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA 1: MI PERFIL DOCENTE */}
         {vistaActiva === 'perfil' && (
           <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', maxWidth: '600px' }}>
             <h2 style={{ margin: '0 0 16px 0', fontSize: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -2112,7 +2198,7 @@ export default function App() {
                       .update({ nombre: profesor.nombre, asignatura: profesor.asignatura })
                       .eq('id', profesor.id);
                     await cargarEvaluacionesNube(profesor, permisosActivos);
-                    alert('✅ Perfil actualizado correctamente.');
+                    alert('Perfil actualizado correctamente.');
                   }
                 }}
                 style={{
@@ -2124,10 +2210,42 @@ export default function App() {
                 <Save size={18} /> Guardar Cambios de Perfil
               </button>
             </div>
+
+            <form onSubmit={manejarActualizarContrasena} style={{ marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', color: '#0f172a' }}>Cambiar Contraseña</h3>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Nueva contraseña</label>
+                <input
+                  type="password"
+                  minLength={6}
+                  value={nuevaClave}
+                  onChange={(e) => setNuevaClave(e.target.value)}
+                  placeholder="Mínimo 6 caracteres"
+                  style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Confirmar nueva contraseña</label>
+                <input
+                  type="password"
+                  minLength={6}
+                  value={confirmarClave}
+                  onChange={(e) => setConfirmarClave(e.target.value)}
+                  placeholder="Repite la nueva contraseña"
+                  style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={guardandoClave}
+                style={{ background: '#0f172a', color: '#ffffff', border: 'none', borderRadius: '8px', padding: '11px', fontWeight: '700', cursor: guardandoClave ? 'wait' : 'pointer' }}
+              >
+                {guardandoClave ? 'Actualizando...' : 'Actualizar Contraseña'}
+              </button>
+            </form>
           </div>
         )}
 
-        {/* VISTA 1B: GESTIÓN DE USUARIOS Y MATRIZ DE PERMISOS */}
         {vistaActiva === 'usuarios' && puedeGestionarUsuarios && (
           <GestionUsuarios
             perfilActual={profesor}
@@ -2139,7 +2257,6 @@ export default function App() {
           />
         )}
 
-        {/* VISTA 2: LISTA DE CURSO / CONFIGURAR NIVELES */}
         {vistaActiva === 'visor-curso' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             {cursoActivoId && (
@@ -2166,7 +2283,6 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA 3: CREAR EVALUACIÓN */}
         {vistaActiva === 'crear-evaluacion' && puedeCrearEvaluaciones && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
@@ -2183,7 +2299,7 @@ export default function App() {
                       }}
                       style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #93c5fd', background: '#eff6ff', fontSize: '13px', fontWeight: '600', color: '#1e40af' }}
                     >
-                      <option value="">📥 Importar pauta compartida por un colega...</option>
+                      <option value="">Importar pauta compartida por un colega...</option>
                       {evaluacionesCompartidas.map((ev) => (
                         <option key={ev.id} value={ev.id}>
                           {ev.titulo} (Prof. {ev.docente_nombre || 'Colega'})
@@ -2219,7 +2335,7 @@ export default function App() {
                         const cantCursos = cursos.filter((c) => c.nivel_id === n.id).length;
                         return (
                           <option key={`niv-${n.id}`} value={`nivel:${n.id}`}>
-                            📚 Nivel Completo: {n.nombre} ({cantCursos} curso{cantCursos === 1 ? '' : 's'})
+                            Nivel Completo: {n.nombre} ({cantCursos} curso{cantCursos === 1 ? '' : 's'})
                           </option>
                         );
                       })}
@@ -2294,7 +2410,6 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA 4: DETALLE DE EVALUACIÓN */}
         {vistaActiva === 'detalle-evaluacion' && config.id && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             {!puedeEditarEvalActual && (
@@ -2463,7 +2578,6 @@ export default function App() {
               })}
             </div>
 
-            {/* SUBVISTA A: AVANCE Y PENDIENTES */}
             {subVistaEval === 'avance' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 {!tieneDestinoAsignado ? (
@@ -2621,7 +2735,6 @@ export default function App() {
               </div>
             )}
 
-            {/* SUBVISTA B: IMPRIMIR SELECTIVO */}
             {subVistaEval === 'imprimir' && (
               <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
@@ -2715,7 +2828,6 @@ export default function App() {
               </div>
             )}
 
-            {/* SUBVISTA C: ESCANEAR */}
             {subVistaEval === 'escanear' && puedeEscanearEvalActual && (
               <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
@@ -2830,7 +2942,6 @@ export default function App() {
               </div>
             )}
 
-            {/* SUBVISTA D: EDITAR PAUTA + GUARDAR Y RECALCULAR NOTAS */}
             {subVistaEval === 'pauta' && puedeEditarEvalActual && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 <PautaEditor config={config} setConfig={setConfig} nivelNombre={nivelActivoNombre} />
@@ -2866,7 +2977,6 @@ export default function App() {
               </div>
             )}
 
-            {/* SUBVISTA E: ANÁLISIS Y REPORTES */}
             {subVistaEval === 'analisis' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <AnalisisPanel
@@ -2976,7 +3086,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Barra de eliminación múltiple y total */}
                   {resultadosVisiblesEval.length > 0 && puedeCorregirManualActual && (
                     <div
                       style={{
@@ -3149,7 +3258,6 @@ export default function App() {
           </div>
         )}
 
-        {/* MODAL ASISTENTE PARA ASIGNAR HOJAS SIN QR */}
         {hojaSinQrActual && (
           <div
             style={{
