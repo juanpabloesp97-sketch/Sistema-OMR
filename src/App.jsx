@@ -188,11 +188,6 @@ export default function App() {
     if (!ev) return true;
     if (ev.docente_id === perfilUsuario?.id) return true;
 
-    const asigUsuario = (perfilUsuario?.asignatura || '').trim().toLowerCase();
-    const asigEval = (ev.asignatura || '').trim().toLowerCase();
-    const asigCoincide = !asigUsuario || asigEval === asigUsuario;
-    if (!asigCoincide) return false;
-
     if (ev.curso_id && idsCursosProfe.has(ev.curso_id)) return true;
 
     if (!ev.curso_id && ev.nivel_id) {
