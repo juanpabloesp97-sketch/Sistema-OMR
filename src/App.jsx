@@ -17,69 +17,12 @@ import CamaraOMR from './CamaraOMR';
 import { procesarHojaOMR } from './omrEngine';
 import { convertirPdfAImagenes } from './pdfToImages';
 import { supabase } from './supabaseClient';
+import {
+  MATRIZ_DEFECTO,
+  normalizarMatrizPermisos,
+  obtenerPermisosRol
+} from './permisosConfig';
 
-const PERMISOS_RESPALDO = {
-  admin: {
-    gestionar_usuarios: true,
-    configurar_cursos: true,
-    ver_todos_cursos: true,
-    editar_nominas: true,
-    eximir_estudiantes: true,
-    crear_evaluaciones: true,
-    ver_evals_colegio: true,
-    ver_evals_depto: true,
-    editar_evals_ajenas: true,
-    escanear_hojas: true,
-    corregir_manual_propias: true,
-    corregir_manual_ajenas: true,
-    descargar_reportes: true
-  },
-  utp: {
-    gestionar_usuarios: false,
-    configurar_cursos: false,
-    ver_todos_cursos: true,
-    editar_nominas: false,
-    eximir_estudiantes: false,
-    crear_evaluaciones: true,
-    ver_evals_colegio: true,
-    ver_evals_depto: true,
-    editar_evals_ajenas: false,
-    escanear_hojas: true,
-    corregir_manual_propias: true,
-    corregir_manual_ajenas: false,
-    descargar_reportes: true
-  },
-  jefe_depto: {
-    gestionar_usuarios: false,
-    configurar_cursos: false,
-    ver_todos_cursos: true,
-    editar_nominas: true,
-    eximir_estudiantes: true,
-    crear_evaluaciones: true,
-    ver_evals_colegio: false,
-    ver_evals_depto: true,
-    editar_evals_ajenas: false,
-    escanear_hojas: true,
-    corregir_manual_propias: true,
-    corregir_manual_ajenas: false,
-    descargar_reportes: true
-  },
-  docente: {
-    gestionar_usuarios: false,
-    configurar_cursos: false,
-    ver_todos_cursos: false,
-    editar_nominas: true,
-    eximir_estudiantes: true,
-    crear_evaluaciones: true,
-    ver_evals_colegio: false,
-    ver_evals_depto: false,
-    editar_evals_ajenas: false,
-    escanear_hojas: true,
-    corregir_manual_propias: true,
-    corregir_manual_ajenas: false,
-    descargar_reportes: true
-  }
-};
 
 function obtenerClavesCorrectas(item) {
   if (!item) return [];
@@ -115,7 +58,7 @@ export default function App() {
     rol: 'docente',
     activo: true
   });
-  const [permisosActivos, setPermisosActivos] = useState(PERMISOS_RESPALDO.docente);
+  const [permisosActivos, setPermisosActivos] = useState(() => obtenerPermisosRol(MATRIZ_DEFECTO, 'docente'));
 
   const [vistaActiva, setVistaActiva] = useState('inicio');
   const [nivelActivoId, setNivelActivoId] = useState('');
@@ -379,18 +322,22 @@ export default function App() {
   }, []);
 
   const cargarPermisosDeRol = async (rolUsuario) => {
-    const base = PERMISOS_RESPALDO[rolUsuario] || PERMISOS_RESPALDO.docente;
-    if (!supabase) {
-      setPermisosActivos(base);
-      return base;
+let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
+    if (supabase) {
+      const { data } = await supabase
+        .from('roles_permisos')
+        .select('rol, permisos');
+      if (Array.isArray(data) && data.length > 0) {
+        const parcial = {};
+        data.forEach((fila) => {
+          if (fila?.rol && fila?.permisos) {
+            parcial[fila.rol] = fila.permisos;
+          }
+        });
+        matrizActual = normalizarMatrizPermisos(parcial);
+      }
     }
-    const { data } = await supabase
-      .from('roles_permisos')
-      .select('permisos')
-      .eq('rol', rolUsuario)
-      .maybeSingle();
-
-    const finalPerms = data?.permisos ? { ...base, ...data.permisos } : base;
+    const finalPerms = obtenerPermisosRol(matrizActual, rolUsuario);
     setPermisosActivos(finalPerms);
     return finalPerms;
   };
@@ -2250,9 +2197,8 @@ export default function App() {
           <GestionUsuarios
             perfilActual={profesor}
             onPermisosActualizados={(nuevaMatriz) => {
-              if (nuevaMatriz[profesor.rol]) {
-                setPermisosActivos(nuevaMatriz[profesor.rol]);
-              }
+              const normalizada = normalizarMatrizPermisos(nuevaMatriz);
+              setPermisosActivos(obtenerPermisosRol(normalizada, profesor.rol));
             }}
           />
         )}
