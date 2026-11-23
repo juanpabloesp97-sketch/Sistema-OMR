@@ -1,113 +1,52 @@
 import React, { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
 import {
-  UserPlus, Users, BookOpen, CheckCircle2, XCircle,
-  GraduationCap, RefreshCw, ShieldCheck, Save, RotateCcw
+  Users, UserPlus, Shield, Save, CheckCircle2, XCircle,
+  BookOpen, Search, RefreshCw, KeyRound
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
+import { CATEGORIAS_PERMISOS, PERMISOS_RESPALDO } from './permisosConfig';
 
-const PERMISOS_DEFAULT = {
-  admin: {
-    gestionar_usuarios: true,
-    configurar_cursos: true,
-    ver_todos_cursos: true,
-    editar_nominas: true,
-    eximir_estudiantes: true,
-    crear_evaluaciones: true,
-    ver_evals_colegio: true,
-    ver_evals_depto: true,
-    editar_evals_ajenas: true,
-    escanear_hojas: true,
-    corregir_manual_propias: true,
-    corregir_manual_ajenas: true,
-    descargar_reportes: true
-  },
-  utp: {
-    gestionar_usuarios: false,
-    configurar_cursos: false,
-    ver_todos_cursos: true,
-    editar_nominas: false,
-    eximir_estudiantes: false,
-    crear_evaluaciones: true,
-    ver_evals_colegio: true,
-    ver_evals_depto: true,
-    editar_evals_ajenas: false,
-    escanear_hojas: true,
-    corregir_manual_propias: true,
-    corregir_manual_ajenas: false,
-    descargar_reportes: true
-  },
-  jefe_depto: {
-    gestionar_usuarios: false,
-    configurar_cursos: false,
-    ver_todos_cursos: true,
-    editar_nominas: true,
-    eximir_estudiantes: true,
-    crear_evaluaciones: true,
-    ver_evals_colegio: false,
-    ver_evals_depto: true,
-    editar_evals_ajenas: false,
-    escanear_hojas: true,
-    corregir_manual_propias: true,
-    corregir_manual_ajenas: false,
-    descargar_reportes: true
-  },
-  docente: {
-    gestionar_usuarios: false,
-    configurar_cursos: false,
-    ver_todos_cursos: false,
-    editar_nominas: true,
-    eximir_estudiantes: true,
-    crear_evaluaciones: true,
-    ver_evals_colegio: false,
-    ver_evals_depto: false,
-    editar_evals_ajenas: false,
-    escanear_hojas: true,
-    corregir_manual_propias: true,
-    corregir_manual_ajenas: false,
-    descargar_reportes: true
-  }
-};
-
-const FILAS_PERMISOS = [
-  { key: 'gestionar_usuarios', categoria: '1. Cuentas y Permisos', label: 'Crear/suspender cuentas y asignar roles/cursos' },
-  { key: 'configurar_cursos', categoria: '2. Estructura y Nóminas', label: 'Crear o eliminar Niveles y Cursos del colegio' },
-  { key: 'ver_todos_cursos', categoria: '2. Estructura y Nóminas', label: 'Ver todos los niveles y cursos (no solo los asignados)' },
-  { key: 'editar_nominas', categoria: '2. Estructura y Nóminas', label: 'Subir Excel de estudiantes y agregar alumnos a listas' },
-  { key: 'eximir_estudiantes', categoria: '2. Estructura y Nóminas', label: 'Eximir / deseximir estudiantes en evaluaciones' },
-  { key: 'crear_evaluaciones', categoria: '3. Evaluaciones y Pautas', label: 'Crear evaluaciones propias y compartir/importar pautas' },
-  { key: 'ver_evals_colegio', categoria: '3. Evaluaciones y Pautas', label: 'Supervisar evaluaciones de TODO el colegio (todas las asignaturas)' },
-  { key: 'ver_evals_depto', categoria: '3. Evaluaciones y Pautas', label: 'Supervisar evaluaciones de su Departamento / Asignatura' },
-  { key: 'editar_evals_ajenas', categoria: '3. Evaluaciones y Pautas', label: 'Editar pauta, escala, PDF o eliminar evaluaciones de otros' },
-  { key: 'escanear_hojas', categoria: '4. Escaneo y Reportes', label: 'Imprimir hojas y escanear (cámara / PDF) en sus pruebas' },
-  { key: 'corregir_manual_propias', categoria: '4. Escaneo y Reportes', label: 'Corregir lectura manual (P1–P30) o borrar escaneos en pruebas propias' },
-  { key: 'corregir_manual_ajenas', categoria: '4. Escaneo y Reportes', label: 'Corregir lectura manual (P1–P30) o borrar escaneos en pruebas ajenas' },
-  { key: 'descargar_reportes', categoria: '4. Escaneo y Reportes', label: 'Ver gráficos, visor de hoja escaneada y descargar Excel / PDFs' }
+const ROLES_CONFIG = [
+  { id: 'docente', label: 'Docente', color: '#2563eb', bg: '#eff6ff' },
+  { id: 'jefe_depto', label: 'Jefe Depto', color: '#7c3aed', bg: '#f5f3ff' },
+  { id: 'utp', label: 'UTP', color: '#059669', bg: '#ecfdf5' },
+  { id: 'admin', label: 'Admin', color: '#dc2626', bg: '#fef2f2' }
 ];
 
-const ROLES_META = [
-  { id: 'admin', label: 'Administrador', color: '#1e3a8a', bg: '#dbeafe' },
-  { id: 'utp', label: 'UTP', color: '#6d28d9', bg: '#ede9fe' },
-  { id: 'jefe_depto', label: 'Jefe de Depto.', color: '#047857', bg: '#d1fae5' },
-  { id: 'docente', label: 'Docente', color: '#334155', bg: '#f1f5f9' }
-];
+export default function GestionUsuarios({ perfilActual, permisosActuales = {}, onPermisosActualizados }) {
+  const esAdmin = perfilActual?.rol === 'admin';
+  const puedeCrearPerfiles = esAdmin || Boolean(permisosActuales?.crear_perfiles);
+  const puedeEditarPerfiles = esAdmin || Boolean(permisosActuales?.editar_perfiles);
+  const puedeGestionarPermisos = esAdmin || Boolean(permisosActuales?.gestionar_permisos);
 
-export default function GestionUsuarios({ perfilActual, onPermisosActualizados }) {
-  const [listaUsuarios, setListaUsuarios] = useState([]);
+  const [pestana, setPestana] = useState('perfiles'); // 'perfiles' | 'matriz'
+  const [perfiles, setPerfiles] = useState([]);
   const [niveles, setNiveles] = useState([]);
   const [cursos, setCursos] = useState([]);
-  const [asignaciones, setAsignaciones] = useState([]);
-  const [cargandoLista, setCargandoLista] = useState(false);
+  const [asignacionesMap, setAsignacionesMap] = useState({});
+  const [busqueda, setBusqueda] = useState('');
+  const [cargando, setCargando] = useState(true);
 
-  const [matrizPermisos, setMatrizPermisos] = useState(PERMISOS_DEFAULT);
-  const [guardandoPermisos, setGuardandoPermisos] = useState(false);
+  // Formulario nuevo perfil docente
+  const [nuevoEmail, setNuevoEmail] = useState('');
+  const [nuevoNombre, setNuevoNombre] = useState('');
+  const [nuevaAsignatura, setNuevaAsignatura] = useState('Matemática');
+  const [nuevoRol, setNuevoRol] = useState('docente');
+  const [creandoPerfil, setCreandoPerfil] = useState(false);
 
-  const [nombre, setNombre] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [asignatura, setAsignatura] = useState('Matemática');
-  const [rol, setRol] = useState('docente');
-  const [creando, setCreando] = useState(false);
+  // Modal asignación de cursos a un docente
+  const [docenteAsignando, setDocenteAsignando] = useState(null);
+  const [cursosSeleccionadosModal, setCursosSeleccionadosModal] = useState(new Set());
+  const [guardandoCursos, setGuardandoCursos] = useState(false);
+
+  // Estado de la Matriz de Permisos
+  const [matrizPermisos, setMatrizPermisos] = useState({
+    docente: { ...PERMISOS_RESPALDO.docente },
+    jefe_depto: { ...PERMISOS_RESPALDO.jefe_depto },
+    utp: { ...PERMISOS_RESPALDO.utp },
+    admin: { ...PERMISOS_RESPALDO.admin }
+  });
+  const [guardandoMatriz, setGuardandoMatriz] = useState(false);
 
   useEffect(() => {
     cargarTodo();
@@ -115,45 +54,176 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
 
   const cargarTodo = async () => {
     if (!supabase) return;
-    setCargandoLista(true);
+    setCargando(true);
     try {
-      const { data: users, error: errUsers } = await supabase
-        .from('perfiles')
-        .select('*');
-
-      if (errUsers) {
-        console.error('Error cargando perfiles:', errUsers);
-      } else if (users) {
-        setListaUsuarios(users);
-      }
-
-      const [{ data: niv }, { data: cur }, { data: asig }, { data: permsDB }] = await Promise.all([
-        supabase.from('niveles').select('*').order('orden', { ascending: true }),
+      const [
+        { data: listaPerfiles },
+        { data: listaNiveles },
+        { data: listaCursos },
+        { data: listaAsignaciones },
+        { data: listaRolesPerms }
+      ] = await Promise.all([
+        supabase.from('perfiles').select('*').order('nombre'),
+        supabase.from('niveles').select('*').order('orden', { ascending: true }).order('nombre'),
         supabase.from('cursos').select('*').order('nombre'),
         supabase.from('docente_cursos').select('*'),
         supabase.from('roles_permisos').select('*')
       ]);
 
-      if (niv) setNiveles(niv);
-      if (cur) setCursos(cur);
-      if (asig) setAsignaciones(asig);
+      setPerfiles(listaPerfiles || []);
+      setNiveles(listaNiveles || []);
+      setCursos(listaCursos || []);
 
-      if (permsDB && permsDB.length > 0) {
-        const nuevaMatriz = { ...PERMISOS_DEFAULT };
-        permsDB.forEach((row) => {
-          if (nuevaMatriz[row.rol]) {
-            nuevaMatriz[row.rol] = { ...nuevaMatriz[row.rol], ...(row.permisos || {}) };
-          }
-        });
-        setMatrizPermisos(nuevaMatriz);
-      }
+      const mapaAsig = {};
+      (listaAsignaciones || []).forEach((a) => {
+        if (!mapaAsig[a.docente_id]) mapaAsig[a.docente_id] = [];
+        mapaAsig[a.docente_id].push(a.curso_id);
+      });
+      setAsignacionesMap(mapaAsig);
+
+      const nuevaMatriz = {
+        docente: { ...PERMISOS_RESPALDO.docente },
+        jefe_depto: { ...PERMISOS_RESPALDO.jefe_depto },
+        utp: { ...PERMISOS_RESPALDO.utp },
+        admin: { ...PERMISOS_RESPALDO.admin }
+      };
+
+      (listaRolesPerms || []).forEach((row) => {
+        if (nuevaMatriz[row.rol] && row.permisos) {
+          nuevaMatriz[row.rol] = {
+            ...nuevaMatriz[row.rol],
+            ...row.permisos
+          };
+        }
+      });
+
+      setMatrizPermisos(nuevaMatriz);
     } finally {
-      setCargandoLista(false);
+      setCargando(false);
     }
   };
 
-  const togglePermiso = (rolId, permisoKey) => {
-    if (rolId === 'admin' && permisoKey === 'gestionar_usuarios') return;
+  const crearNuevoPerfil = async (e) => {
+    e.preventDefault();
+    if (!puedeCrearPerfiles || !nuevoEmail.trim() || !nuevoNombre.trim()) return;
+
+    setCreandoPerfil(true);
+    try {
+      const emailNorm = nuevoEmail.trim().toLowerCase();
+      const { error } = await supabase
+        .from('perfiles')
+        .upsert(
+          [
+            {
+              email: emailNorm,
+              nombre: nuevoNombre.trim(),
+              asignatura: nuevaAsignatura.trim() || 'Matemática',
+              rol: nuevoRol,
+              activo: true
+            }
+          ],
+          { onConflict: 'email' }
+        );
+
+      if (error) {
+        alert('Error al crear perfil: ' + error.message);
+        return;
+      }
+
+      setNuevoEmail('');
+      setNuevoNombre('');
+      await cargarTodo();
+      alert(`✅ Perfil docente pre-registrado para ${emailNorm}. Cuando inicie sesión con este correo asumirá automáticamente su rol y cursos asignados.`);
+    } finally {
+      setCreandoPerfil(false);
+    }
+  };
+
+  const actualizarCampoPerfil = async (perfilId, campo, valor) => {
+    if (!puedeEditarPerfiles || !supabase) return;
+    const { error } = await supabase
+      .from('perfiles')
+      .update({ [campo]: valor })
+      .eq('id', perfilId);
+
+    if (error) {
+      alert('Error al actualizar perfil: ' + error.message);
+      return;
+    }
+
+    setPerfiles((prev) =>
+      prev.map((p) => (p.id === perfilId ? { ...p, [campo]: valor } : p))
+    );
+  };
+
+  const abrirModalCursos = (docente) => {
+    const actuales = asignacionesMap[docente.id] || [];
+    setCursosSeleccionadosModal(new Set(actuales));
+    setDocenteAsignando(docente);
+  };
+
+  const toggleCursoModal = (cursoId) => {
+    setCursosSeleccionadosModal((prev) => {
+      const copia = new Set(prev);
+      if (copia.has(cursoId)) copia.delete(cursoId);
+      else copia.add(cursoId);
+      return copia;
+    });
+  };
+
+  const toggleNivelCompletoModal = (nivelId) => {
+    const cursosDelNiv = cursos.filter((c) => c.nivel_id === nivelId).map((c) => c.id);
+    if (cursosDelNiv.length === 0) return;
+
+    setCursosSeleccionadosModal((prev) => {
+      const copia = new Set(prev);
+      const todosSeleccionados = cursosDelNiv.every((id) => copia.has(id));
+      if (todosSeleccionados) {
+        cursosDelNiv.forEach((id) => copia.delete(id));
+      } else {
+        cursosDelNiv.forEach((id) => copia.add(id));
+      }
+      return copia;
+    });
+  };
+
+  const guardarAsignacionCursos = async () => {
+    if (!docenteAsignando || !supabase) return;
+    setGuardandoCursos(true);
+    try {
+      await supabase
+        .from('docente_cursos')
+        .delete()
+        .eq('docente_id', docenteAsignando.id);
+
+      const filas = Array.from(cursosSeleccionadosModal).map((cId) => ({
+        docente_id: docenteAsignando.id,
+        curso_id: cId
+      }));
+
+      if (filas.length > 0) {
+        const { error } = await supabase.from('docente_cursos').insert(filas);
+        if (error) {
+          alert('Error al guardar cursos: ' + error.message);
+          return;
+        }
+      }
+
+      setAsignacionesMap((prev) => ({
+        ...prev,
+        [docenteAsignando.id]: Array.from(cursosSeleccionadosModal)
+      }));
+      setDocenteAsignando(null);
+      alert('✅ Cursos y niveles asignados correctamente.');
+    } finally {
+      setGuardandoCursos(false);
+    }
+  };
+
+  const togglePermisoCelda = (rolId, permisoKey) => {
+    if (!puedeGestionarPermisos) return;
+    // Evitar bloquear al propio administrador en la gestión de permisos
+    if (rolId === 'admin' && permisoKey === 'gestionar_permisos') return;
 
     setMatrizPermisos((prev) => ({
       ...prev,
@@ -165,14 +235,12 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
   };
 
   const guardarMatrizPermisos = async () => {
-    if (!supabase) return;
-    setGuardandoPermisos(true);
+    if (!puedeGestionarPermisos || !supabase) return;
+    setGuardandoMatriz(true);
     try {
-      const filasUpsert = ROLES_META.map((r) => ({
+      const filasUpsert = ROLES_CONFIG.map((r) => ({
         rol: r.id,
-        nombre_mostrar: r.label,
-        permisos: matrizPermisos[r.id] || PERMISOS_DEFAULT[r.id],
-        updated_at: new Date().toISOString()
+        permisos: matrizPermisos[r.id]
       }));
 
       const { error } = await supabase
@@ -180,376 +248,507 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
         .upsert(filasUpsert, { onConflict: 'rol' });
 
       if (error) {
-        alert('Error al guardar permisos: ' + error.message);
+        alert('Error al guardar matriz de permisos: ' + error.message);
         return;
       }
 
       if (onPermisosActualizados) {
         onPermisosActualizados(matrizPermisos);
       }
-      alert('✅ Matriz de permisos por rol actualizada en la nube.');
+      alert('✅ Matriz de permisos actualizada en todo el establecimiento.');
     } finally {
-      setGuardandoPermisos(false);
+      setGuardandoMatriz(false);
     }
   };
 
-  const restaurarPermisosDefault = () => {
-    if (!confirm('¿Restaurar las casillas de los 4 roles a la configuración recomendada inicial?')) return;
-    setMatrizPermisos(PERMISOS_DEFAULT);
-  };
-
-  const toggleCursoDocente = async (docenteId, cursoId) => {
-    const yaAsignado = asignaciones.some(
-      (a) => a.docente_id === docenteId && a.curso_id === cursoId
-    );
-
-    if (yaAsignado) {
-      await supabase
-        .from('docente_cursos')
-        .delete()
-        .eq('docente_id', docenteId)
-        .eq('curso_id', cursoId);
-    } else {
-      await supabase
-        .from('docente_cursos')
-        .insert([{ docente_id: docenteId, curso_id: cursoId }]);
-    }
-
-    const { data: asig } = await supabase.from('docente_cursos').select('*');
-    if (asig) setAsignaciones(asig);
-  };
-
-  const crearNuevaCuenta = async (e) => {
-    e.preventDefault();
-    if (!nombre.trim() || !email.trim() || password.length < 6) {
-      alert('Completa todos los campos. La contraseña debe tener al menos 6 caracteres.');
-      return;
-    }
-
-    setCreando(true);
-    try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-      const tempClient = createClient(supabaseUrl, supabaseAnonKey, {
-        auth: { persistSession: false, autoRefreshToken: false }
-      });
-
-      const { data, error } = await tempClient.auth.signUp({
-        email: email.trim(),
-        password,
-        options: {
-          data: {
-            nombre: nombre.trim(),
-            asignatura: asignatura.trim(),
-            rol
-          }
-        }
-      });
-
-      if (error) {
-        alert('Error al crear cuenta: ' + error.message);
-        return;
-      }
-
-      if (data?.user) {
-        await supabase.from('perfiles').upsert([
-          {
-            id: data.user.id,
-            email: email.trim(),
-            nombre: nombre.trim(),
-            asignatura: asignatura.trim(),
-            rol,
-            activo: true
-          }
-        ]);
-      }
-
-      alert(`✅ Cuenta creada correctamente para ${nombre.trim()}.`);
-      setNombre('');
-      setEmail('');
-      setPassword('');
-      await cargarTodo();
-    } catch (err) {
-      alert('Error inesperado: ' + err.message);
-    } finally {
-      setCreando(false);
-    }
-  };
-
-  const cambiarRolUsuario = async (idUsuario, nuevoRol) => {
-    if (idUsuario === perfilActual?.id) return;
-    await supabase.from('perfiles').update({ rol: nuevoRol }).eq('id', idUsuario);
-    cargarTodo();
-  };
-
-  const toggleEstadoUsuario = async (u) => {
-    if (u.id === perfilActual?.id) return;
-    await supabase.from('perfiles').update({ activo: !u.activo }).eq('id', u.id);
-    cargarTodo();
-  };
+  const perfilesFiltrados = perfiles.filter(
+    (p) =>
+      (p.nombre || '').toLowerCase().includes(busqueda.toLowerCase()) ||
+      (p.email || '').toLowerCase().includes(busqueda.toLowerCase()) ||
+      (p.asignatura || '').toLowerCase().includes(busqueda.toLowerCase())
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* 1. MATRIZ EDITABLE DE PERMISOS POR ROL */}
-      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
-          <div>
-            <h2 style={{ margin: 0, fontSize: '20px', display: 'flex', alignItems: 'center', gap: '10px', color: '#0f172a' }}>
-              <ShieldCheck size={22} color="#2563eb" />
-              Matriz de Atribuciones por Rol (Editable)
-            </h2>
-            <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#64748b' }}>
-              Marca o desmarca las casillas para personalizar qué puede hacer cada perfil en el sistema.
-            </p>
-          </div>
+      {/* Cabecera */}
+      <div style={{ background: '#ffffff', padding: '22px 24px', borderRadius: '14px', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: '22px', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Shield size={24} color="#2563eb" />
+            Gestión de Docentes y Matriz de Permisos
+          </h1>
+          <p style={{ margin: '4px 0 0 0', fontSize: '13.5px', color: '#64748b' }}>
+            Administra los perfiles del establecimiento, asigna cursos/niveles y configura los permisos por rol.
+          </p>
+        </div>
 
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: '8px', background: '#f1f5f9', padding: '5px', borderRadius: '10px' }}>
+          <button
+            onClick={() => setPestana('perfiles')}
+            style={{
+              padding: '8px 14px',
+              borderRadius: '8px',
+              border: 'none',
+              fontWeight: '700',
+              fontSize: '13px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              background: pestana === 'perfiles' ? '#ffffff' : 'transparent',
+              color: pestana === 'perfiles' ? '#1e3a8a' : '#475569',
+              boxShadow: pestana === 'perfiles' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+            }}
+          >
+            <Users size={16} /> Perfiles y Cursos ({perfiles.length})
+          </button>
+
+          {puedeGestionarPermisos && (
             <button
-              type="button"
-              onClick={restaurarPermisosDefault}
+              onClick={() => setPestana('matriz')}
               style={{
-                background: '#f8fafc',
-                color: '#475569',
-                border: '1px solid #cbd5e1',
+                padding: '8px 14px',
                 borderRadius: '8px',
-                padding: '8px 12px',
-                fontSize: '12.5px',
-                fontWeight: '600',
+                border: 'none',
+                fontWeight: '700',
+                fontSize: '13px',
                 cursor: 'pointer',
-                display: 'inline-flex',
+                display: 'flex',
                 alignItems: 'center',
-                gap: '5px'
+                gap: '6px',
+                background: pestana === 'matriz' ? '#ffffff' : 'transparent',
+                color: pestana === 'matriz' ? '#1e3a8a' : '#475569',
+                boxShadow: pestana === 'matriz' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
               }}
             >
-              <RotateCcw size={14} /> Restaurar Base
+              <KeyRound size={16} /> Matriz de Permisos
             </button>
+          )}
+        </div>
+      </div>
+
+      {/* PESTAÑA 1: PERFILES DOCENTES Y ASIGNACIÓN DE CURSOS */}
+      {pestana === 'perfiles' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {puedeCrearPerfiles && (
+            <form
+              onSubmit={crearNuevoPerfil}
+              style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #cbd5e1', display: 'flex', flexDirection: 'column', gap: '12px' }}
+            >
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <UserPlus size={18} color="#16a34a" /> Crear / Pre-registrar Perfil Docente
+              </h3>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '10px' }}>
+                <input
+                  type="email"
+                  required
+                  placeholder="Correo institucional (@colegio.cl)"
+                  value={nuevoEmail}
+                  onChange={(e) => setNuevoEmail(e.target.value)}
+                  style={{ padding: '9px 11px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px' }}
+                />
+                <input
+                  type="text"
+                  required
+                  placeholder="Nombre completo docente"
+                  value={nuevoNombre}
+                  onChange={(e) => setNuevoNombre(e.target.value)}
+                  style={{ padding: '9px 11px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px' }}
+                />
+                <input
+                  type="text"
+                  placeholder="Asignatura / Depto (Ej: Matemática)"
+                  value={nuevaAsignatura}
+                  onChange={(e) => setNuevaAsignatura(e.target.value)}
+                  style={{ padding: '9px 11px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px' }}
+                />
+                <select
+                  value={nuevoRol}
+                  onChange={(e) => setNuevoRol(e.target.value)}
+                  style={{ padding: '9px 11px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px', fontWeight: '700' }}
+                >
+                  <option value="docente">Rol: Docente</option>
+                  <option value="jefe_depto">Rol: Jefe de Departamento</option>
+                  <option value="utp">Rol: UTP</option>
+                  {esAdmin && <option value="admin">Rol: Administrador</option>}
+                </select>
+                <button
+                  type="submit"
+                  disabled={creandoPerfil}
+                  style={{
+                    background: '#16a34a',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '9px 14px',
+                    fontWeight: '700',
+                    fontSize: '13.5px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {creandoPerfil ? 'Guardando...' : '+ Crear Perfil'}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Listado de perfiles */}
+          <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0f172a' }}>
+                Usuarios Registrados ({perfilesFiltrados.length})
+              </h3>
+              <div style={{ position: 'relative' }}>
+                <Search size={15} color="#94a3b8" style={{ position: 'absolute', left: '10px', top: '9px' }} />
+                <input
+                  type="text"
+                  placeholder="Buscar por nombre, correo o asignatura..."
+                  value={busqueda}
+                  onChange={(e) => setBusqueda(e.target.value)}
+                  style={{ padding: '7px 12px 7px 32px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', minWidth: '250px' }}
+                />
+              </div>
+            </div>
+
+            {cargando ? (
+              <p style={{ color: '#64748b', fontSize: '14px' }}>Cargando usuarios...</p>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13.5px' }}>
+                  <thead style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                    <tr>
+                      <th style={{ padding: '10px', textAlign: 'left' }}>Docente</th>
+                      <th style={{ padding: '10px', textAlign: 'left' }}>Asignatura / Depto</th>
+                      <th style={{ padding: '10px', textAlign: 'center' }}>Rol</th>
+                      <th style={{ padding: '10px', textAlign: 'left' }}>Cursos / Niveles Asignados</th>
+                      <th style={{ padding: '10px', textAlign: 'center' }}>Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perfilesFiltrados.map((p) => {
+                      const idsCursosDoc = asignacionesMap[p.id] || [];
+                      const nombresCursos = cursos
+                        .filter((c) => idsCursosDoc.includes(c.id))
+                        .map((c) => c.nombre);
+                      const esCuentaPrincipal = p.email?.toLowerCase().trim() === 'juan.pabloesp97@gmail.com';
+
+                      return (
+                        <tr key={p.id || p.email} style={{ borderBottom: '1px solid #f1f5f9', opacity: p.activo === false ? 0.6 : 1 }}>
+                          <td style={{ padding: '10px' }}>
+                            {puedeEditarPerfiles && !esCuentaPrincipal ? (
+                              <input
+                                type="text"
+                                defaultValue={p.nombre}
+                                onBlur={(e) => {
+                                  if (e.target.value.trim() && e.target.value !== p.nombre) {
+                                    actualizarCampoPerfil(p.id, 'nombre', e.target.value.trim());
+                                  }
+                                }}
+                                style={{ fontWeight: '700', color: '#0f172a', border: '1px solid transparent', borderRadius: '6px', padding: '4px 6px', width: '100%', maxWidth: '210px', background: '#f8fafc' }}
+                              />
+                            ) : (
+                              <div style={{ fontWeight: '700', color: '#0f172a' }}>{p.nombre}</div>
+                            )}
+                            <div style={{ fontSize: '12px', color: '#64748b', paddingLeft: '6px' }}>{p.email}</div>
+                          </td>
+
+                          <td style={{ padding: '10px' }}>
+                            {puedeEditarPerfiles ? (
+                              <input
+                                type="text"
+                                defaultValue={p.asignatura || ''}
+                                onBlur={(e) => {
+                                  if (e.target.value !== (p.asignatura || '')) {
+                                    actualizarCampoPerfil(p.id, 'asignatura', e.target.value.trim());
+                                  }
+                                }}
+                                style={{ border: '1px solid #e2e8f0', borderRadius: '6px', padding: '5px 8px', width: '140px', fontSize: '13px' }}
+                              />
+                            ) : (
+                              <span>{p.asignatura || '-'}</span>
+                            )}
+                          </td>
+
+                          <td style={{ padding: '10px', textAlign: 'center' }}>
+                            <select
+                              disabled={!puedeEditarPerfiles || esCuentaPrincipal}
+                              value={p.rol || 'docente'}
+                              onChange={(e) => actualizarCampoPerfil(p.id, 'rol', e.target.value)}
+                              style={{ padding: '5px 8px', borderRadius: '7px', border: '1px solid #cbd5e1', fontWeight: '700', fontSize: '12.5px' }}
+                            >
+                              <option value="docente">Docente</option>
+                              <option value="jefe_depto">Jefe Depto</option>
+                              <option value="utp">UTP</option>
+                              <option value="admin">Admin</option>
+                            </select>
+                          </td>
+
+                          <td style={{ padding: '10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              <button
+                                type="button"
+                                disabled={!puedeCrearPerfiles && !puedeEditarPerfiles}
+                                onClick={() => abrirModalCursos(p)}
+                                style={{
+                                  background: '#eff6ff',
+                                  color: '#1d4ed8',
+                                  border: '1px solid #bfdbfe',
+                                  borderRadius: '7px',
+                                  padding: '5px 10px',
+                                  fontSize: '12px',
+                                  fontWeight: '700',
+                                  cursor: 'pointer',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '5px'
+                                }}
+                              >
+                                <BookOpen size={14} /> Asignar ({nombresCursos.length})
+                              </button>
+                              <span style={{ fontSize: '12px', color: '#475569' }}>
+                                {nombresCursos.length > 0 ? nombresCursos.join(', ') : 'Sin cursos asignados'}
+                              </span>
+                            </div>
+                          </td>
+
+                          <td style={{ padding: '10px', textAlign: 'center' }}>
+                            {esCuentaPrincipal ? (
+                              <span style={{ fontSize: '11.5px', fontWeight: '800', color: '#16a34a' }}>Principal</span>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={!puedeEditarPerfiles}
+                                onClick={() => actualizarCampoPerfil(p.id, 'activo', p.activo === false)}
+                                style={{
+                                  background: p.activo !== false ? '#dcfce7' : '#fee2e2',
+                                  color: p.activo !== false ? '#166534' : '#991b1b',
+                                  border: 'none',
+                                  borderRadius: '999px',
+                                  padding: '4px 10px',
+                                  fontSize: '12px',
+                                  fontWeight: '700',
+                                  cursor: puedeEditarPerfiles ? 'pointer' : 'default',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                              >
+                                {p.activo !== false ? <><CheckCircle2 size={13} /> Activo</> : <><XCircle size={13} /> Suspendido</>}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* PESTAÑA 2: MATRIZ DE PERMISOS POR ROL */}
+      {pestana === 'matriz' && puedeGestionarPermisos && (
+        <div style={{ background: '#ffffff', padding: '22px', borderRadius: '14px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a' }}>
+                Matriz de Permisos por Rol Escolar
+              </h3>
+              <p style={{ margin: '3px 0 0 0', fontSize: '13px', color: '#64748b' }}>
+                Define exactamente qué puede ver, crear, editar, escanear o borrar cada perfil en su aula, departamento o colegio.
+              </p>
+            </div>
 
             <button
               type="button"
               onClick={guardarMatrizPermisos}
-              disabled={guardandoPermisos}
+              disabled={guardandoMatriz}
               style={{
-                background: '#2563eb',
+                background: '#16a34a',
                 color: '#ffffff',
                 border: 'none',
-                borderRadius: '8px',
-                padding: '8px 16px',
-                fontSize: '13px',
-                fontWeight: '700',
-                cursor: guardandoPermisos ? 'wait' : 'pointer',
+                borderRadius: '10px',
+                padding: '11px 18px',
+                fontWeight: '800',
+                fontSize: '13.5px',
+                cursor: guardandoMatriz ? 'wait' : 'pointer',
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '6px'
+                gap: '7px',
+                boxShadow: '0 2px 6px rgba(22,163,74,0.25)'
               }}
             >
-              <Save size={15} /> {guardandoPermisos ? 'Guardando...' : 'Guardar Permisos'}
+              {guardandoMatriz ? <RefreshCw size={16} /> : <Save size={16} />}
+              {guardandoMatriz ? 'Guardando...' : 'Guardar Matriz de Permisos'}
             </button>
           </div>
-        </div>
 
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-            <thead>
-              <tr style={{ background: '#f8fafc', borderBottom: '2px solid #cbd5e1' }}>
-                <th style={{ padding: '10px 12px', textAlign: 'left', color: '#0f172a' }}>Módulo / Atribución</th>
-                {ROLES_META.map((r) => (
-                  <th key={r.id} style={{ padding: '10px 8px', textAlign: 'center', minWidth: '115px' }}>
-                    <span style={{ background: r.bg, color: r.color, padding: '4px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: '800' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13.5px' }}>
+              <thead>
+                <tr style={{ background: '#0f172a', color: '#ffffff' }}>
+                  <th style={{ padding: '12px 14px', textAlign: 'left', minWidth: '320px' }}>Acción / Permiso del Sistema</th>
+                  {ROLES_CONFIG.map((r) => (
+                    <th key={r.id} style={{ padding: '12px 10px', textAlign: 'center', minWidth: '105px' }}>
                       {r.label}
-                    </span>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {FILAS_PERMISOS.map((fila, idx) => {
-                const mostrarCategoria = idx === 0 || FILAS_PERMISOS[idx - 1].categoria !== fila.categoria;
-                return (
-                  <React.Fragment key={fila.key}>
-                    {mostrarCategoria && (
-                      <tr style={{ background: '#f1f5f9' }}>
-                        <td colSpan={5} style={{ padding: '6px 12px', fontWeight: '800', fontSize: '11.5px', color: '#334155', textTransform: 'uppercase' }}>
-                          {fila.categoria}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {CATEGORIAS_PERMISOS.map((cat) => (
+                  <React.Fragment key={cat.titulo}>
+                    <tr style={{ background: '#f1f5f9' }}>
+                      <td colSpan={5} style={{ padding: '9px 14px', fontWeight: '800', color: '#1e3a8a', fontSize: '13px', borderTop: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1' }}>
+                        {cat.titulo}
+                      </td>
+                    </tr>
+                    {cat.items.map((item) => (
+                      <tr key={item.key} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '9px 14px', color: '#1e293b', fontWeight: '500' }}>
+                          {item.label}
                         </td>
+                        {ROLES_CONFIG.map((r) => {
+                          const activo = Boolean(matrizPermisos[r.id]?.[item.key]);
+                          const bloqueado = r.id === 'admin' && item.key === 'gestionar_permisos';
+                          return (
+                            <td key={r.id} style={{ padding: '8px 10px', textAlign: 'center' }}>
+                              <input
+                                type="checkbox"
+                                checked={activo}
+                                disabled={bloqueado}
+                                onChange={() => togglePermisoCelda(r.id, item.key)}
+                                style={{
+                                  width: '18px',
+                                  height: '18px',
+                                  cursor: bloqueado ? 'not-allowed' : 'pointer',
+                                  accentColor: r.color
+                                }}
+                              />
+                            </td>
+                          );
+                        })}
                       </tr>
-                    )}
-                    <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ padding: '9px 12px', color: '#1e293b', fontWeight: '500' }}>{fila.label}</td>
-                      {ROLES_META.map((r) => {
-                        const checked = Boolean(matrizPermisos[r.id]?.[fila.key]);
-                        const bloqueado = r.id === 'admin' && fila.key === 'gestionar_usuarios';
+                    ))}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL PARA ASIGNAR NIVELES Y CURSOS A UN DOCENTE */}
+      {docenteAsignando && (
+        <div
+          onClick={() => setDocenteAsignando(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px'
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '520px',
+              maxHeight: '85vh', display: 'flex', flexDirection: 'column',
+              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', overflow: 'hidden'
+            }}
+          >
+            <div style={{ padding: '18px 22px', borderBottom: '1px solid #e2e8f0' }}>
+              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a' }}>
+                Asignar Cursos y Niveles
+              </h3>
+              <p style={{ margin: '3px 0 0 0', fontSize: '13px', color: '#64748b' }}>
+                Docente: <strong>{docenteAsignando.nombre}</strong>
+              </p>
+            </div>
+
+            <div style={{ padding: '16px 22px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {niveles.map((niv) => {
+                const cursosNiv = cursos.filter((c) => c.nivel_id === niv.id);
+                if (cursosNiv.length === 0) return null;
+                const todosMarcados = cursosNiv.every((c) => cursosSeleccionadosModal.has(c.id));
+
+                return (
+                  <div key={niv.id} style={{ border: '1px solid #cbd5e1', borderRadius: '10px', padding: '12px', background: '#f8fafc' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <strong style={{ fontSize: '14.5px', color: '#0f172a' }}>{niv.nombre}</strong>
+                      <button
+                        type="button"
+                        onClick={() => toggleNivelCompletoModal(niv.id)}
+                        style={{
+                          background: todosMarcados ? '#dbeafe' : '#ffffff',
+                          color: '#1d4ed8',
+                          border: '1px solid #93c5fd',
+                          borderRadius: '6px',
+                          padding: '3px 9px',
+                          fontSize: '11.5px',
+                          fontWeight: '700',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {todosMarcados ? 'Desmarcar nivel' : 'Seleccionar nivel completo'}
+                      </button>
+                    </div>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                      {cursosNiv.map((cur) => {
+                        const marcado = cursosSeleccionadosModal.has(cur.id);
                         return (
-                          <td
-                            key={r.id}
-                            onClick={() => !bloqueado && togglePermiso(r.id, fila.key)}
-                            style={{ padding: '9px 8px', textAlign: 'center', cursor: bloqueado ? 'not-allowed' : 'pointer' }}
+                          <label
+                            key={cur.id}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '6px 10px',
+                              borderRadius: '8px',
+                              border: marcado ? '1px solid #2563eb' : '1px solid #cbd5e1',
+                              background: marcado ? '#eff6ff' : '#ffffff',
+                              fontSize: '13px',
+                              fontWeight: '600',
+                              cursor: 'pointer'
+                            }}
                           >
                             <input
                               type="checkbox"
-                              checked={checked}
-                              disabled={bloqueado}
-                              onChange={() => {}}
-                              style={{ width: '17px', height: '17px', cursor: bloqueado ? 'not-allowed' : 'pointer', accentColor: r.color }}
+                              checked={marcado}
+                              onChange={() => toggleCursoModal(cur.id)}
                             />
-                          </td>
+                            {cur.nombre}
+                          </label>
                         );
                       })}
-                    </tr>
-                  </React.Fragment>
+                    </div>
+                  </div>
                 );
               })}
-            </tbody>
-          </table>
+            </div>
+
+            <div style={{ padding: '14px 22px', background: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                type="button"
+                onClick={() => setDocenteAsignando(null)}
+                style={{ background: '#ffffff', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '8px 14px', fontWeight: '600', cursor: 'pointer' }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={guardarAsignacionCursos}
+                disabled={guardandoCursos}
+                style={{ background: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '8px', padding: '8px 16px', fontWeight: '700', cursor: 'pointer' }}
+              >
+                {guardandoCursos ? 'Guardando...' : 'Guardar Asignación'}
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
-
-      {/* 2. FORMULARIO DE CREACIÓN DE CUENTA */}
-      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-        <h2 style={{ margin: '0 0 8px 0', fontSize: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <UserPlus size={22} color="#2563eb" />
-          Crear Nueva Cuenta de Usuario
-        </h2>
-        <p style={{ margin: '0 0 18px 0', fontSize: '13.5px', color: '#64748b' }}>
-          Crea las cuentas del personal, elige su rol (Administrador, UTP, Jefe de Depto. o Docente) y marca abajo sus cursos de aula.
-        </p>
-
-        <form onSubmit={crearNuevaCuenta} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
-          <div>
-            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Nombre Completo</label>
-            <input type="text" required placeholder="Ej: María José González" value={nombre} onChange={(e) => setNombre(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
-          </div>
-          <div>
-            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Correo Institucional</label>
-            <input type="email" required placeholder="mgonzalez@colegio.cl" value={email} onChange={(e) => setEmail(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
-          </div>
-          <div>
-            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Contraseña Inicial</label>
-            <input type="text" required minLength={6} placeholder="Mín. 6 caracteres" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
-          </div>
-          <div>
-            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Asignatura / Departamento</label>
-            <input type="text" value={asignatura} onChange={(e) => setAsignatura(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
-          </div>
-          <div>
-            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Rol</label>
-            <select value={rol} onChange={(e) => setRol(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box', fontWeight: '600' }}>
-              <option value="docente">Docente</option>
-              <option value="jefe_depto">Jefe de Departamento</option>
-              <option value="utp">UTP</option>
-              <option value="admin">Administrador</option>
-            </select>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-            <button type="submit" disabled={creando} style={{ width: '100%', background: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 14px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-              <UserPlus size={17} /> {creando ? 'Creando...' : 'Crear Cuenta'}
-            </button>
-          </div>
-        </form>
-      </div>
-
-      {/* 3. LISTA DE USUARIOS Y ASIGNACIÓN DE CURSOS */}
-      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-          <h3 style={{ margin: 0, fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Users size={19} color="#0f172a" />
-            Usuarios y Cursos de Aula Asignados ({listaUsuarios.length})
-          </h3>
-          <button
-            onClick={cargarTodo}
-            style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '7px', padding: '6px 10px', fontSize: '12.5px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}
-          >
-            <RefreshCw size={14} /> {cargandoLista ? 'Actualizando...' : 'Actualizar lista'}
-          </button>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {listaUsuarios.map((u) => {
-            const cursosDelDocente = asignaciones
-              .filter((a) => a.docente_id === u.id)
-              .map((a) => a.curso_id);
-
-            return (
-              <div key={u.id} style={{ padding: '16px', borderRadius: '10px', border: '1px solid #e2e8f0', background: u.activo === false ? '#f8fafc' : '#ffffff', opacity: u.activo === false ? 0.6 : 1 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '10px' }}>
-                  <div>
-                    <div style={{ fontWeight: '800', fontSize: '15px', color: '#0f172a' }}>{u.nombre}</div>
-                    <div style={{ fontSize: '12.5px', color: '#64748b' }}>
-                      {u.email} • <BookOpen size={12} style={{ verticalAlign: 'middle' }} /> {u.asignatura || 'Matemática'}
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <select
-                      value={u.rol}
-                      disabled={u.id === perfilActual?.id}
-                      onChange={(e) => cambiarRolUsuario(u.id, e.target.value)}
-                      style={{ padding: '5px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontWeight: '700', fontSize: '12px' }}
-                    >
-                      <option value="docente">Docente</option>
-                      <option value="jefe_depto">Jefe de Departamento</option>
-                      <option value="utp">UTP</option>
-                      <option value="admin">Administrador</option>
-                    </select>
-
-                    <button
-                      onClick={() => toggleEstadoUsuario(u)}
-                      disabled={u.id === perfilActual?.id}
-                      style={{
-                        background: u.activo !== false ? '#dcfce7' : '#fee2e2',
-                        color: u.activo !== false ? '#166534' : '#991b1b',
-                        border: 'none', borderRadius: '999px', padding: '5px 10px',
-                        fontSize: '12px', fontWeight: '700', cursor: 'pointer',
-                        display: 'inline-flex', alignItems: 'center', gap: '4px'
-                      }}
-                    >
-                      {u.activo !== false ? <><CheckCircle2 size={13} /> Activo</> : <><XCircle size={13} /> Suspendido</>}
-                    </button>
-                  </div>
-                </div>
-
-                {u.rol === 'admin' ? (
-                  <div style={{ fontSize: '12px', color: '#1d4ed8', fontWeight: '600', background: '#eff6ff', padding: '6px 10px', borderRadius: '6px' }}>
-                    Acceso completo a todos los niveles y cursos del establecimiento.
-                  </div>
-                ) : (
-                  <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: '10px' }}>
-                    <div style={{ fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                      <GraduationCap size={14} /> Cursos de aula asignados directamente (para crear evaluaciones y listas):
-                    </div>
-                    {cursos.length === 0 ? (
-                      <span style={{ fontSize: '12px', color: '#94a3b8' }}>Aún no hay cursos creados en Mis Cursos.</span>
-                    ) : (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                        {cursos.map((c) => {
-                          const marcado = cursosDelDocente.includes(c.id);
-                          const niv = niveles.find((n) => n.id === c.nivel_id);
-                          return (
-                            <label
-                              key={c.id}
-                              onClick={() => toggleCursoDocente(u.id, c.id)}
-                              style={{
-                                display: 'inline-flex', alignItems: 'center', gap: '6px',
-                                padding: '5px 10px', borderRadius: '8px', cursor: 'pointer',
-                                fontSize: '12.5px', fontWeight: '600',
-                                border: marcado ? '1px solid #2563eb' : '1px solid #cbd5e1',
-                                background: marcado ? '#eff6ff' : '#f8fafc',
-                                color: marcado ? '#1d4ed8' : '#475569'
-                              }}
-                            >
-                              <input type="checkbox" checked={marcado} readOnly />
-                              {niv ? `${niv.nombre} — ` : ''}{c.nombre}
-                            </label>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      )}
     </div>
   );
 }

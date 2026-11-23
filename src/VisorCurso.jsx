@@ -10,8 +10,15 @@ export default function VisorCurso({
   cursos,
   cursoActivoId,
   setCursoActivoId,
-  onRecargarEstructura
+  onRecargarEstructura,
+  permisos = {},
+  esAdmin = false
 }) {
+  const puedeCrearNiveles = esAdmin || Boolean(permisos?.crear_niveles);
+  const puedeCrearCursos = esAdmin || Boolean(permisos?.crear_cursos);
+  const puedeAgregarEstudiantes = esAdmin || Boolean(permisos?.agregar_estudiantes);
+  const puedeEliminarEstudiantes = esAdmin || Boolean(permisos?.eliminar_estudiantes);
+
   const [estudiantes, setEstudiantes] = useState([]);
   const [seleccionados, setSeleccionados] = useState([]);
   const [nivelSeleccionado, setNivelSeleccionado] = useState('');
@@ -53,7 +60,7 @@ export default function VisorCurso({
   // Crear Nivel
   const crearNivel = async (e) => {
     e.preventDefault();
-    if (!nuevoNivel.trim() || !supabase) return;
+    if (!puedeCrearNiveles || !nuevoNivel.trim() || !supabase) return;
     const { data, error } = await supabase
       .from('niveles')
       .insert([{ nombre: nuevoNivel.trim(), orden: niveles.length + 1 }])
@@ -69,9 +76,9 @@ export default function VisorCurso({
     onRecargarEstructura();
   };
 
-  // Eliminar Nivel (borra también sus cursos y estudiantes por cascada en BD)
+  // Eliminar Nivel
   const eliminarNivel = async () => {
-    if (!nivelSeleccionado || !supabase) return;
+    if (!puedeCrearNiveles || !nivelSeleccionado || !supabase) return;
     const nivelObj = niveles.find((n) => n.id === nivelSeleccionado);
     const nombreNivel = nivelObj ? nivelObj.nombre : 'este nivel';
 
@@ -97,7 +104,7 @@ export default function VisorCurso({
   // Crear Curso
   const crearCurso = async (e) => {
     e.preventDefault();
-    if (!nuevoCurso.trim() || !nivelSeleccionado || !supabase) return;
+    if (!puedeCrearCursos || !nuevoCurso.trim() || !nivelSeleccionado || !supabase) return;
     const { data, error } = await supabase
       .from('cursos')
       .insert([{ nivel_id: nivelSeleccionado, nombre: nuevoCurso.trim() }])
@@ -115,6 +122,7 @@ export default function VisorCurso({
 
   // Eliminar Curso
   const eliminarCurso = async (id) => {
+    if (!puedeCrearCursos) return;
     if (!confirm('¿Eliminar este curso completo y todos sus estudiantes?')) return;
     await supabase.from('cursos').delete().eq('id', id);
     if (cursoActivoId === id) setCursoActivoId('');
@@ -124,7 +132,7 @@ export default function VisorCurso({
   // Agregar estudiante individual
   const agregarEstudiante = async (e) => {
     e.preventDefault();
-    if (!nuevoRut.trim() || !nuevoNombre.trim() || !cursoActivoId) return;
+    if (!puedeAgregarEstudiantes || !nuevoRut.trim() || !nuevoNombre.trim() || !cursoActivoId) return;
     const { error } = await supabase
       .from('estudiantes')
       .upsert(
@@ -162,7 +170,7 @@ export default function VisorCurso({
   // Subir Excel masivo completado
   const manejarExcel = (e) => {
     const file = e.target.files[0];
-    if (!file || !cursoActivoId) return;
+    if (!puedeAgregarEstudiantes || !file || !cursoActivoId) return;
 
     const reader = new FileReader();
     reader.onload = async (evt) => {
@@ -216,12 +224,14 @@ export default function VisorCurso({
 
   // Selección múltiple de estudiantes
   const toggleSeleccion = (id) => {
+    if (!puedeEliminarEstudiantes) return;
     setSeleccionados((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
   };
 
   const toggleSeleccionarTodos = () => {
+    if (!puedeEliminarEstudiantes) return;
     if (seleccionados.length === estudiantes.length) {
       setSeleccionados([]);
     } else {
@@ -231,7 +241,7 @@ export default function VisorCurso({
 
   // Eliminar varios estudiantes a la vez
   const eliminarSeleccionados = async () => {
-    if (seleccionados.length === 0) return;
+    if (!puedeEliminarEstudiantes || seleccionados.length === 0) return;
     if (!confirm(`¿Eliminar ${seleccionados.length} estudiante(s) seleccionado(s) de este curso?`)) return;
 
     const { error } = await supabase
@@ -252,87 +262,91 @@ export default function VisorCurso({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Panel para Crear/Eliminar Niveles y Cursos */}
-      <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-        <h2 style={{ margin: '0 0 14px 0', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <GraduationCap size={22} color="#2563eb" />
-          Administración de Niveles y Cursos
-        </h2>
+      {/* Panel para Crear/Eliminar Niveles y Cursos (solo si tiene permisos) */}
+      {(puedeCrearNiveles || puedeCrearCursos) && (
+        <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+          <h2 style={{ margin: '0 0 14px 0', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <GraduationCap size={22} color="#2563eb" />
+            Administración de Niveles y Cursos
+          </h2>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-          {/* Crear Nivel */}
-          <form onSubmit={crearNivel} style={{ background: '#f8fafc', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
-            <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px' }}>
-              Nuevo Nivel (ej: 1° Medio, 8° Básico)
-            </label>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <input
-                type="text"
-                placeholder="Nombre del nivel..."
-                value={nuevoNivel}
-                onChange={(e) => setNuevoNivel(e.target.value)}
-                style={{ flex: 1, padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-              />
-              <button
-                type="submit"
-                style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 14px', cursor: 'pointer', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}
-              >
-                <Plus size={16} /> Crear
-              </button>
-            </div>
-          </form>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+            {puedeCrearNiveles && (
+              <form onSubmit={crearNivel} style={{ background: '#f8fafc', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px' }}>
+                  Nuevo Nivel (ej: 1° Medio, 8° Básico)
+                </label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="text"
+                    placeholder="Nombre del nivel..."
+                    value={nuevoNivel}
+                    onChange={(e) => setNuevoNivel(e.target.value)}
+                    style={{ flex: 1, padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                  />
+                  <button
+                    type="submit"
+                    style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 14px', cursor: 'pointer', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <Plus size={16} /> Crear
+                  </button>
+                </div>
+              </form>
+            )}
 
-          {/* Crear Curso o Eliminar Nivel */}
-          <form onSubmit={crearCurso} style={{ background: '#f8fafc', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
-            <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px' }}>
-              Gestionar Nivel / Crear Curso
-            </label>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
-              <select
-                value={nivelSeleccionado}
-                onChange={(e) => setNivelSeleccionado(e.target.value)}
-                style={{ flex: 1, padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', minWidth: '130px' }}
-              >
-                <option value="">Seleccionar nivel...</option>
-                {niveles.map((n) => (
-                  <option key={n.id} value={n.id}>{n.nombre}</option>
-                ))}
-              </select>
+            {puedeCrearCursos && (
+              <form onSubmit={crearCurso} style={{ background: '#f8fafc', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px' }}>
+                  Gestionar Nivel / Crear Curso
+                </label>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                  <select
+                    value={nivelSeleccionado}
+                    onChange={(e) => setNivelSeleccionado(e.target.value)}
+                    style={{ flex: 1, padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', minWidth: '130px' }}
+                  >
+                    <option value="">Seleccionar nivel...</option>
+                    {niveles.map((n) => (
+                      <option key={n.id} value={n.id}>{n.nombre}</option>
+                    ))}
+                  </select>
 
-              {nivelSeleccionado && (
-                <button
-                  type="button"
-                  onClick={eliminarNivel}
-                  style={{
-                    background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca',
-                    borderRadius: '8px', padding: '8px 12px', cursor: 'pointer', fontWeight: '600',
-                    fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px'
-                  }}
-                  title="Eliminar este nivel y todos sus cursos"
-                >
-                  <Trash2 size={15} /> Eliminar Nivel
-                </button>
-              )}
-            </div>
+                  {puedeCrearNiveles && nivelSeleccionado && (
+                    <button
+                      type="button"
+                      onClick={eliminarNivel}
+                      style={{
+                        background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca',
+                        borderRadius: '8px', padding: '8px 12px', cursor: 'pointer', fontWeight: '600',
+                        fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px'
+                      }}
+                      title="Eliminar este nivel y todos sus cursos"
+                    >
+                      <Trash2 size={15} /> Eliminar Nivel
+                    </button>
+                  )}
+                </div>
 
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <input
-                type="text"
-                placeholder="Nuevo curso (ej: 1° Medio A)"
-                value={nuevoCurso}
-                onChange={(e) => setNuevoCurso(e.target.value)}
-                style={{ flex: 1, minWidth: '140px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-              />
-              <button
-                type="submit"
-                style={{ background: '#059669', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 14px', cursor: 'pointer', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}
-              >
-                <FolderPlus size={16} /> Crear Curso
-              </button>
-            </div>
-          </form>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <input
+                    type="text"
+                    placeholder="Nuevo curso (ej: 1° Medio A)"
+                    value={nuevoCurso}
+                    onChange={(e) => setNuevoCurso(e.target.value)}
+                    style={{ flex: 1, minWidth: '140px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                  />
+                  <button
+                    type="submit"
+                    style={{ background: '#059669', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 14px', cursor: 'pointer', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <FolderPlus size={16} /> Crear Curso
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Visor de Nómina del Curso Activo */}
       <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
@@ -351,7 +365,7 @@ export default function VisorCurso({
 
           {cursoObj && (
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              {seleccionados.length > 0 && (
+              {puedeEliminarEstudiantes && seleccionados.length > 0 && (
                 <button
                   onClick={eliminarSeleccionados}
                   style={{
@@ -365,107 +379,115 @@ export default function VisorCurso({
                 </button>
               )}
 
-              <button
-                onClick={() => eliminarCurso(cursoObj.id)}
-                style={{
-                  background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '8px',
-                  padding: '8px 12px', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
-                }}
-              >
-                Eliminar Curso
-              </button>
+              {puedeCrearCursos && (
+                <button
+                  onClick={() => eliminarCurso(cursoObj.id)}
+                  style={{
+                    background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '8px',
+                    padding: '8px 12px', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
+                  }}
+                >
+                  Eliminar Curso
+                </button>
+              )}
             </div>
           )}
         </div>
 
         {!cursoObj ? (
           <div style={{ padding: '24px', textAlign: 'center', background: '#f8fafc', borderRadius: '10px', color: '#64748b', fontSize: '14px' }}>
-            Elige un curso desde el menú lateral izquierdo bajo <strong>Mis Cursos</strong> para descargar su plantilla, subir la lista y editar estudiantes.
+            Elige un curso desde el menú lateral izquierdo bajo <strong>Mis Cursos</strong> para ver la lista de estudiantes.
           </div>
         ) : (
           <>
             {/* Flujo guiado de Plantilla Excel */}
-            <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '14px 16px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-              <div style={{ fontSize: '13px', color: '#166534' }}>
-                <strong>Carga masiva de curso (3 pasos):</strong>
-                <div style={{ marginTop: '2px' }}>
-                  1. Descarga la plantilla oficial &nbsp;→&nbsp; 2. Llena las columnas <strong>RUT</strong> y <strong>Nombre</strong> &nbsp;→&nbsp; 3. Sube el archivo completado.
+            {puedeAgregarEstudiantes && (
+              <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '14px 16px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                <div style={{ fontSize: '13px', color: '#166534' }}>
+                  <strong>Carga masiva de curso (3 pasos):</strong>
+                  <div style={{ marginTop: '2px' }}>
+                    1. Descarga la plantilla oficial &nbsp;→&nbsp; 2. Llena las columnas <strong>RUT</strong> y <strong>Nombre</strong> &nbsp;→&nbsp; 3. Sube el archivo completado.
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={descargarPlantillaExcel}
+                    style={{
+                      background: '#ffffff', color: '#15803d', border: '1px solid #86efac',
+                      padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', fontWeight: '700',
+                      fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px'
+                    }}
+                  >
+                    <FileSpreadsheet size={16} />
+                    1. Descargar Plantilla (.xlsx)
+                  </button>
+
+                  <label
+                    style={{
+                      background: '#16a34a', color: 'white', padding: '8px 14px', borderRadius: '8px',
+                      cursor: 'pointer', fontWeight: '700', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px'
+                    }}
+                  >
+                    <Upload size={16} />
+                    2. Subir Plantilla Llena
+                    <input type="file" accept=".xlsx,.xls" onChange={manejarExcel} style={{ display: 'none' }} />
+                  </label>
                 </div>
               </div>
-
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <button
-                  onClick={descargarPlantillaExcel}
-                  style={{
-                    background: '#ffffff', color: '#15803d', border: '1px solid #86efac',
-                    padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', fontWeight: '700',
-                    fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px'
-                  }}
-                >
-                  <FileSpreadsheet size={16} />
-                  1. Descargar Plantilla (.xlsx)
-                </button>
-
-                <label
-                  style={{
-                    background: '#16a34a', color: 'white', padding: '8px 14px', borderRadius: '8px',
-                    cursor: 'pointer', fontWeight: '700', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px'
-                  }}
-                >
-                  <Upload size={16} />
-                  2. Subir Plantilla Llena
-                  <input type="file" accept=".xlsx,.xls" onChange={manejarExcel} style={{ display: 'none' }} />
-                </label>
-              </div>
-            </div>
+            )}
 
             {/* Agregar alumno individual */}
-            <form onSubmit={agregarEstudiante} style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
-              <input
-                type="text"
-                placeholder="RUT (ej: 21.345.678-9)"
-                value={nuevoRut}
-                onChange={(e) => setNuevoRut(e.target.value)}
-                style={{ width: '180px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-              />
-              <input
-                type="text"
-                placeholder="Nombre completo del estudiante"
-                value={nuevoNombre}
-                onChange={(e) => setNuevoNombre(e.target.value)}
-                style={{ flex: 1, minWidth: '220px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-              />
-              <button
-                type="submit"
-                style={{ background: '#7c3aed', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 14px', cursor: 'pointer', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}
-              >
-                <UserPlus size={16} /> Agregar Alumno
-              </button>
-            </form>
+            {puedeAgregarEstudiantes && (
+              <form onSubmit={agregarEstudiante} style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
+                <input
+                  type="text"
+                  placeholder="RUT (ej: 21.345.678-9)"
+                  value={nuevoRut}
+                  onChange={(e) => setNuevoRut(e.target.value)}
+                  style={{ width: '180px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                />
+                <input
+                  type="text"
+                  placeholder="Nombre completo del estudiante"
+                  value={nuevoNombre}
+                  onChange={(e) => setNuevoNombre(e.target.value)}
+                  style={{ flex: 1, minWidth: '220px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                />
+                <button
+                  type="submit"
+                  style={{ background: '#7c3aed', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 14px', cursor: 'pointer', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <UserPlus size={16} /> Agregar Alumno
+                </button>
+              </form>
+            )}
 
             {/* Tabla con checkboxes */}
             {estudiantes.length === 0 ? (
               <div style={{ padding: '20px', textAlign: 'center', background: '#f8fafc', borderRadius: '8px', color: '#64748b', fontSize: '14px' }}>
-                Este curso aún no tiene estudiantes. Usa el botón <strong>1. Descargar Plantilla (.xlsx)</strong> arriba para preparar la nómina.
+                Este curso aún no tiene estudiantes matriculados.
               </div>
             ) : (
               <div style={{ maxHeight: '420px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                   <thead style={{ background: '#f1f5f9', position: 'sticky', top: 0 }}>
                     <tr>
-                      <th style={{ padding: '10px', width: '40px', textAlign: 'center', borderBottom: '1px solid #cbd5e1' }}>
-                        <button
-                          onClick={toggleSeleccionarTodos}
-                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}
-                          title="Seleccionar todos"
-                        >
-                          {seleccionados.length === estudiantes.length && estudiantes.length > 0 ? (
-                            <CheckSquare size={18} color="#2563eb" />
-                          ) : (
-                            <Square size={18} color="#64748b" />
-                          )}
-                        </button>
-                      </th>
+                      {puedeEliminarEstudiantes && (
+                        <th style={{ padding: '10px', width: '40px', textAlign: 'center', borderBottom: '1px solid #cbd5e1' }}>
+                          <button
+                            onClick={toggleSeleccionarTodos}
+                            style={{ background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}
+                            title="Seleccionar todos"
+                          >
+                            {seleccionados.length === estudiantes.length && estudiantes.length > 0 ? (
+                              <CheckSquare size={18} color="#2563eb" />
+                            ) : (
+                              <Square size={18} color="#64748b" />
+                            )}
+                          </button>
+                        </th>
+                      )}
                       <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #cbd5e1' }}>N°</th>
                       <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #cbd5e1' }}>RUT</th>
                       <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #cbd5e1' }}>Nombre Completo</th>
@@ -481,12 +503,14 @@ export default function VisorCurso({
                           style={{
                             borderBottom: '1px solid #f1f5f9',
                             background: marcado ? '#eff6ff' : '#ffffff',
-                            cursor: 'pointer'
+                            cursor: puedeEliminarEstudiantes ? 'pointer' : 'default'
                           }}
                         >
-                          <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                            {marcado ? <CheckSquare size={17} color="#2563eb" /> : <Square size={17} color="#94a3b8" />}
-                          </td>
+                          {puedeEliminarEstudiantes && (
+                            <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                              {marcado ? <CheckSquare size={17} color="#2563eb" /> : <Square size={17} color="#94a3b8" />}
+                            </td>
+                          )}
                           <td style={{ padding: '8px 10px', color: '#64748b' }}>{idx + 1}</td>
                           <td style={{ padding: '8px 10px', fontFamily: 'monospace' }}>{est.rut}</td>
                           <td style={{ padding: '8px 10px', fontWeight: '500' }}>{est.nombre}</td>

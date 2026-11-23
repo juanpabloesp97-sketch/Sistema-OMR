@@ -17,69 +17,7 @@ import CamaraOMR from './CamaraOMR';
 import { procesarHojaOMR } from './omrEngine';
 import { convertirPdfAImagenes } from './pdfToImages';
 import { supabase } from './supabaseClient';
-
-const PERMISOS_RESPALDO = {
-  admin: {
-    gestionar_usuarios: true,
-    configurar_cursos: true,
-    ver_todos_cursos: true,
-    editar_nominas: true,
-    eximir_estudiantes: true,
-    crear_evaluaciones: true,
-    ver_evals_colegio: true,
-    ver_evals_depto: true,
-    editar_evals_ajenas: true,
-    escanear_hojas: true,
-    corregir_manual_propias: true,
-    corregir_manual_ajenas: true,
-    descargar_reportes: true
-  },
-  utp: {
-    gestionar_usuarios: false,
-    configurar_cursos: false,
-    ver_todos_cursos: true,
-    editar_nominas: false,
-    eximir_estudiantes: false,
-    crear_evaluaciones: true,
-    ver_evals_colegio: true,
-    ver_evals_depto: true,
-    editar_evals_ajenas: false,
-    escanear_hojas: true,
-    corregir_manual_propias: true,
-    corregir_manual_ajenas: false,
-    descargar_reportes: true
-  },
-  jefe_depto: {
-    gestionar_usuarios: false,
-    configurar_cursos: false,
-    ver_todos_cursos: true,
-    editar_nominas: true,
-    eximir_estudiantes: true,
-    crear_evaluaciones: true,
-    ver_evals_colegio: false,
-    ver_evals_depto: true,
-    editar_evals_ajenas: false,
-    escanear_hojas: true,
-    corregir_manual_propias: true,
-    corregir_manual_ajenas: false,
-    descargar_reportes: true
-  },
-  docente: {
-    gestionar_usuarios: false,
-    configurar_cursos: false,
-    ver_todos_cursos: false,
-    editar_nominas: true,
-    eximir_estudiantes: true,
-    crear_evaluaciones: true,
-    ver_evals_colegio: false,
-    ver_evals_depto: false,
-    editar_evals_ajenas: false,
-    escanear_hojas: true,
-    corregir_manual_propias: true,
-    corregir_manual_ajenas: false,
-    descargar_reportes: true
-  }
-};
+import { PERMISOS_RESPALDO } from './permisosConfig';
 
 function obtenerClavesCorrectas(item) {
   if (!item) return [];
@@ -164,7 +102,7 @@ export default function App() {
   const [rutExtra, setRutExtra] = useState('');
   const [nombreExtra, setNombreExtra] = useState('');
 
-  // Calcula nota con escala flexible susceptible al puntaje ideal total
+  // --- ESCALA Y EVALUACIÓN DE RESPUESTAS ---
   const calcularNotaConEscala = (puntaje, total, cfg = config) => {
     const nMin = Number(cfg.notaMin ?? 1.0);
     const nMax = Number(cfg.notaMax ?? 7.0);
@@ -189,7 +127,6 @@ export default function App() {
     return Math.min(nMax, Math.max(nMin, redondeada));
   };
 
-  // Evalúa un mapa de respuestas con la pauta actual (soporta múltiples claves, puntaje diferido y 0 pts anulada)
   const evaluarRespuestasConPauta = (respuestasMap, cfg = config) => {
     const totalPreg = Number(cfg.numPreguntas || 0);
     const pautaActual = cfg.pauta || {};
@@ -220,6 +157,7 @@ export default function App() {
     return { puntosObtenidos, puntosTotales, porcentaje, nota };
   };
 
+  // --- IDENTIFICACIÓN DE ÁMBITO DE UNA EVALUACIÓN (PROPIA/AULA vs DEPTO vs COLEGIO) ---
   const esEvaluacionDeSuAula = (
     ev,
     perfilUsuario = profesor,
@@ -227,31 +165,120 @@ export default function App() {
     listaCursos = cursos
   ) => {
     if (!ev) return true;
-    if (ev.docente_id === perfilUsuario?.id) return true;
+    const creadorId = ev.docente_id || ev.docenteId;
+    if (creadorId && creadorId === perfilUsuario?.id) return true;
 
     const cursoEvId = ev.curso_id || ev.cursoId || '';
     const nivelEvId = ev.nivel_id || ev.nivelId || '';
 
-    // 1. Si el docente tiene asignado directamente ese curso
     if (cursoEvId && idsCursosProfe.has(cursoEvId)) return true;
 
-    // 2. Obtener todos los niveles donde el docente tiene cursos asignados
     const nivelesDelDocente = new Set(
-      listaCursos
-        .filter((c) => idsCursosProfe.has(c.id))
-        .map((c) => c.nivel_id)
+      listaCursos.filter((c) => idsCursosProfe.has(c.id)).map((c) => c.nivel_id)
     );
 
-    // 3. Si es una evaluación de nivel completo y el docente hace clases en ese nivel
     if (nivelEvId && nivelesDelDocente.has(nivelEvId)) return true;
 
-    // 4. Si es una evaluación de un curso cuyo nivel pertenece al docente
     if (cursoEvId) {
       const cObj = listaCursos.find((c) => c.id === cursoEvId);
       if (cObj && nivelesDelDocente.has(cObj.nivel_id)) return true;
     }
 
     return false;
+  };
+
+  const esEvaluacionMismoDepto = (ev, perfilUsuario = profesor) => {
+    if (!ev) return false;
+    const asigUsuario = (perfilUsuario?.asignatura || '').trim().toLowerCase();
+    const asigEval = (ev.asignatura || '').trim().toLowerCase();
+    if (!asigUsuario || !asigEval) return false;
+    return asigUsuario === asigEval;
+  };
+
+  const calcularPermisosSobreEval = (
+    ev,
+    perfilUsuario = profesor,
+    perms = permisosActivos,
+    idsCursosProfe = cursosAsignadosAula,
+    listaCursos = cursos
+  ) => {
+    const esAdmin = perfilUsuario?.rol === 'admin';
+    const esPropia = esEvaluacionDeSuAula(ev, perfilUsuario, idsCursosProfe, listaCursos);
+    const esDepto = esEvaluacionMismoDepto(ev, perfilUsuario);
+
+    const puedeEditar =
+      esAdmin ||
+      (esPropia && Boolean(perms?.editar_evals_propias)) ||
+      (esDepto && Boolean(perms?.editar_evals_depto)) ||
+      Boolean(perms?.editar_evals_colegio);
+
+    const puedeBorrar =
+      esAdmin ||
+      (esPropia && Boolean(perms?.borrar_evals_propias)) ||
+      (esDepto && Boolean(perms?.borrar_evals_depto)) ||
+      Boolean(perms?.borrar_evals_colegio);
+
+    const puedeRecalcular =
+      esAdmin ||
+      (esPropia && Boolean(perms?.recalcular_notas_propias)) ||
+      (esDepto && Boolean(perms?.recalcular_notas_depto)) ||
+      Boolean(perms?.recalcular_notas_colegio);
+
+    const puedeEscanear =
+      esAdmin ||
+      (esPropia && Boolean(perms?.escanear_propias)) ||
+      (esDepto && Boolean(perms?.escanear_depto)) ||
+      Boolean(perms?.escanear_colegio);
+
+    const puedeEliminarEscaneos =
+      esAdmin ||
+      (esPropia && Boolean(perms?.eliminar_escaneos_propias)) ||
+      (esDepto && Boolean(perms?.eliminar_escaneos_depto)) ||
+      Boolean(perms?.eliminar_escaneos_colegio);
+
+    const puedeVerRespuestas =
+      esAdmin ||
+      esPropia ||
+      (esDepto && Boolean(perms?.ver_respuestas_depto)) ||
+      Boolean(perms?.ver_respuestas_colegio);
+
+    const puedeEditarRespuestas =
+      esAdmin ||
+      (esPropia && Boolean(perms?.editar_respuestas_propias)) ||
+      (esDepto && Boolean(perms?.editar_respuestas_depto)) ||
+      Boolean(perms?.editar_respuestas_colegio);
+
+    const puedeVerResultados =
+      esAdmin ||
+      esPropia ||
+      (esDepto && Boolean(perms?.ver_resultados_depto)) ||
+      Boolean(perms?.ver_resultados_colegio);
+
+    const puedeExportar =
+      esAdmin ||
+      (esPropia && Boolean(perms?.exportar_reportes_propias)) ||
+      (esDepto && Boolean(perms?.exportar_reportes_depto)) ||
+      Boolean(perms?.exportar_reportes_colegio);
+
+    const puedeEximir =
+      esAdmin ||
+      (esPropia && Boolean(perms?.eximir_estudiantes_propias)) ||
+      Boolean(perms?.eximir_estudiantes_ajenas);
+
+    return {
+      esPropia,
+      esDepto,
+      puedeEditar,
+      puedeBorrar,
+      puedeRecalcular,
+      puedeEscanear,
+      puedeEliminarEscaneos,
+      puedeVerRespuestas,
+      puedeEditarRespuestas,
+      puedeVerResultados,
+      puedeExportar,
+      puedeEximir
+    };
   };
 
   // --- SINCRONIZACIÓN CON HISTORIAL DEL NAVEGADOR ---
@@ -585,7 +612,11 @@ export default function App() {
     let cursosVisibles = cur || [];
     let nivelesVisibles = niv || [];
 
-    const veTodo = perfilUsuario?.rol === 'admin' || Boolean(permsUsuario?.ver_todos_cursos);
+    const veTodo =
+      perfilUsuario?.rol === 'admin' ||
+      Boolean(permsUsuario?.ver_todos_cursos) ||
+      Boolean(permsUsuario?.crear_niveles) ||
+      Boolean(permsUsuario?.crear_cursos);
 
     if (!veTodo && perfilUsuario?.id) {
       cursosVisibles = cursosVisibles.filter((c) => idsAula.has(c.id));
@@ -619,15 +650,20 @@ export default function App() {
         .order('created_at', { ascending: false })
     ]);
 
-    const asigUsuario = (perfilUsuario.asignatura || '').trim().toLowerCase();
-
     const filtradas = (todasEvals || []).filter((ev) => {
+      if (perfilUsuario.rol === 'admin') return true;
       if (esEvaluacionDeSuAula(ev, perfilUsuario, idsCursosProfe, listaCursos)) return true;
-      if (perfilUsuario.rol === 'admin' || permsUsuario?.ver_evals_colegio) return true;
-      if (permsUsuario?.ver_evals_depto && asigUsuario) {
-        const asigEval = (ev.asignatura || '').trim().toLowerCase();
-        return asigEval === asigUsuario;
-      }
+
+      const veColegio =
+        Boolean(permsUsuario?.ver_evals_colegio) ||
+        Boolean(permsUsuario?.ver_resultados_colegio);
+      if (veColegio) return true;
+
+      const veDepto =
+        Boolean(permsUsuario?.ver_evals_depto) ||
+        Boolean(permsUsuario?.ver_resultados_depto);
+      if (veDepto && esEvaluacionMismoDepto(ev, perfilUsuario)) return true;
+
       return false;
     });
 
@@ -748,9 +784,8 @@ export default function App() {
     }
     setEximidosRuts(Array.isArray(ev.eximidos) ? ev.eximidos : []);
 
-    const deSuAula = esEvaluacionDeSuAula(ev, perfilUsuario, idsCursosProfe, listaCursos);
-    const puedeEditarAjena = perfilUsuario?.rol === 'admin' || Boolean(permsUsuario?.editar_evals_ajenas);
-    setSubVistaEval(deSuAula || puedeEditarAjena ? 'avance' : 'analisis');
+    const pEval = calcularPermisosSobreEval(ev, perfilUsuario, permsUsuario, idsCursosProfe, listaCursos);
+    setSubVistaEval(pEval.esPropia || pEval.puedeEditar ? 'avance' : 'analisis');
     setVistaActiva('detalle-evaluacion');
   };
 
@@ -1300,18 +1335,17 @@ export default function App() {
     return <Login />;
   }
 
-  const esEvaluacionPropia = esEvaluacionDeSuAula(config, profesor, cursosAsignadosAula, cursos);
   const esSuperAdmin = profesor.rol === 'admin';
-  const puedeEditarEvalActual = esSuperAdmin || esEvaluacionPropia || Boolean(permisosActivos?.editar_evals_ajenas);
-  const puedeEscanearEvalActual = esSuperAdmin || (esEvaluacionPropia && permisosActivos?.escanear_hojas !== false) || Boolean(permisosActivos?.editar_evals_ajenas);
-  const puedeCorregirManualActual =
+  const permsEvalActual = calcularPermisosSobreEval(config, profesor, permisosActivos, cursosAsignadosAula, cursos);
+
+  const puedeCrearEvaluaciones = esSuperAdmin || Boolean(permisosActivos?.crear_evaluaciones);
+  const puedeCompartirPautas = esSuperAdmin || Boolean(permisosActivos?.compartir_pautas);
+  const puedeAgregarEstudiantes = esSuperAdmin || Boolean(permisosActivos?.agregar_estudiantes);
+  const puedeGestionarUsuarios =
     esSuperAdmin ||
-    (esEvaluacionPropia && permisosActivos?.corregir_manual_propias !== false) ||
-    (!esEvaluacionPropia && Boolean(permisosActivos?.corregir_manual_ajenas));
-  const puedeEximirActual = esSuperAdmin || (esEvaluacionPropia && permisosActivos?.eximir_estudiantes !== false) || Boolean(permisosActivos?.editar_evals_ajenas);
-  const puedeEditarNominasActual = esSuperAdmin || Boolean(permisosActivos?.editar_nominas);
-  const puedeGestionarUsuarios = esSuperAdmin || Boolean(permisosActivos?.gestionar_usuarios);
-  const puedeCrearEvaluaciones = esSuperAdmin || permisosActivos?.crear_evaluaciones !== false;
+    Boolean(permisosActivos?.crear_perfiles) ||
+    Boolean(permisosActivos?.editar_perfiles) ||
+    Boolean(permisosActivos?.gestionar_permisos);
 
   const nivelActualObj = niveles.find((n) => n.id === nivelActivoId);
   const cursoActualObj = cursos.find((c) => c.id === cursoActivoId);
@@ -1359,9 +1393,9 @@ export default function App() {
   const pestanasEvalDisponibles = [
     { id: 'avance', label: 'Avance y Pendientes', icon: Clock, visible: true },
     { id: 'imprimir', label: 'Imprimir / Nómina Alumnos', icon: Printer, visible: true },
-    { id: 'escanear', label: `Escanear Hojas (${resultadosVisiblesEval.length})`, icon: Camera, visible: puedeEscanearEvalActual },
-    { id: 'pauta', label: 'Editar Pauta y Escala', icon: CheckSquare, visible: puedeEditarEvalActual },
-    { id: 'analisis', label: 'Análisis y Reportes', icon: BarChart3, visible: true }
+    { id: 'escanear', label: `Escanear Hojas (${resultadosVisiblesEval.length})`, icon: Camera, visible: permsEvalActual.puedeEscanear },
+    { id: 'pauta', label: 'Editar Pauta y Escala', icon: CheckSquare, visible: permsEvalActual.puedeEditar },
+    { id: 'analisis', label: 'Análisis y Reportes', icon: BarChart3, visible: permsEvalActual.puedeVerResultados }
   ].filter((t) => t.visible);
 
   return (
@@ -1411,7 +1445,7 @@ export default function App() {
             >
               <div>
                 <div style={{ fontSize: '12px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', opacity: 0.85 }}>
-                  Sistema OMR • {profesor.asignatura || 'Gestión Escolar'}
+                  Evaluaciones a tu alcance • {profesor.asignatura || 'Gestión Escolar'}
                 </div>
                 <h1 style={{ margin: '4px 0 6px 0', fontSize: '26px', fontWeight: '800' }}>
                   Hola, {profesor.nombre}
@@ -1527,7 +1561,7 @@ export default function App() {
                       : nObj
                       ? `Nivel Completo: ${nObj.nombre}`
                       : 'Sin asignar';
-                    const deSuAula = esEvaluacionDeSuAula(ev);
+                    const pItem = calcularPermisosSobreEval(ev);
 
                     return (
                       <div
@@ -1555,9 +1589,9 @@ export default function App() {
                         <div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                             <strong style={{ fontSize: '15px', color: '#0f172a' }}>{ev.titulo}</strong>
-                            {!deSuAula && (
+                            {!pItem.esPropia && (
                               <span style={{ background: '#fef3c7', color: '#92400e', fontSize: '11px', fontWeight: '700', padding: '2px 8px', borderRadius: '999px' }}>
-                                Supervisión • Prof. {ev.docente_nombre || 'Docente'}
+                                {pItem.esDepto ? 'Departamento' : 'Colegio'} • Prof. {ev.docente_nombre || 'Docente'}
                               </span>
                             )}
                           </div>
@@ -1566,7 +1600,7 @@ export default function App() {
                           </div>
                         </div>
                         <span style={{ background: '#eff6ff', color: '#1d4ed8', padding: '6px 12px', borderRadius: '8px', fontWeight: '700', fontSize: '12.5px' }}>
-                          {deSuAula || puedeEditarEvalActual ? 'Gestionar →' : 'Ver Resultados →'}
+                          {pItem.esPropia || pItem.puedeEditar ? 'Gestionar →' : 'Ver Resultados →'}
                         </span>
                       </div>
                     );
@@ -1698,7 +1732,7 @@ export default function App() {
                   return (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       {evalsNivel.map((ev) => {
-                        const deSuAula = esEvaluacionDeSuAula(ev);
+                        const pItem = calcularPermisosSobreEval(ev);
                         return (
                           <div
                             key={ev.id}
@@ -1712,7 +1746,7 @@ export default function App() {
                             <div>
                               <strong style={{ fontSize: '15px', color: '#0f172a' }}>{ev.titulo}</strong>
                               <div style={{ fontSize: '12.5px', color: '#64748b' }}>
-                                {ev.asignatura} • {ev.num_preguntas} preguntas {!deSuAula && `• Prof. ${ev.docente_nombre || 'Docente'}`}
+                                {ev.asignatura} • {ev.num_preguntas} preguntas {!pItem.esPropia && `• Prof. ${ev.docente_nombre || 'Docente'}`}
                               </div>
                             </div>
                             <span style={{ color: '#2563eb', fontWeight: '700', fontSize: '13px' }}>
@@ -1820,7 +1854,7 @@ export default function App() {
                   return (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       {evalsCurso.map((ev) => {
-                        const deSuAula = esEvaluacionDeSuAula(ev);
+                        const pItem = calcularPermisosSobreEval(ev);
                         return (
                           <div
                             key={ev.id}
@@ -1834,7 +1868,7 @@ export default function App() {
                             <div>
                               <div style={{ fontWeight: '700', fontSize: '14.5px', color: '#0f172a' }}>{ev.titulo}</div>
                               <div style={{ fontSize: '12px', color: '#64748b' }}>
-                                {ev.asignatura} • {ev.num_preguntas} preg. {!deSuAula && `• Prof. ${ev.docente_nombre || 'Docente'}`}
+                                {ev.asignatura} • {ev.num_preguntas} preg. {!pItem.esPropia && `• Prof. ${ev.docente_nombre || 'Docente'}`}
                               </div>
                             </div>
                             <span style={{ color: '#2563eb', fontWeight: '700', fontSize: '13px' }}>Entrar →</span>
@@ -1900,6 +1934,7 @@ export default function App() {
         {vistaActiva === 'usuarios' && puedeGestionarUsuarios && (
           <GestionUsuarios
             perfilActual={profesor}
+            permisosActuales={permisosActivos}
             onPermisosActualizados={(nuevaMatriz) => {
               if (nuevaMatriz[profesor.rol]) {
                 setPermisosActivos(nuevaMatriz[profesor.rol]);
@@ -1931,6 +1966,8 @@ export default function App() {
               cursoActivoId={cursoActivoId}
               setCursoActivoId={setCursoActivoId}
               onRecargarEstructura={() => cargarEstructuraEscolar(profesor, permisosActivos)}
+              permisos={permisosActivos}
+              esAdmin={esSuperAdmin}
             />
           </div>
         )}
@@ -1942,7 +1979,7 @@ export default function App() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
                 <h2 style={{ margin: 0, fontSize: '20px' }}>Crear Nueva Evaluación</h2>
 
-                {evaluacionesCompartidas.length > 0 && (
+                {puedeCompartirPautas && evaluacionesCompartidas.length > 0 && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <select
                       defaultValue=""
@@ -2029,17 +2066,19 @@ export default function App() {
                   </select>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', paddingTop: '20px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13.5px', fontWeight: '600', color: '#1e3a8a' }}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(config.compartida)}
-                      onChange={(e) => setConfig({ ...config, compartida: e.target.checked })}
-                      style={{ width: '17px', height: '17px' }}
-                    />
-                    Compartir pauta con colegas del colegio
-                  </label>
-                </div>
+                {puedeCompartirPautas && (
+                  <div style={{ display: 'flex', alignItems: 'center', paddingTop: '20px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13.5px', fontWeight: '600', color: '#1e3a8a' }}>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(config.compartida)}
+                        onChange={(e) => setConfig({ ...config, compartida: e.target.checked })}
+                        style={{ width: '17px', height: '17px' }}
+                      />
+                      Compartir pauta con colegas del colegio
+                    </label>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -2066,11 +2105,11 @@ export default function App() {
         {/* VISTA 4: DETALLE DE EVALUACIÓN */}
         {vistaActiva === 'detalle-evaluacion' && config.id && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {!puedeEditarEvalActual && (
+            {!permsEvalActual.puedeEditar && (
               <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e', padding: '12px 16px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13.5px' }}>
                 <ShieldAlert size={18} color="#d97706" />
                 <span>
-                  <strong>Modo Supervisión (Solo Lectura):</strong> Esta evaluación fue creada por <strong>{config.docenteNombre || 'otro docente'}</strong>. Puedes revisar todos los reportes, gráficos, hojas escaneadas y descargar PDF/Excel.
+                  <strong>Modo Supervisión (Solo Lectura):</strong> Esta evaluación fue creada por <strong>{config.docenteNombre || 'otro docente'}</strong>.
                 </span>
               </div>
             )}
@@ -2121,46 +2160,48 @@ export default function App() {
                     </div>
                   )}
 
-                  <button
-                    onClick={() => imprimirHojasPDF(estudiantesActivos, cursoFiltroObj ? `_${cursoFiltroObj.nombre.replace(/\s+/g, '_')}` : '')}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: '6px',
-                      padding: '8px 12px', borderRadius: '8px', border: '1px solid #2563eb',
-                      background: '#eff6ff', color: '#1d4ed8', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
-                    }}
-                  >
-                    <Printer size={15} />
-                    Imprimir ({estudiantesActivos.length})
-                  </button>
+                  {permsEvalActual.puedeExportar && (
+                    <button
+                      onClick={() => imprimirHojasPDF(estudiantesActivos, cursoFiltroObj ? `_${cursoFiltroObj.nombre.replace(/\s+/g, '_')}` : '')}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        padding: '8px 12px', borderRadius: '8px', border: '1px solid #2563eb',
+                        background: '#eff6ff', color: '#1d4ed8', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
+                      }}
+                    >
+                      <Printer size={15} />
+                      Imprimir ({estudiantesActivos.length})
+                    </button>
+                  )}
 
-                  {puedeEditarEvalActual && (
-                    <>
-                      <button
-                        onClick={toggleCompartirEvaluacion}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: '6px',
-                          padding: '8px 12px', borderRadius: '8px',
-                          border: `1px solid ${config.compartida ? '#86efac' : '#cbd5e1'}`,
-                          background: config.compartida ? '#dcfce7' : '#ffffff',
-                          color: config.compartida ? '#166534' : '#475569',
-                          fontWeight: '700', cursor: 'pointer', fontSize: '13px'
-                        }}
-                      >
-                        <Share2 size={15} />
-                        {config.compartida ? 'Compartida' : 'Compartir'}
-                      </button>
+                  {permsEvalActual.puedeEditar && puedeCompartirPautas && (
+                    <button
+                      onClick={toggleCompartirEvaluacion}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        padding: '8px 12px', borderRadius: '8px',
+                        border: `1px solid ${config.compartida ? '#86efac' : '#cbd5e1'}`,
+                        background: config.compartida ? '#dcfce7' : '#ffffff',
+                        color: config.compartida ? '#166534' : '#475569',
+                        fontWeight: '700', cursor: 'pointer', fontSize: '13px'
+                      }}
+                    >
+                      <Share2 size={15} />
+                      {config.compartida ? 'Compartida' : 'Compartir'}
+                    </button>
+                  )}
 
-                      <button
-                        onClick={eliminarEvaluacion}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: '6px',
-                          padding: '8px 10px', borderRadius: '8px', border: '1px solid #fecaca',
-                          background: '#fef2f2', color: '#dc2626', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
-                        }}
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    </>
+                  {permsEvalActual.puedeBorrar && (
+                    <button
+                      onClick={eliminarEvaluacion}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        padding: '8px 10px', borderRadius: '8px', border: '1px solid #fecaca',
+                        background: '#fef2f2', color: '#dc2626', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
+                      }}
+                    >
+                      <Trash2 size={15} />
+                    </button>
                   )}
                 </div>
               </div>
@@ -2243,7 +2284,7 @@ export default function App() {
                         </div>
                       </div>
 
-                      {estudiantesPendientes.length > 0 && (
+                      {permsEvalActual.puedeExportar && estudiantesPendientes.length > 0 && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -2290,7 +2331,7 @@ export default function App() {
                                     <td style={{ padding: '9px 10px', fontWeight: '600' }}>{est.nombre}</td>
                                     <td style={{ padding: '9px 10px', color: '#64748b' }}>{est.curso_nombre || '-'}</td>
                                     <td style={{ padding: '9px 10px', textAlign: 'right', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                                      {puedeEximirActual && (
+                                      {permsEvalActual.puedeEximir && (
                                         <button
                                           onClick={() => toggleEximirEstudiante(est.rut)}
                                           style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
@@ -2298,12 +2339,14 @@ export default function App() {
                                           <UserX size={14} /> Eximir
                                         </button>
                                       )}
-                                      <button
-                                        onClick={() => imprimirHojasPDF([est], `_${est.rut}`)}
-                                        style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                                      >
-                                        <FileDown size={14} /> Hoja
-                                      </button>
+                                      {permsEvalActual.puedeExportar && (
+                                        <button
+                                          onClick={() => imprimirHojasPDF([est], `_${est.rut}`)}
+                                          style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                        >
+                                          <FileDown size={14} /> Hoja
+                                        </button>
+                                      )}
                                     </td>
                                   </tr>
                                 ))}
@@ -2324,7 +2367,7 @@ export default function App() {
                                     <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: '#64748b' }}>{est.rut}</td>
                                     <td style={{ padding: '8px 10px', color: '#64748b', textDecoration: 'line-through' }}>{est.nombre}</td>
                                     <td style={{ padding: '8px 10px', textAlign: 'right' }}>
-                                      {puedeEximirActual && (
+                                      {permsEvalActual.puedeEximir && (
                                         <button
                                           onClick={() => toggleEximirEstudiante(est.rut)}
                                           style={{ background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
@@ -2351,18 +2394,20 @@ export default function App() {
               <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
                   <h3 style={{ margin: 0, fontSize: '17px' }}>Nómina de Impresión de Hojas de Respuestas</h3>
-                  <button
-                    onClick={() => {
-                      const lista = estudiantesVisiblesEval.filter((e) => seleccionadosImprimir.includes(e.rut));
-                      imprimirHojasPDF(lista);
-                    }}
-                    style={{ background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px', padding: '10px 18px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
-                  >
-                    <FileDown size={18} /> Descargar PDF ({estudiantesVisiblesEval.filter((e) => seleccionadosImprimir.includes(e.rut)).length})
-                  </button>
+                  {permsEvalActual.puedeExportar && (
+                    <button
+                      onClick={() => {
+                        const lista = estudiantesVisiblesEval.filter((e) => seleccionadosImprimir.includes(e.rut));
+                        imprimirHojasPDF(lista);
+                      }}
+                      style={{ background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px', padding: '10px 18px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                    >
+                      <FileDown size={18} /> Descargar PDF ({estudiantesVisiblesEval.filter((e) => seleccionadosImprimir.includes(e.rut)).length})
+                    </button>
+                  )}
                 </div>
 
-                {puedeEditarNominasActual && (
+                {puedeAgregarEstudiantes && (
                   <form onSubmit={agregarEstudianteAEvaluacion} style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
                     <input type="text" placeholder="RUT alumno nuevo" value={rutExtra} onChange={(e) => setRutExtra(e.target.value)} style={{ width: '170px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
                     <input type="text" placeholder="Nombre completo" value={nombreExtra} onChange={(e) => setNombreExtra(e.target.value)} style={{ flex: 1, minWidth: '200px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
@@ -2394,8 +2439,8 @@ export default function App() {
                       <th style={{ padding: '10px', textAlign: 'left' }}>Estudiante</th>
                       <th style={{ padding: '10px', textAlign: 'left' }}>Curso</th>
                       <th style={{ padding: '10px', textAlign: 'center' }}>Estado</th>
-                      {puedeEximirActual && <th style={{ padding: '10px', textAlign: 'center' }}>Eximir</th>}
-                      {puedeEditarEvalActual && <th style={{ padding: '10px', textAlign: 'center' }}>Quitar</th>}
+                      {permsEvalActual.puedeEximir && <th style={{ padding: '10px', textAlign: 'center' }}>Eximir</th>}
+                      {permsEvalActual.puedeEditar && <th style={{ padding: '10px', textAlign: 'center' }}>Quitar</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -2418,14 +2463,14 @@ export default function App() {
                               {esEximido ? 'Eximido' : yaRindio ? 'Rindió' : 'Pendiente'}
                             </span>
                           </td>
-                          {puedeEximirActual && (
+                          {permsEvalActual.puedeEximir && (
                             <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                               <button onClick={() => toggleEximirEstudiante(est.rut)} style={{ background: 'transparent', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '3px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>
                                 {esEximido ? 'Deseximir' : 'Eximir'}
                               </button>
                             </td>
                           )}
-                          {puedeEditarEvalActual && (
+                          {permsEvalActual.puedeEditar && (
                             <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                               <button onClick={() => quitarEstudianteDeEvaluacion(est.rut)} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
                                 <Trash2 size={15} />
@@ -2441,12 +2486,12 @@ export default function App() {
             )}
 
             {/* SUBVISTA C: ESCANEAR */}
-            {subVistaEval === 'escanear' && puedeEscanearEvalActual && (
+            {subVistaEval === 'escanear' && permsEvalActual.puedeEscanear && (
               <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
                   <h3 style={{ margin: 0, fontSize: '18px' }}>Escanear Hoja de Respuestas o Subir PDF</h3>
 
-                  {resultadosVisiblesEval.length > 0 && (
+                  {permsEvalActual.puedeExportar && resultadosVisiblesEval.length > 0 && (
                     <button
                       onClick={() => descargarHojasCorregidasPDF(resultadosVisiblesEval, cursoFiltroObj ? `_${cursoFiltroObj.nombre.replace(/\s+/g, '_')}` : '')}
                       style={{
@@ -2529,16 +2574,18 @@ export default function App() {
                         <div style={{ fontSize: '13px', color: '#64748b' }}>RUT: {ultimoResultado.rut}</div>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                        <button
-                          onClick={() => descargarHojasCorregidasPDF([ultimoResultado], `_${ultimoResultado.rut}`)}
-                          style={{
-                            background: '#16a34a', color: '#ffffff', border: 'none', borderRadius: '8px',
-                            padding: '8px 12px', fontSize: '13px', fontWeight: '700', cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', gap: '6px'
-                          }}
-                        >
-                          <FileDown size={16} /> Descargar Esta Hoja en PDF
-                        </button>
+                        {permsEvalActual.puedeExportar && (
+                          <button
+                            onClick={() => descargarHojasCorregidasPDF([ultimoResultado], `_${ultimoResultado.rut}`)}
+                            style={{
+                              background: '#16a34a', color: '#ffffff', border: 'none', borderRadius: '8px',
+                              padding: '8px 12px', fontSize: '13px', fontWeight: '700', cursor: 'pointer',
+                              display: 'flex', alignItems: 'center', gap: '6px'
+                            }}
+                          >
+                            <FileDown size={16} /> Descargar Esta Hoja en PDF
+                          </button>
+                        )}
                         <div style={{ textAlign: 'right' }}>
                           <span style={{ fontSize: '24px', fontWeight: '800', color: Number(ultimoResultado.nota) >= Number(config.notaAprob || 4.0) ? '#16a34a' : '#dc2626' }}>
                             Nota: {Number(ultimoResultado.nota).toFixed(1)}
@@ -2556,7 +2603,7 @@ export default function App() {
             )}
 
             {/* SUBVISTA D: EDITAR PAUTA + GUARDAR Y RECALCULAR NOTAS */}
-            {subVistaEval === 'pauta' && puedeEditarEvalActual && (
+            {subVistaEval === 'pauta' && permsEvalActual.puedeEditar && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 <PautaEditor config={config} setConfig={setConfig} nivelNombre={nivelActivoNombre} />
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
@@ -2572,32 +2619,35 @@ export default function App() {
                     <Save size={18} /> Solo Guardar Pauta
                   </button>
 
-                  <button
-                    onClick={() => guardarEvaluacionNube(true)}
-                    disabled={recalculando}
-                    style={{
-                      background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px',
-                      padding: '12px', fontWeight: '700', cursor: recalculando ? 'wait' : 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                      boxShadow: '0 2px 6px rgba(22,163,74,0.25)'
-                    }}
-                  >
-                    <RefreshCw size={18} />
-                    {recalculando
-                      ? 'Recalculando notas...'
-                      : `Guardar y Recalcular Notas (${resultadosCurso.length} alumnos)`}
-                  </button>
+                  {permsEvalActual.puedeRecalcular && (
+                    <button
+                      onClick={() => guardarEvaluacionNube(true)}
+                      disabled={recalculando}
+                      style={{
+                        background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px',
+                        padding: '12px', fontWeight: '700', cursor: recalculando ? 'wait' : 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                        boxShadow: '0 2px 6px rgba(22,163,74,0.25)'
+                      }}
+                    >
+                      <RefreshCw size={18} />
+                      {recalculando
+                        ? 'Recalculando notas...'
+                        : `Guardar y Recalcular Notas (${resultadosCurso.length} alumnos)`}
+                    </button>
+                  )}
                 </div>
               </div>
             )}
 
             {/* SUBVISTA E: ANÁLISIS Y REPORTES */}
-            {subVistaEval === 'analisis' && (
+            {subVistaEval === 'analisis' && permsEvalActual.puedeVerResultados && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <AnalisisPanel
                   resultados={resultadosVisiblesEval}
                   config={config}
-                  puedeEditar={puedeCorregirManualActual}
+                  puedeEditar={permsEvalActual.puedeEditarRespuestas}
+                  puedeExportar={permsEvalActual.puedeExportar}
                   esVistaNivelCompleto={!cursoFiltroEfectivo}
                   onActualizarRespuesta={async (resultadoId, nuevasRespuestas) => {
                     const calificacion = evaluarRespuestasConPauta(nuevasRespuestas, config);
@@ -2644,72 +2694,76 @@ export default function App() {
                   }}
                 />
 
-                <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>
-                    <h3 style={{ margin: 0, fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <Eye size={18} color="#2563eb" />
-                      Hojas Corregidas para Devolución a Estudiantes ({resultadosVisiblesEval.length})
-                    </h3>
+                {permsEvalActual.puedeVerRespuestas && (
+                  <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>
+                      <h3 style={{ margin: 0, fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Eye size={18} color="#2563eb" />
+                        Hojas Corregidas para Devolución a Estudiantes ({resultadosVisiblesEval.length})
+                      </h3>
 
-                    {resultadosVisiblesEval.length > 0 && (
-                      <button
-                        onClick={() => descargarHojasCorregidasPDF(resultadosVisiblesEval, cursoFiltroObj ? `_${cursoFiltroObj.nombre.replace(/\s+/g, '_')}` : '')}
-                        style={{
-                          background: '#16a34a', color: '#ffffff', border: 'none', borderRadius: '8px',
-                          padding: '9px 14px', fontSize: '13px', fontWeight: '700', cursor: 'pointer',
-                          display: 'flex', alignItems: 'center', gap: '6px'
-                        }}
-                      >
-                        <FileDown size={16} /> Descargar PDF Todas ({resultadosVisiblesEval.length})
-                      </button>
+                      {permsEvalActual.puedeExportar && resultadosVisiblesEval.length > 0 && (
+                        <button
+                          onClick={() => descargarHojasCorregidasPDF(resultadosVisiblesEval, cursoFiltroObj ? `_${cursoFiltroObj.nombre.replace(/\s+/g, '_')}` : '')}
+                          style={{
+                            background: '#16a34a', color: '#ffffff', border: 'none', borderRadius: '8px',
+                            padding: '9px 14px', fontSize: '13px', fontWeight: '700', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: '6px'
+                          }}
+                        >
+                          <FileDown size={16} /> Descargar PDF Todas ({resultadosVisiblesEval.length})
+                        </button>
+                      )}
+                    </div>
+
+                    {resultadosVisiblesEval.length === 0 ? (
+                      <div style={{ padding: '14px', background: '#f8fafc', borderRadius: '8px', color: '#64748b', fontSize: '14px' }}>No hay hojas escaneadas registradas en esta vista.</div>
+                    ) : (
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                          <thead style={{ background: '#f1f5f9' }}>
+                            <tr>
+                              <th style={{ padding: '10px', textAlign: 'left' }}>Estudiante</th>
+                              <th style={{ padding: '10px', textAlign: 'left' }}>RUT</th>
+                              <th style={{ padding: '10px', textAlign: 'left' }}>Curso</th>
+                              <th style={{ padding: '10px', textAlign: 'center' }}>Puntaje</th>
+                              <th style={{ padding: '10px', textAlign: 'center' }}>Logro</th>
+                              <th style={{ padding: '10px', textAlign: 'center' }}>Nota</th>
+                              <th style={{ padding: '10px', textAlign: 'right' }}>Acciones</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {resultadosVisiblesEval.map((res, idx) => (
+                              <tr key={res.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                <td style={{ padding: '9px 10px', fontWeight: '600' }}>{res.nombre}</td>
+                                <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{res.rut}</td>
+                                <td style={{ padding: '9px 10px', color: '#64748b' }}>{res.curso || '-'}</td>
+                                <td style={{ padding: '9px 10px', textAlign: 'center' }}>{res.puntaje} / {res.total}</td>
+                                <td style={{ padding: '9px 10px', textAlign: 'center' }}>{res.porcentaje}%</td>
+                                <td style={{ padding: '9px 10px', textAlign: 'center', fontWeight: '800', color: Number(res.nota) >= Number(config.notaAprob || 4.0) ? '#16a34a' : '#dc2626' }}>{Number(res.nota).toFixed(1)}</td>
+                                <td style={{ padding: '9px 10px', textAlign: 'right', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                                  {permsEvalActual.puedeExportar && (
+                                    <button
+                                      onClick={() => descargarHojasCorregidasPDF([res], `_${res.rut}`)}
+                                      style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                    >
+                                      <FileDown size={14} /> PDF Alumno
+                                    </button>
+                                  )}
+                                  {permsEvalActual.puedeEliminarEscaneos && (
+                                    <button onClick={() => eliminarResultadoEscaneo(res)} style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                      <Trash2 size={14} />
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     )}
                   </div>
-
-                  {resultadosVisiblesEval.length === 0 ? (
-                    <div style={{ padding: '14px', background: '#f8fafc', borderRadius: '8px', color: '#64748b', fontSize: '14px' }}>No hay hojas escaneadas registradas en esta vista.</div>
-                  ) : (
-                    <div style={{ overflowX: 'auto' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                        <thead style={{ background: '#f1f5f9' }}>
-                          <tr>
-                            <th style={{ padding: '10px', textAlign: 'left' }}>Estudiante</th>
-                            <th style={{ padding: '10px', textAlign: 'left' }}>RUT</th>
-                            <th style={{ padding: '10px', textAlign: 'left' }}>Curso</th>
-                            <th style={{ padding: '10px', textAlign: 'center' }}>Puntaje</th>
-                            <th style={{ padding: '10px', textAlign: 'center' }}>Logro</th>
-                            <th style={{ padding: '10px', textAlign: 'center' }}>Nota</th>
-                            <th style={{ padding: '10px', textAlign: 'right' }}>Acciones</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {resultadosVisiblesEval.map((res, idx) => (
-                            <tr key={res.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                              <td style={{ padding: '9px 10px', fontWeight: '600' }}>{res.nombre}</td>
-                              <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{res.rut}</td>
-                              <td style={{ padding: '9px 10px', color: '#64748b' }}>{res.curso || '-'}</td>
-                              <td style={{ padding: '9px 10px', textAlign: 'center' }}>{res.puntaje} / {res.total}</td>
-                              <td style={{ padding: '9px 10px', textAlign: 'center' }}>{res.porcentaje}%</td>
-                              <td style={{ padding: '9px 10px', textAlign: 'center', fontWeight: '800', color: Number(res.nota) >= Number(config.notaAprob || 4.0) ? '#16a34a' : '#dc2626' }}>{Number(res.nota).toFixed(1)}</td>
-                              <td style={{ padding: '9px 10px', textAlign: 'right', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                                <button
-                                  onClick={() => descargarHojasCorregidasPDF([res], `_${res.rut}`)}
-                                  style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                                >
-                                  <FileDown size={14} /> PDF Alumno
-                                </button>
-                                {puedeCorregirManualActual && (
-                                  <button onClick={() => eliminarResultadoEscaneo(res)} style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                    <Trash2 size={14} />
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
+                )}
               </div>
             )}
           </div>
