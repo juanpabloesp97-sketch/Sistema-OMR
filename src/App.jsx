@@ -23,7 +23,6 @@ import {
   obtenerPermisosRol
 } from './permisosConfig';
 
-
 function obtenerClavesCorrectas(item) {
   if (!item) return [];
   if (typeof item === 'string') return item ? [item] : [];
@@ -322,7 +321,7 @@ export default function App() {
   }, []);
 
   const cargarPermisosDeRol = async (rolUsuario) => {
-let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
+    let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
     if (supabase) {
       const { data } = await supabase
         .from('roles_permisos')
@@ -743,8 +742,23 @@ let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
     setEximidosRuts(Array.isArray(ev.eximidos) ? ev.eximidos : []);
 
     const deSuAula = esEvaluacionDeSuAula(ev, perfilUsuario, idsCursosProfe, listaCursos);
-    const puedeEditarAjena = perfilUsuario?.rol === 'admin' || Boolean(permsUsuario?.editar_evals_ajenas);
-    setSubVistaEval(deSuAula || puedeEditarAjena ? 'avance' : 'analisis');
+    const asigUsr = (perfilUsuario?.asignatura || '').trim().toLowerCase();
+    const asigEv = (ev?.asignatura || '').trim().toLowerCase();
+    const mismaAsig = Boolean(asigUsr && asigEv && asigUsr === asigEv);
+
+    const puedeEditar =
+      perfilUsuario?.rol === 'admin' ||
+      (deSuAula && Boolean(permsUsuario?.editar_evals_propias)) ||
+      (!deSuAula && mismaAsig && Boolean(permsUsuario?.editar_evals_depto)) ||
+      (!deSuAula && Boolean(permsUsuario?.editar_evals_colegio));
+
+    const puedeEscanear =
+      perfilUsuario?.rol === 'admin' ||
+      (deSuAula && Boolean(permsUsuario?.escanear_hojas_propias)) ||
+      (!deSuAula && mismaAsig && Boolean(permsUsuario?.escanear_hojas_depto)) ||
+      (!deSuAula && Boolean(permsUsuario?.escanear_hojas_colegio));
+
+    setSubVistaEval(puedeEditar || puedeEscanear ? 'avance' : 'analisis');
     setVistaActiva('detalle-evaluacion');
   };
 
@@ -1529,16 +1543,59 @@ let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
 
   const esEvaluacionPropia = esEvaluacionDeSuAula(config, profesor, cursosAsignadosAula, cursos);
   const esSuperAdmin = profesor.rol === 'admin';
-  const puedeEditarEvalActual = esSuperAdmin || esEvaluacionPropia || Boolean(permisosActivos?.editar_evals_ajenas);
-  const puedeEscanearEvalActual = esSuperAdmin || (esEvaluacionPropia && permisosActivos?.escanear_hojas !== false) || Boolean(permisosActivos?.editar_evals_ajenas);
+  const asigUsuarioNorm = (profesor?.asignatura || '').trim().toLowerCase();
+  const asigEvalNorm = (config?.asignatura || '').trim().toLowerCase();
+  const esMismaAsignaturaEval = Boolean(asigUsuarioNorm && asigEvalNorm && asigUsuarioNorm === asigEvalNorm);
+
+  const puedeEditarEvalActual =
+    esSuperAdmin ||
+    (esEvaluacionPropia && Boolean(permisosActivos?.editar_evals_propias)) ||
+    (!esEvaluacionPropia && esMismaAsignaturaEval && Boolean(permisosActivos?.editar_evals_depto)) ||
+    (!esEvaluacionPropia && Boolean(permisosActivos?.editar_evals_colegio));
+
+  const puedeBorrarEvalActual =
+    esSuperAdmin ||
+    (esEvaluacionPropia && Boolean(permisosActivos?.borrar_evals_propias)) ||
+    (!esEvaluacionPropia && esMismaAsignaturaEval && Boolean(permisosActivos?.borrar_evals_depto)) ||
+    (!esEvaluacionPropia && Boolean(permisosActivos?.borrar_evals_colegio));
+
+  const puedeRecalcularNotasActual =
+    esSuperAdmin ||
+    (esEvaluacionPropia && Boolean(permisosActivos?.recalcular_notas_propias)) ||
+    (!esEvaluacionPropia && esMismaAsignaturaEval && Boolean(permisosActivos?.recalcular_notas_depto)) ||
+    (!esEvaluacionPropia && Boolean(permisosActivos?.recalcular_notas_colegio));
+
+  const puedeEscanearEvalActual =
+    esSuperAdmin ||
+    (esEvaluacionPropia && Boolean(permisosActivos?.escanear_hojas_propias)) ||
+    (!esEvaluacionPropia && esMismaAsignaturaEval && Boolean(permisosActivos?.escanear_hojas_depto)) ||
+    (!esEvaluacionPropia && Boolean(permisosActivos?.escanear_hojas_colegio));
+
+  const puedeEliminarEscaneosActual =
+    esSuperAdmin ||
+    (esEvaluacionPropia && Boolean(permisosActivos?.eliminar_escaneos_propias)) ||
+    (!esEvaluacionPropia && esMismaAsignaturaEval && Boolean(permisosActivos?.eliminar_escaneos_depto)) ||
+    (!esEvaluacionPropia && Boolean(permisosActivos?.eliminar_escaneos_colegio));
+
   const puedeCorregirManualActual =
     esSuperAdmin ||
-    (esEvaluacionPropia && permisosActivos?.corregir_manual_propias !== false) ||
-    (!esEvaluacionPropia && Boolean(permisosActivos?.corregir_manual_ajenas));
-  const puedeEximirActual = esSuperAdmin || (esEvaluacionPropia && permisosActivos?.eximir_estudiantes !== false) || Boolean(permisosActivos?.editar_evals_ajenas);
-  const puedeEditarNominasActual = esSuperAdmin || Boolean(permisosActivos?.editar_nominas);
-  const puedeGestionarUsuarios = esSuperAdmin || Boolean(permisosActivos?.gestionar_usuarios);
-  const puedeCrearEvaluaciones = esSuperAdmin || permisosActivos?.crear_evaluaciones !== false;
+    (esEvaluacionPropia && Boolean(permisosActivos?.editar_respuestas_propias)) ||
+    (!esEvaluacionPropia && esMismaAsignaturaEval && Boolean(permisosActivos?.editar_respuestas_depto)) ||
+    (!esEvaluacionPropia && Boolean(permisosActivos?.editar_respuestas_colegio));
+
+  const puedeEximirActual =
+    esSuperAdmin ||
+    (esEvaluacionPropia && Boolean(permisosActivos?.eximir_estudiantes_propias)) ||
+    (!esEvaluacionPropia && Boolean(permisosActivos?.eximir_estudiantes_otros));
+
+  const puedeAgregarEstudiantesActual = esSuperAdmin || Boolean(permisosActivos?.agregar_estudiantes_asignados);
+  const puedeEliminarEstudiantesActual = esSuperAdmin || Boolean(permisosActivos?.eliminar_estudiantes_asignados);
+  const puedeCrearPerfilesActual = esSuperAdmin || Boolean(permisosActivos?.crear_perfiles_docentes);
+  const puedeEditarPerfilesActual = esSuperAdmin || Boolean(permisosActivos?.editar_perfiles_docentes);
+  const puedeConfigurarMatrizActual = esSuperAdmin || Boolean(permisosActivos?.configurar_matriz_permisos);
+  const puedeGestionarUsuarios =
+    puedeCrearPerfilesActual || puedeEditarPerfilesActual || puedeConfigurarMatrizActual;
+  const puedeCrearEvaluaciones = esSuperAdmin || Boolean(permisosActivos?.crear_evaluaciones);
 
   const nivelActualObj = niveles.find((n) => n.id === nivelActivoId);
   const cursoActualObj = cursos.find((c) => c.id === cursoActivoId);
@@ -2196,6 +2253,7 @@ let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
         {vistaActiva === 'usuarios' && puedeGestionarUsuarios && (
           <GestionUsuarios
             perfilActual={profesor}
+            permisos={permisosActivos}
             onPermisosActualizados={(nuevaMatriz) => {
               const normalizada = normalizarMatrizPermisos(nuevaMatriz);
               setPermisosActivos(obtenerPermisosRol(normalizada, profesor.rol));
@@ -2224,6 +2282,7 @@ let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
               cursos={cursos}
               cursoActivoId={cursoActivoId}
               setCursoActivoId={setCursoActivoId}
+              permisos={permisosActivos}
               onRecargarEstructura={() => cargarEstructuraEscolar(profesor, permisosActivos)}
             />
           </div>
@@ -2235,7 +2294,7 @@ let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
                 <h2 style={{ margin: 0, fontSize: '20px' }}>Crear Nueva Evaluación</h2>
 
-                {evaluacionesCompartidas.length > 0 && (
+                {permisosActivos?.compartir_importar_pautas && evaluacionesCompartidas.length > 0 && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <select
                       defaultValue=""
@@ -2322,17 +2381,19 @@ let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
                   </select>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', paddingTop: '20px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13.5px', fontWeight: '600', color: '#1e3a8a' }}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(config.compartida)}
-                      onChange={(e) => setConfig({ ...config, compartida: e.target.checked })}
-                      style={{ width: '17px', height: '17px' }}
-                    />
-                    Compartir pauta con colegas del colegio
-                  </label>
-                </div>
+                {permisosActivos?.compartir_importar_pautas && (
+                  <div style={{ display: 'flex', alignItems: 'center', paddingTop: '20px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13.5px', fontWeight: '600', color: '#1e3a8a' }}>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(config.compartida)}
+                        onChange={(e) => setConfig({ ...config, compartida: e.target.checked })}
+                        style={{ width: '17px', height: '17px' }}
+                      />
+                      Compartir pauta con colegas del colegio
+                    </label>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -2469,33 +2530,37 @@ let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
                     Imprimir ({estudiantesActivos.length})
                   </button>
 
-                  {puedeEditarEvalActual && (
+                  {(puedeEditarEvalActual || puedeBorrarEvalActual || permisosActivos?.compartir_importar_pautas) && (
                     <>
-                      <button
-                        onClick={toggleCompartirEvaluacion}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: '6px',
-                          padding: '8px 12px', borderRadius: '8px',
-                          border: `1px solid ${config.compartida ? '#86efac' : '#cbd5e1'}`,
-                          background: config.compartida ? '#dcfce7' : '#ffffff',
-                          color: config.compartida ? '#166534' : '#475569',
-                          fontWeight: '700', cursor: 'pointer', fontSize: '13px'
-                        }}
-                      >
-                        <Share2 size={15} />
-                        {config.compartida ? 'Compartida' : 'Compartir'}
-                      </button>
+                      {permisosActivos?.compartir_importar_pautas && (
+                        <button
+                          onClick={toggleCompartirEvaluacion}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '6px',
+                            padding: '8px 12px', borderRadius: '8px',
+                            border: `1px solid ${config.compartida ? '#86efac' : '#cbd5e1'}`,
+                            background: config.compartida ? '#dcfce7' : '#ffffff',
+                            color: config.compartida ? '#166534' : '#475569',
+                            fontWeight: '700', cursor: 'pointer', fontSize: '13px'
+                          }}
+                        >
+                          <Share2 size={15} />
+                          {config.compartida ? 'Compartida' : 'Compartir'}
+                        </button>
+                      )}
 
-                      <button
-                        onClick={eliminarEvaluacion}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: '6px',
-                          padding: '8px 10px', borderRadius: '8px', border: '1px solid #fecaca',
-                          background: '#fef2f2', color: '#dc2626', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
-                        }}
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                      {puedeBorrarEvalActual && (
+                        <button
+                          onClick={eliminarEvaluacion}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '6px',
+                            padding: '8px 10px', borderRadius: '8px', border: '1px solid #fecaca',
+                            background: '#fef2f2', color: '#dc2626', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
+                          }}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      )}
                     </>
                   )}
                 </div>
@@ -2696,7 +2761,7 @@ let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
                   </button>
                 </div>
 
-                {puedeEditarNominasActual && (
+                {puedeAgregarEstudiantesActual && (
                   <form onSubmit={agregarEstudianteAEvaluacion} style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
                     <input type="text" placeholder="RUT alumno nuevo" value={rutExtra} onChange={(e) => setRutExtra(e.target.value)} style={{ width: '170px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
                     <input type="text" placeholder="Nombre completo" value={nombreExtra} onChange={(e) => setNombreExtra(e.target.value)} style={{ flex: 1, minWidth: '200px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
@@ -2729,7 +2794,7 @@ let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
                       <th style={{ padding: '10px', textAlign: 'left' }}>Curso</th>
                       <th style={{ padding: '10px', textAlign: 'center' }}>Estado</th>
                       {puedeEximirActual && <th style={{ padding: '10px', textAlign: 'center' }}>Eximir</th>}
-                      {puedeEditarEvalActual && <th style={{ padding: '10px', textAlign: 'center' }}>Quitar</th>}
+                      {puedeEliminarEstudiantesActual && <th style={{ padding: '10px', textAlign: 'center' }}>Quitar</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -2759,7 +2824,7 @@ let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
                               </button>
                             </td>
                           )}
-                          {puedeEditarEvalActual && (
+                          {puedeEliminarEstudiantesActual && (
                             <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                               <button onClick={() => quitarEstudianteDeEvaluacion(est.rut)} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
                                 <Trash2 size={15} />
@@ -2904,21 +2969,23 @@ let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
                     <Save size={18} /> Solo Guardar Pauta
                   </button>
 
-                  <button
-                    onClick={() => guardarEvaluacionNube(true)}
-                    disabled={recalculando}
-                    style={{
-                      background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px',
-                      padding: '12px', fontWeight: '700', cursor: recalculando ? 'wait' : 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                      boxShadow: '0 2px 6px rgba(22,163,74,0.25)'
-                    }}
-                  >
-                    <RefreshCw size={18} />
-                    {recalculando
-                      ? 'Recalculando notas...'
-                      : `Guardar y Recalcular Notas (${resultadosCurso.length} alumnos)`}
-                  </button>
+                  {puedeRecalcularNotasActual && (
+                    <button
+                      onClick={() => guardarEvaluacionNube(true)}
+                      disabled={recalculando}
+                      style={{
+                        background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px',
+                        padding: '12px', fontWeight: '700', cursor: recalculando ? 'wait' : 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                        boxShadow: '0 2px 6px rgba(22,163,74,0.25)'
+                      }}
+                    >
+                      <RefreshCw size={18} />
+                      {recalculando
+                        ? 'Recalculando notas...'
+                        : `Guardar y Recalcular Notas (${resultadosCurso.length} alumnos)`}
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -3032,7 +3099,7 @@ let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
                     </div>
                   </div>
 
-                  {resultadosVisiblesEval.length > 0 && puedeCorregirManualActual && (
+                  {resultadosVisiblesEval.length > 0 && puedeEliminarEscaneosActual && (
                     <div
                       style={{
                         display: 'flex',
@@ -3108,7 +3175,7 @@ let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                         <thead style={{ background: '#f1f5f9' }}>
                           <tr>
-                            {puedeCorregirManualActual && (
+                            {puedeEliminarEscaneosActual && (
                               <th style={{ padding: '10px', width: '36px', textAlign: 'center' }}>
                                 <input
                                   type="checkbox"
@@ -3141,7 +3208,7 @@ let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
                                   background: seleccionado ? '#fef2f2' : esSinQr ? '#fffbeb' : 'transparent'
                                 }}
                               >
-                                {puedeCorregirManualActual && (
+                                {puedeEliminarEscaneosActual && (
                                   <td style={{ padding: '9px 10px', textAlign: 'center' }}>
                                     <input
                                       type="checkbox"
@@ -3185,7 +3252,7 @@ let matrizActual = normalizarMatrizPermisos(MATRIZ_DEFECTO);
                                   >
                                     <FileDown size={14} /> PDF Alumno
                                   </button>
-                                  {puedeCorregirManualActual && (
+                                  {puedeEliminarEscaneosActual && (
                                     <button onClick={() => eliminarResultadoEscaneo(res)} style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                                       <Trash2 size={14} />
                                     </button>
