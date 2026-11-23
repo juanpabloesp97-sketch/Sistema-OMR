@@ -9,20 +9,6 @@ async function obtenerOpenCV() {
   });
 }
 
-function obtenerClavesItem(item) {
-  if (!item) return [];
-  if (typeof item === 'string') return item ? [item] : [];
-  if (Array.isArray(item.correcta)) return item.correcta;
-  return item.correcta ? [item.correcta] : [];
-}
-
-function obtenerPuntajeItem(item) {
-  if (typeof item === 'object' && item !== null && item.puntaje !== undefined) {
-    return Number(item.puntaje);
-  }
-  return 1;
-}
-
 function leerCodigoQR(canvas) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const { width, height } = canvas;
@@ -156,11 +142,12 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   for (let i = 0; i < contours.size(); i++) {
     const cnt = contours.get(i);
     const area = cv.contourArea(cnt);
-    if (area > areaTotal * 0.0002 && area < areaTotal * 0.02) {
+    // Rango preciso para los 4 cuadrados negros de 8x8mm (evita letras y manchas pequeñas)
+    if (area > areaTotal * 0.0005 && area < areaTotal * 0.006) {
       const rect = cv.boundingRect(cnt);
       const aspecto = rect.width / rect.height;
       const extension = area / (rect.width * rect.height);
-      if (aspecto >= 0.7 && aspecto <= 1.35 && extension >= 0.7) {
+      if (aspecto >= 0.78 && aspecto <= 1.28 && extension >= 0.78) {
         candidatos.push({
           x: rect.x + rect.width / 2,
           y: rect.y + rect.height / 2
@@ -195,12 +182,13 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       { x: canvas.width * (16 / 215.9), y: canvas.height * (262 / 279.4) }
     ];
 
+    const maxDistTolerada = canvas.width * 0.08;
     const elegidos = objetivos.map((obj) => {
       let mejor = null;
       let distMin = Infinity;
       for (const c of candidatos) {
         const d = Math.hypot(c.x - obj.x, c.y - obj.y);
-        if (d < distMin) {
+        if (d < distMin && d < maxDistTolerada) {
           distMin = d;
           mejor = c;
         }
@@ -208,9 +196,11 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       return mejor;
     });
 
-    const unicos = new Set(elegidos.map((p) => `${Math.round(p.x)}_${Math.round(p.y)}`));
-    if (unicos.size === 4) {
-      esquinasDetectadas = ordenarEsquinas(elegidos);
+    if (elegidos.every(Boolean)) {
+      const unicos = new Set(elegidos.map((p) => `${Math.round(p.x)}_${Math.round(p.y)}`));
+      if (unicos.size === 4) {
+        esquinasDetectadas = ordenarEsquinas(elegidos);
+      }
     }
   }
 
@@ -251,8 +241,8 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   cv.imshow(outCanvas, warped);
   const outCtx = outCanvas.getContext('2d');
 
-  const radioPx = 22;
-  const radioNucleoPx = 15;
+  const radioPx = 21;
+  const radioNucleoPx = 12;
   const respuestas = {};
 
   for (let p = 1; p <= totalPreguntas; p++) {
@@ -296,12 +286,19 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       return { letra, ratio, brilloNucleo, px, py };
     });
 
-    const fondoFilaRatio = Math.min(...densidades.map((d) => d.ratio));
-    const fondoFilaBrillo = Math.max(...densidades.map((d) => d.brilloNucleo));
+    // Línea base de los círculos vacíos de esta misma fila
+    const ordenadosRatio = [...densidades].sort((a, b) => a.ratio - b.ratio);
+    const fondoFilaRatio = (ordenadosRatio[0].ratio + ordenadosRatio[1].ratio) / 2;
 
+    const ordenadosBrillo = [...densidades].sort((a, b) => b.brilloNucleo - a.brilloNucleo);
+    const fondoFilaBrillo = (ordenadosBrillo[0].brilloNucleo + ordenadosBrillo[1].brilloNucleo) / 2;
+
+    // Criterio anti falsos positivos:
+    // 1) Marca estándar: > 32% tinta y al menos +14% más oscura que las burbujas vacías
+    // 2) Marca suave grafito: núcleo < 195 de brillo y al menos 32 niveles más oscuro que las vacías
     const marcadas = densidades.filter((d) => {
-      const marcaFuerte = d.ratio > 0.26 && d.ratio - fondoFilaRatio > 0.09;
-      const marcaTenueGrafito = d.brilloNucleo < 220 && fondoFilaBrillo - d.brilloNucleo > 18;
+      const marcaFuerte = d.ratio > 0.32 && d.ratio - fondoFilaRatio > 0.14;
+      const marcaTenueGrafito = d.brilloNucleo < 195 && fondoFilaBrillo - d.brilloNucleo > 32;
       return marcaFuerte || marcaTenueGrafito;
     });
 
@@ -309,29 +306,37 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     if (marcadas.length === 1) {
       respuestaFinal = marcadas[0].letra;
     } else if (marcadas.length > 1) {
-      respuestaFinal = 'DOBLE';
+      // Si hay una marca muy rellena (>0.50) y las demás fueron solo sombras/roces (<0.36), prioriza la rellena
+      const muyLlenas = marcadas.filter((m) => m.ratio > 0.50);
+      if (muyLlenas.length === 1 && marcadas.every((m) => m === muyLlenas[0] || m.ratio < 0.36)) {
+        respuestaFinal = muyLlenas[0].letra;
+      } else {
+        respuestaFinal = 'DOBLE';
+      }
     }
 
     respuestas[p] = respuestaFinal;
 
     const itemPauta = pauta[p];
-    const clavesValidas = obtenerClavesItem(itemPauta);
-    const puntajeItem = obtenerPuntajeItem(itemPauta);
-    const esAnulada = puntajeItem === 0;
-    const esCorrecta = !esAnulada && clavesValidas.length > 0 && clavesValidas.includes(respuestaFinal);
+    const correcta = typeof itemPauta === 'object' ? itemPauta?.correcta : itemPauta;
+    const esCorrecta = Boolean(correcta) && respuestaFinal === correcta;
 
     const ultimaBurbuja = densidades[densidades.length - 1];
     const posXIcono = ultimaBurbuja.px + 54;
     const posYIcono = ultimaBurbuja.py;
 
     densidades.forEach((d) => {
-      if (marcadas.some((m) => m.letra === d.letra)) {
+      const fueElegida =
+        respuestaFinal === d.letra ||
+        (respuestaFinal === 'DOBLE' && marcadas.some((m) => m.letra === d.letra));
+
+      if (fueElegida) {
         outCtx.beginPath();
         outCtx.arc(d.px, d.py, 28, 0, 2 * Math.PI);
         outCtx.lineWidth = 6;
-        outCtx.strokeStyle = esAnulada ? '#64748b' : esCorrecta ? '#16a34a' : '#dc2626';
+        outCtx.strokeStyle = esCorrecta ? '#16a34a' : '#dc2626';
         outCtx.stroke();
-      } else if (!esAnulada && clavesValidas.includes(d.letra) && !esCorrecta) {
+      } else if (correcta && d.letra === correcta && !esCorrecta) {
         outCtx.beginPath();
         outCtx.arc(d.px, d.py, 26, 0, 2 * Math.PI);
         outCtx.lineWidth = 4;
@@ -340,9 +345,7 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       }
     });
 
-    if (esAnulada) {
-      dibujarEtiquetaEstado(outCtx, posXIcono, posYIcono, 'ANULADA', '#64748b');
-    } else if (respuestaFinal === '') {
+    if (respuestaFinal === '') {
       dibujarCruzRoja(outCtx, posXIcono, posYIcono);
       dibujarEtiquetaEstado(outCtx, posXIcono + 22, posYIcono, 'BLANCO', '#64748b');
     } else if (respuestaFinal === 'DOBLE') {
@@ -350,7 +353,7 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       dibujarEtiquetaEstado(outCtx, posXIcono + 22, posYIcono, 'DOBLE', '#d97706');
     } else if (esCorrecta) {
       dibujarTicketVerde(outCtx, posXIcono, posYIcono);
-    } else if (clavesValidas.length > 0) {
+    } else if (correcta) {
       dibujarCruzRoja(outCtx, posXIcono, posYIcono);
     }
   }
