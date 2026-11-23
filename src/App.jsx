@@ -5,7 +5,7 @@ import {
   FileDown, User, CheckCircle2, Camera, CheckSquare, Square,
   Cloud, BarChart3, Printer, Clock, AlertCircle, Save, Trash2, UserPlus,
   UserX, UserCheck, Share2, GraduationCap, Users, FolderOpen, ArrowLeft,
-  FilePlus2, Filter, Eye, Upload, ShieldAlert, RefreshCw
+  FilePlus2, Filter, Eye, Upload, ShieldAlert, RefreshCw, Search, ArrowRight, X
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import VisorCurso from './VisorCurso';
@@ -162,10 +162,16 @@ export default function App() {
   const [progresoLote, setProgresoLote] = useState('');
   const [camaraAbierta, setCamaraAbierta] = useState(false);
 
+  // Estados para el Modal de Asignación Manual de Hojas Sin QR
+  const [hojasSinQrPendientes, setHojasSinQrPendientes] = useState([]);
+  const [indiceHojaSinQr, setIndiceHojaSinQr] = useState(0);
+  const [busquedaAlumnoModal, setBusquedaAlumnoModal] = useState('');
+  const [rutSeleccionadoModal, setRutSeleccionadoModal] = useState('');
+  const [asignandoHoja, setAsignandoHoja] = useState(false);
+
   const [rutExtra, setRutExtra] = useState('');
   const [nombreExtra, setNombreExtra] = useState('');
 
-  // Calcula nota con escala flexible susceptible al puntaje ideal total
   const calcularNotaConEscala = (puntaje, total, cfg = config) => {
     const nMin = Number(cfg.notaMin ?? 1.0);
     const nMax = Number(cfg.notaMax ?? 7.0);
@@ -190,7 +196,6 @@ export default function App() {
     return Math.min(nMax, Math.max(nMin, redondeada));
   };
 
-  // Evalúa un mapa de respuestas con la pauta actual (soporta múltiples claves, puntaje diferido y 0 pts anulada)
   const evaluarRespuestasConPauta = (respuestasMap, cfg = config) => {
     const totalPreg = Number(cfg.numPreguntas || 0);
     const pautaActual = cfg.pauta || {};
@@ -247,7 +252,6 @@ export default function App() {
     return false;
   };
 
-  // --- SINCRONIZACIÓN CON HISTORIAL DEL NAVEGADOR ---
   useEffect(() => {
     if (!profesor?.id) return;
 
@@ -679,7 +683,7 @@ export default function App() {
   };
 
   const cargarResultadosNube = async (evaluacionId) => {
-    if (!supabase || !evaluacionId) return;
+    if (!supabase || !evaluacionId) return [];
     const { data, error } = await supabase
       .from('resultados')
       .select('*')
@@ -687,21 +691,22 @@ export default function App() {
       .order('created_at', { ascending: false });
 
     if (!error && data) {
-      setResultadosCurso(
-        data.map((r) => ({
-          id: r.id,
-          rut: r.rut_estudiante || 'Sin RUT',
-          nombre: r.nombre_estudiante || 'Estudiante',
-          curso: r.curso || '',
-          puntaje: Number(r.puntaje_obtenido ?? 0),
-          total: Number(r.puntaje_total ?? 0),
-          porcentaje: Number(r.porcentaje ?? 0),
-          nota: Number(r.nota ?? 1.0),
-          respuestas: r.respuestas_alumno || {},
-          imagenProcesada: r.imagen_corregida || null
-        }))
-      );
+      const formateados = data.map((r) => ({
+        id: r.id,
+        rut: r.rut_estudiante || 'Sin RUT',
+        nombre: r.nombre_estudiante || 'Estudiante',
+        curso: r.curso || '',
+        puntaje: Number(r.puntaje_obtenido ?? 0),
+        total: Number(r.puntaje_total ?? 0),
+        porcentaje: Number(r.porcentaje ?? 0),
+        nota: Number(r.nota ?? 1.0),
+        respuestas: r.respuestas_alumno || {},
+        imagenProcesada: r.imagen_corregida || null
+      }));
+      setResultadosCurso(formateados);
+      return formateados;
     }
+    return [];
   };
 
   const abrirEvaluacion = (
@@ -1223,6 +1228,99 @@ export default function App() {
     doc.save(`Corregidas_${config.tituloPrueba.replace(/\s+/g, '_')}${sufijoArchivo}.pdf`);
   };
 
+  // --- FUNCIONES DEL MODAL DE ASIGNACIÓN DE HOJAS SIN QR ---
+  const abrirAsistenteHojasSinQr = (listaResultadosActualizados) => {
+    const sinQr = (listaResultadosActualizados || []).filter((r) => {
+      const rutNorm = (r.rut || '').trim().toLowerCase();
+      return !rutNorm || rutNorm === 'sin qr' || rutNorm === 'sin rut';
+    });
+
+    if (sinQr.length > 0) {
+      setHojasSinQrPendientes(sinQr);
+      setIndiceHojaSinQr(0);
+      setBusquedaAlumnoModal('');
+      setRutSeleccionadoModal('');
+    }
+  };
+
+  const asignarEstudianteAHojaSinQr = async () => {
+    const hojaActual = hojasSinQrPendientes[indiceHojaSinQr];
+    if (!hojaActual || !rutSeleccionadoModal) {
+      alert('Selecciona un estudiante de la lista antes de continuar.');
+      return;
+    }
+
+    const estElegido = estudiantesCursoEval.find((e) => e.rut === rutSeleccionadoModal);
+    if (!estElegido) return;
+
+    setAsignandoHoja(true);
+    try {
+      const cursoNombreFinal =
+        estElegido.curso_nombre ||
+        (contextoAperturaEval === 'curso' && cursoActualObj?.nombre) ||
+        cursoFiltroObj?.nombre ||
+        '';
+
+      if (supabase && config.id && hojaActual.id) {
+        // Si ya existía un resultado previo de este estudiante en esta evaluación, reemplazarlo
+        await supabase
+          .from('resultados')
+          .delete()
+          .eq('evaluacion_id', config.id)
+          .eq('rut_estudiante', estElegido.rut)
+          .neq('id', hojaActual.id);
+
+        const { error } = await supabase
+          .from('resultados')
+          .update({
+            rut_estudiante: estElegido.rut,
+            nombre_estudiante: estElegido.nombre,
+            curso: cursoNombreFinal
+          })
+          .eq('id', hojaActual.id);
+
+        if (error) {
+          alert('Error al asignar estudiante: ' + error.message);
+          return;
+        }
+      }
+
+      const nuevosRes = await cargarResultadosNube(config.id);
+      const restantes = nuevosRes.filter((r) => {
+        const rutNorm = (r.rut || '').trim().toLowerCase();
+        return !rutNorm || rutNorm === 'sin qr' || rutNorm === 'sin rut';
+      });
+
+      if (restantes.length === 0) {
+        setHojasSinQrPendientes([]);
+        setIndiceHojaSinQr(0);
+        setRutSeleccionadoModal('');
+        setBusquedaAlumnoModal('');
+        alert('✅ ¡Todas las hojas han sido asignadas a sus estudiantes!');
+      } else {
+        setHojasSinQrPendientes(restantes);
+        setIndiceHojaSinQr(0);
+        setRutSeleccionadoModal('');
+        setBusquedaAlumnoModal('');
+      }
+    } finally {
+      setAsignandoHoja(false);
+    }
+  };
+
+  const omitirHojaSinQrActual = () => {
+    if (indiceHojaSinQr + 1 < hojasSinQrPendientes.length) {
+      setIndiceHojaSinQr(indiceHojaSinQr + 1);
+      setRutSeleccionadoModal('');
+      setBusquedaAlumnoModal('');
+    } else {
+      setHojasSinQrPendientes([]);
+      setIndiceHojaSinQr(0);
+      setRutSeleccionadoModal('');
+      setBusquedaAlumnoModal('');
+    }
+  };
+
   const manejarEscaneo = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0 || !config.id) return;
@@ -1244,6 +1342,10 @@ export default function App() {
       }
 
       const nuevosResultados = [];
+      const cursoPorDefecto =
+        (contextoAperturaEval === 'curso' && cursoActualObj?.nombre) ||
+        cursoFiltroObj?.nombre ||
+        '';
 
       for (let idx = 0; idx < colaImagenes.length; idx++) {
         setProgresoLote(`Corrigiendo hoja ${idx + 1} de ${colaImagenes.length}...`);
@@ -1262,13 +1364,17 @@ export default function App() {
           const alumnoInfo = imgFile.qrPreDetectado || resultadoOMR.qrData || {
             r: 'Sin QR',
             n: `Hoja ${idx + 1} (Sin QR)`,
-            c: ''
+            c: cursoPorDefecto
           };
+
+          if (!alumnoInfo.c && cursoPorDefecto) {
+            alumnoInfo.c = cursoPorDefecto;
+          }
 
           nuevosResultados.push({
             rut: alumnoInfo.r || 'Sin QR',
             nombre: alumnoInfo.n || `Hoja ${idx + 1}`,
-            curso: alumnoInfo.c || '',
+            curso: alumnoInfo.c || cursoPorDefecto,
             puntaje: calificacion.puntosObtenidos,
             total: calificacion.puntosTotales,
             porcentaje: calificacion.porcentaje,
@@ -1324,12 +1430,32 @@ export default function App() {
               imagen_corregida: reg.imagenProcesada || null
             }));
 
-            const { error: insertError } = await supabase.from('resultados').insert(filasSupabase).select();
+            let insertError = null;
+            const tamanoLote = 10;
+            for (let i = 0; i < filasSupabase.length; i += tamanoLote) {
+              const bloque = filasSupabase.slice(i, i + tamanoLote);
+              setProgresoLote(`Guardando en la nube (${Math.min(i + tamanoLote, filasSupabase.length)}/${filasSupabase.length})...`);
+              const { error } = await supabase.from('resultados').insert(bloque);
+              if (error) {
+                insertError = error;
+                break;
+              }
+            }
+
             if (insertError) {
               alert('❌ Error al guardar en la nube: ' + insertError.message);
             } else {
-              await cargarResultadosNube(config.id);
-              alert(`✅ ${resultadosAGuardar.length} resultado(s) guardado(s) correctamente.`);
+              const listaActualizada = await cargarResultadosNube(config.id);
+              const sinQrCount = listaActualizada.filter((r) => {
+                const rn = (r.rut || '').trim().toLowerCase();
+                return !rn || rn === 'sin qr' || rn === 'sin rut';
+              }).length;
+
+              if (sinQrCount > 0) {
+                abrirAsistenteHojasSinQr(listaActualizada);
+              } else {
+                alert(`✅ ${resultadosAGuardar.length} resultado(s) guardado(s) correctamente.`);
+              }
             }
           }
         }
@@ -1388,11 +1514,15 @@ export default function App() {
   const rutsPermitidosFiltro = new Set(estudiantesVisiblesEval.map((e) => e.rut.trim().toLowerCase()));
 
   const resultadosVisiblesEval = cursoFiltroEfectivo
-    ? resultadosCurso.filter(
-        (r) =>
+    ? resultadosCurso.filter((r) => {
+        const rutNorm = (r.rut || '').trim().toLowerCase();
+        const esSinQr = !rutNorm || rutNorm === 'sin qr' || rutNorm === 'sin rut';
+        return (
+          esSinQr ||
           (cursoFiltroObj && r.curso === cursoFiltroObj.nombre) ||
-          rutsPermitidosFiltro.has(r.rut.trim().toLowerCase())
-      )
+          rutsPermitidosFiltro.has(rutNorm)
+        );
+      })
     : resultadosCurso;
 
   const rutsRendidos = new Set(resultadosVisiblesEval.map((r) => r.rut.trim().toLowerCase()));
@@ -1423,6 +1553,29 @@ export default function App() {
   const todosEscaneosMarcados =
     idsVisiblesEscaneos.length > 0 &&
     idsVisiblesEscaneos.every((id) => escaneosSeleccionados.includes(id));
+
+  const hojasSinQrEnVista = resultadosVisiblesEval.filter((r) => {
+    const rn = (r.rut || '').trim().toLowerCase();
+    return !rn || rn === 'sin qr' || rn === 'sin rut';
+  });
+
+  // Datos filtrados para el Modal de Asignación Manual
+  const hojaSinQrActual = hojasSinQrPendientes[indiceHojaSinQr] || null;
+  const alumnosFiltradosModal = estudiantesVisiblesEval
+    .filter((est) => {
+      const q = busquedaAlumnoModal.trim().toLowerCase();
+      if (!q) return true;
+      return (
+        (est.nombre || '').toLowerCase().includes(q) ||
+        (est.rut || '').toLowerCase().includes(q)
+      );
+    })
+    .sort((a, b) => {
+      const aPend = !rutsRendidos.has(a.rut.trim().toLowerCase());
+      const bPend = !rutsRendidos.has(b.rut.trim().toLowerCase());
+      if (aPend !== bPend) return aPend ? -1 : 1;
+      return (a.nombre || '').localeCompare(b.nombre || '', 'es');
+    });
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#1e293b' }}>
@@ -2135,6 +2288,48 @@ export default function App() {
               </div>
             )}
 
+            {/* Alerta persistente si quedaron hojas sin QR por asignar */}
+            {hojasSinQrEnVista.length > 0 && puedeCorregirManualActual && (
+              <div
+                style={{
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  color: '#991b1b',
+                  padding: '12px 16px',
+                  borderRadius: '10px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: '10px',
+                  fontSize: '13.5px'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <AlertCircle size={18} color="#dc2626" />
+                  <span>
+                    Hay <strong>{hojasSinQrEnVista.length} hoja(s) escaneada(s) sin QR</strong> pendientes de asignar a un estudiante.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => abrirAsistenteHojasSinQr(resultadosVisiblesEval)}
+                  style={{
+                    background: '#dc2626',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '7px 14px',
+                    fontSize: '12.5px',
+                    fontWeight: '700',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Asignar Hojas Ahora ({hojasSinQrEnVista.length})
+                </button>
+              </div>
+            )}
+
             <div style={{ background: '#ffffff', padding: '18px 20px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -2828,12 +3023,14 @@ export default function App() {
                         <tbody>
                           {resultadosVisiblesEval.map((res, idx) => {
                             const seleccionado = res.id && escaneosSeleccionados.includes(res.id);
+                            const rutNorm = (res.rut || '').trim().toLowerCase();
+                            const esSinQr = !rutNorm || rutNorm === 'sin qr' || rutNorm === 'sin rut';
                             return (
                               <tr
                                 key={res.id || idx}
                                 style={{
                                   borderBottom: '1px solid #f1f5f9',
-                                  background: seleccionado ? '#fef2f2' : 'transparent'
+                                  background: seleccionado ? '#fef2f2' : esSinQr ? '#fffbeb' : 'transparent'
                                 }}
                               >
                                 {puedeCorregirManualActual && (
@@ -2846,7 +3043,28 @@ export default function App() {
                                     />
                                   </td>
                                 )}
-                                <td style={{ padding: '9px 10px', fontWeight: '600' }}>{res.nombre}</td>
+                                <td style={{ padding: '9px 10px', fontWeight: '600' }}>
+                                  {res.nombre}
+                                  {esSinQr && puedeCorregirManualActual && (
+                                    <button
+                                      type="button"
+                                      onClick={() => abrirAsistenteHojasSinQr([res])}
+                                      style={{
+                                        marginLeft: '8px',
+                                        background: '#fef3c7',
+                                        color: '#92400e',
+                                        border: '1px solid #fcd34d',
+                                        borderRadius: '6px',
+                                        padding: '2px 8px',
+                                        fontSize: '11px',
+                                        fontWeight: '700',
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      Asignar Alumno
+                                    </button>
+                                  )}
+                                </td>
                                 <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{res.rut}</td>
                                 <td style={{ padding: '9px 10px', color: '#64748b' }}>{res.curso || '-'}</td>
                                 <td style={{ padding: '9px 10px', textAlign: 'center' }}>{res.puntaje} / {res.total}</td>
@@ -2875,6 +3093,226 @@ export default function App() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ================================================================= */}
+        {/* MODAL ASISTENTE PARA ASIGNAR HOJAS SIN QR                         */}
+        {/* ================================================================= */}
+        {hojaSinQrActual && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(15, 23, 42, 0.72)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1200,
+              padding: '16px'
+            }}
+          >
+            <div
+              style={{
+                background: '#ffffff',
+                borderRadius: '16px',
+                width: '100%',
+                maxWidth: '980px',
+                maxHeight: '92vh',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+                boxShadow: '0 25px 50px -12px rgba(0,0,0,0.35)'
+              }}
+            >
+              {/* Cabecera de advertencia */}
+              <div
+                style={{
+                  background: '#fef2f2',
+                  borderBottom: '1px solid #fecaca',
+                  padding: '16px 22px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: '12px'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#fee2e2', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <AlertCircle size={22} color="#dc2626" />
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '17px', fontWeight: '800', color: '#991b1b' }}>
+                      Lo siento, no pude asignar estas hojas automáticamente
+                    </h3>
+                    <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#7f1d1d' }}>
+                      Hoja <strong>{indiceHojaSinQr + 1} de {hojasSinQrPendientes.length}</strong> sin lectura de QR • Puntaje leído: <strong>{hojaSinQrActual.puntaje}/{hojaSinQrActual.total} pts</strong> (Nota {Number(hojaSinQrActual.nota).toFixed(1)})
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setHojasSinQrPendientes([])}
+                  title="Cerrar asistente"
+                  style={{ background: '#ffffff', border: '1px solid #fecaca', borderRadius: '8px', padding: '6px 10px', cursor: 'pointer', color: '#991b1b', fontWeight: '700' }}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Cuerpo en 2 columnas: Izquierda imagen de la hoja / Derecha buscador y selector */}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: hojaSinQrActual.imagenProcesada ? '1.1fr 0.9fr' : '1fr',
+                  gap: '20px',
+                  padding: '20px 22px',
+                  overflowY: 'auto',
+                  flex: 1
+                }}
+              >
+                {hojaSinQrActual.imagenProcesada && (
+                  <div style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '12px', padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '700', color: '#334155', marginBottom: '8px', textAlign: 'center' }}>
+                      Revisa el nombre impreso arriba a la izquierda de la hoja:
+                    </div>
+                    <div style={{ width: '100%', maxHeight: '62vh', overflow: 'auto', textAlign: 'center' }}>
+                      <img
+                        src={hojaSinQrActual.imagenProcesada}
+                        alt={hojaSinQrActual.nombre}
+                        style={{ width: '100%', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ fontSize: '13.5px', fontWeight: '700', color: '#0f172a' }}>
+                      Busca y selecciona al estudiante del curso al que pertenece esta hoja:
+                    </div>
+
+                    {/* Buscador rápido */}
+                    <div style={{ position: 'relative' }}>
+                      <Search size={16} color="#64748b" style={{ position: 'absolute', left: '12px', top: '11px' }} />
+                      <input
+                        type="text"
+                        placeholder="Buscar por nombre o RUT..."
+                        value={busquedaAlumnoModal}
+                        onChange={(e) => {
+                          setBusquedaAlumnoModal(e.target.value);
+                          const q = e.target.value.trim().toLowerCase();
+                          if (q) {
+                            const coincidencia = estudiantesVisiblesEval.find(
+                              (est) =>
+                                (est.nombre || '').toLowerCase().includes(q) ||
+                                (est.rut || '').toLowerCase().includes(q)
+                            );
+                            if (coincidencia) setRutSeleccionadoModal(coincidencia.rut);
+                          }
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '9px 12px 9px 36px',
+                          borderRadius: '9px',
+                          border: '1px solid #cbd5e1',
+                          fontSize: '14px',
+                          boxSizing: 'border-box'
+                        }}
+                      />
+                    </div>
+
+                    {/* Selector desplegable + Lista rápida */}
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '5px' }}>
+                        Estudiante del curso ({alumnosFiltradosModal.length} disponibles):
+                      </label>
+                      <select
+                        size={8}
+                        value={rutSeleccionadoModal}
+                        onChange={(e) => setRutSeleccionadoModal(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          borderRadius: '9px',
+                          border: '1px solid #cbd5e1',
+                          fontSize: '13.5px',
+                          boxSizing: 'border-box',
+                          background: '#ffffff'
+                        }}
+                      >
+                        {alumnosFiltradosModal.map((est) => {
+                          const yaTieneNota = rutsRendidos.has(est.rut.trim().toLowerCase());
+                          return (
+                            <option
+                              key={est.rut}
+                              value={est.rut}
+                              style={{
+                                padding: '6px 8px',
+                                fontWeight: yaTieneNota ? '400' : '700',
+                                color: yaTieneNota ? '#64748b' : '#0f172a'
+                              }}
+                            >
+                              {yaTieneNota ? '✓ ' : '• '}
+                              {est.nombre} ({est.rut}) {yaTieneNota ? '[Ya tiene nota]' : '[Pendiente]'}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Botones de acción del Modal */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid #e2e8f0', paddingTop: '14px' }}>
+                    <button
+                      type="button"
+                      onClick={asignarEstudianteAHojaSinQr}
+                      disabled={!rutSeleccionadoModal || asignandoHoja}
+                      style={{
+                        width: '100%',
+                        background: !rutSeleccionadoModal ? '#94a3b8' : '#16a34a',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '10px',
+                        padding: '12px 16px',
+                        fontSize: '14.5px',
+                        fontWeight: '700',
+                        cursor: !rutSeleccionadoModal || asignandoHoja ? 'not-allowed' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px'
+                      }}
+                    >
+                      {asignandoHoja
+                        ? 'Asignando...'
+                        : indiceHojaSinQr + 1 < hojasSinQrPendientes.length
+                        ? <>Asignar y Siguiente <ArrowRight size={18} /></>
+                        : <>Asignar y Finalizar <CheckCircle2 size={18} /></>}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={omitirHojaSinQrActual}
+                      style={{
+                        width: '100%',
+                        background: '#f1f5f9',
+                        color: '#475569',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: '9px',
+                        padding: '9px 14px',
+                        fontSize: '13px',
+                        fontWeight: '600',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Omitir esta hoja por ahora
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </main>
