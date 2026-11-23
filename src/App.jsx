@@ -419,7 +419,7 @@ export default function App() {
     if (!perfilDB) {
       const nuevoPerfil = {
         id: user.id,
-        email: user.email,
+        email: user.email.toLowerCase().trim(),
         nombre: esAdminPrincipal ? 'Juan Pablo Esparza' : (user.user_metadata?.nombre || user.email.split('@')[0]),
         asignatura: user.user_metadata?.asignatura || 'Matemática',
         rol: esAdminPrincipal ? 'admin' : 'docente',
@@ -427,6 +427,12 @@ export default function App() {
       };
       await supabase.from('perfiles').upsert([nuevoPerfil]);
       perfilDB = nuevoPerfil;
+    } else if (perfilDB.id !== user.id) {
+      // Si fue pre-registrado por Admin/UTP, migrar su ID y cursos al ID real de Auth
+      const idAnterior = perfilDB.id;
+      await supabase.from('perfiles').update({ id: user.id }).eq('email', perfilDB.email);
+      await supabase.from('docente_cursos').update({ docente_id: user.id }).eq('docente_id', idAnterior);
+      perfilDB = { ...perfilDB, id: user.id };
     }
 
     const rolFinal = esAdminPrincipal ? 'admin' : (perfilDB?.rol || 'docente');
