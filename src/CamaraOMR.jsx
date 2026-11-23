@@ -236,8 +236,8 @@ export default function CamaraOMR({ tituloPrueba, onCapturarImagen, onCerrar }) 
       const offsetX = (vRect.width - dispW) / 2;
       const offsetY = (vRect.height - dispH) / 2;
 
-      const padX = gRect.width * 0.08;
-      const padY = gRect.height * 0.06;
+      const padX = gRect.width * 0.1;
+      const padY = gRect.height * 0.08;
 
       const visLeft = gRect.left - vRect.left - offsetX - padX;
       const visTop = gRect.top - vRect.top - offsetY - padY;
@@ -287,11 +287,17 @@ export default function CamaraOMR({ tituloPrueba, onCapturarImagen, onCerrar }) 
     <div
       style={{
         position: 'fixed',
-        inset: 0,
+        top: 0,
+        left: 0,
+        right: 0,
+        height: '100dvh',
+        maxHeight: '100dvh',
         zIndex: 9999,
         background: '#000000',
         display: 'flex',
         flexDirection: 'column',
+        overflow: 'hidden',
+        boxSizing: 'border-box',
         fontFamily: 'system-ui, -apple-system, sans-serif'
       }}
     >
@@ -304,6 +310,7 @@ export default function CamaraOMR({ tituloPrueba, onCapturarImagen, onCerrar }) 
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: '8px',
+          flexShrink: 0,
           zIndex: 10
         }}
       >
@@ -329,7 +336,7 @@ export default function CamaraOMR({ tituloPrueba, onCapturarImagen, onCerrar }) 
           <X size={20} /> Salir
         </button>
 
-        <div style={{ fontWeight: '800', fontSize: '12px', letterSpacing: '0.5px', textTransform: 'uppercase', textAlign: 'center' }}>
+        <div style={{ fontWeight: '800', fontSize: '11.5px', letterSpacing: '0.5px', textTransform: 'uppercase', textAlign: 'center' }}>
           {esquinasListas ? '4 ESQUINAS LISTAS' : 'BUSCANDO ESQUINAS'}
         </div>
 
@@ -376,7 +383,7 @@ export default function CamaraOMR({ tituloPrueba, onCapturarImagen, onCerrar }) 
         </div>
       </div>
 
-      <div style={{ position: 'relative', flex: 1, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {errorCamara ? (
           <div style={{ color: '#ffffff', padding: '20px', textAlign: 'center', maxWidth: '320px' }}>
             <p style={{ fontSize: '14px', lineHeight: 1.5 }}>{errorCamara}</p>
@@ -408,32 +415,33 @@ export default function CamaraOMR({ tituloPrueba, onCapturarImagen, onCerrar }) 
               ref={guideRef}
               style={{
                 position: 'absolute',
-                width: 'min(80vw, 390px)',
-                maxHeight: '64vh',
+                width: 'min(70vw, 310px)',
+                maxHeight: '52vh',
                 aspectRatio: '183 / 246',
                 pointerEvents: 'none',
                 display: 'flex',
                 flexDirection: 'column',
-                justifyContent: 'space-between'
+                justifyContent: 'space-between',
+                boxSizing: 'border-box'
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <div
                   style={{
-                    width: '48px',
-                    height: '48px',
+                    width: '34px',
+                    height: '34px',
                     background: esquinasListas ? 'rgba(34, 197, 94, 0.25)' : 'rgba(255, 255, 255, 0.18)',
                     border: `3px solid ${colorMarco}`,
-                    borderRadius: '6px'
+                    borderRadius: '5px'
                   }}
                 />
                 <div
                   style={{
-                    width: '48px',
-                    height: '48px',
+                    width: '34px',
+                    height: '34px',
                     background: esquinasListas ? 'rgba(34, 197, 94, 0.25)' : 'rgba(255, 255, 255, 0.18)',
                     border: `3px solid ${colorMarco}`,
-                    borderRadius: '6px'
+                    borderRadius: '5px'
                   }}
                 />
               </div>
@@ -441,20 +449,21 @@ export default function CamaraOMR({ tituloPrueba, onCapturarImagen, onCerrar }) 
               <div
                 style={{
                   alignSelf: 'center',
-                  maxWidth: '92%',
-                  background: esquinasListas ? 'rgba(20, 83, 45, 0.9)' : 'rgba(15, 23, 42, 0.82)',
+                  maxWidth: '94%',
+                  background: esquinasListas ? 'rgba(20, 83, 45, 0.92)' : 'rgba(15, 23, 42, 0.85)',
                   color: '#ffffff',
-                  padding: '7px 12px',
-                  borderRadius: '10px',
+                  padding: '6px 10px',
+                  borderRadius: '8px',
                   textAlign: 'center',
-                  fontSize: '12.5px',
-                  fontWeight: '700'
+                  fontSize: '12px',
+                  fontWeight: '700',
+                  boxSizing: 'border-box'
                 }}
               >
                 {esquinasListas
                   ? (autoDisparo ? '¡Listo! Capturando...' : 'Cuadros listos — toca capturar')
-                  : 'Encaja los 4 cuadros negros en los visores'}
-                <div style={{ fontSize: '11px', fontWeight: '500', color: '#cbd5e1', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  : 'Encaja los 4 cuadros en los visores'}
+                <div style={{ fontSize: '10.5px', fontWeight: '500', color: '#cbd5e1', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {tituloPrueba || 'Hoja OMR'}
                 </div>
               </div>
@@ -462,20 +471,20 @@ export default function CamaraOMR({ tituloPrueba, onCapturarImagen, onCerrar }) 
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <div
                   style={{
-                    width: '48px',
-                    height: '48px',
+                    width: '34px',
+                    height: '34px',
                     background: esquinasListas ? 'rgba(34, 197, 94, 0.25)' : 'rgba(255, 255, 255, 0.18)',
                     border: `3px solid ${colorMarco}`,
-                    borderRadius: '6px'
+                    borderRadius: '5px'
                   }}
                 />
                 <div
                   style={{
-                    width: '48px',
-                    height: '48px',
+                    width: '34px',
+                    height: '34px',
                     background: esquinasListas ? 'rgba(34, 197, 94, 0.25)' : 'rgba(255, 255, 255, 0.18)',
                     border: `3px solid ${colorMarco}`,
-                    borderRadius: '6px'
+                    borderRadius: '5px'
                   }}
                 />
               </div>
@@ -487,12 +496,12 @@ export default function CamaraOMR({ tituloPrueba, onCapturarImagen, onCerrar }) 
       <div
         style={{
           background: '#0f172a',
-          padding: '14px 16px',
+          padding: '12px 16px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           gap: '14px',
-          flexWrap: 'wrap'
+          flexShrink: 0
         }}
       >
         {!fotoPrevia ? (
@@ -501,8 +510,8 @@ export default function CamaraOMR({ tituloPrueba, onCapturarImagen, onCerrar }) 
             onClick={tomarCaptura}
             disabled={Boolean(errorCamara)}
             style={{
-              width: '64px',
-              height: '64px',
+              width: '60px',
+              height: '60px',
               borderRadius: '999px',
               background: '#ffffff',
               border: `5px solid ${colorMarco}`,
@@ -513,7 +522,7 @@ export default function CamaraOMR({ tituloPrueba, onCapturarImagen, onCerrar }) 
             }}
             title="Capturar Hoja"
           >
-            <Camera size={26} color="#0f172a" />
+            <Camera size={24} color="#0f172a" />
           </button>
         ) : (
           <>
