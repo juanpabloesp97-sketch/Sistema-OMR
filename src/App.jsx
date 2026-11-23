@@ -39,6 +39,7 @@ export default function App() {
   const usuarioCargadoIdRef = useRef(null);
   const ignorarPushHistoryRef = useRef(false);
   const ultimoHashHistoryRef = useRef('');
+  const navRestauradaRef = useRef(false);
 
   const [profesor, setProfesor] = useState({
     id: null,
@@ -283,7 +284,7 @@ export default function App() {
 
   // --- SINCRONIZACIÓN CON HISTORIAL DEL NAVEGADOR ---
   useEffect(() => {
-    if (!profesor?.id) return;
+    if (!profesor?.id || !navRestauradaRef.current) return;
 
     const estadoNav = {
       vistaActiva,
@@ -515,6 +516,7 @@ export default function App() {
       }
       setVistaActiva('inicio');
     }
+    navRestauradaRef.current = true;
   };
 
   useEffect(() => {
@@ -542,6 +544,7 @@ export default function App() {
     if (profesor?.id) {
       localStorage.removeItem(`omr_nav_estado_${profesor.id}`);
     }
+    navRestauradaRef.current = false;
     usuarioCargadoIdRef.current = null;
     if (supabase) await supabase.auth.signOut();
     setSesion(null);
