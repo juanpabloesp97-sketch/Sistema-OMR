@@ -5,7 +5,8 @@ import {
   FileDown, User, CheckCircle2, Camera, CheckSquare, Square,
   Cloud, BarChart3, Printer, Clock, AlertCircle, Save, Trash2, UserPlus,
   UserX, UserCheck, Share2, GraduationCap, Users, FolderOpen, ArrowLeft,
-  FilePlus2, Filter, Eye, Upload, ShieldAlert, RefreshCw, Search, ArrowRight, X
+  FilePlus2, Filter, Eye, Upload, ShieldAlert, RefreshCw, Search, ArrowRight, X,
+  ChevronUp, ChevronDown
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import VisorCurso from './VisorCurso';
@@ -145,6 +146,7 @@ export default function App() {
   const [seleccionadosImprimir, setSeleccionadosImprimir] = useState([]);
   const [eximidosRuts, setEximidosRuts] = useState([]);
   const [mostrarPendientesDetalle, setMostrarPendientesDetalle] = useState(true);
+  const [cantidadHojasBlancas, setCantidadHojasBlancas] = useState(1);
 
   const [procesando, setProcesando] = useState(false);
   const [recalculando, setRecalculando] = useState(false);
@@ -161,6 +163,12 @@ export default function App() {
   const [busquedaAlumnoModal, setBusquedaAlumnoModal] = useState('');
   const [rutSeleccionadoModal, setRutSeleccionadoModal] = useState('');
   const [asignandoHoja, setAsignandoHoja] = useState(false);
+
+  const [mostrarFormNuevoAlumnoModal, setMostrarFormNuevoAlumnoModal] = useState(false);
+  const [nuevoRutModal, setNuevoRutModal] = useState('');
+  const [nuevoNombreModal, setNuevoNombreModal] = useState('');
+  const [cursoIdNuevoAlumnoModal, setCursoIdNuevoAlumnoModal] = useState('');
+  const [creandoAlumnoYAsignando, setCreandoAlumnoYAsignando] = useState(false);
 
   const [rutExtra, setRutExtra] = useState('');
   const [nombreExtra, setNombreExtra] = useState('');
@@ -716,7 +724,10 @@ export default function App() {
           curso_nombre: cObj ? cObj.nombre : ''
         }));
         setEstudiantesCursoEval(conCurso);
-        setSeleccionadosImprimir(conCurso.map((e) => e.rut));
+        setSeleccionadosImprimir((prev) => {
+          const nuevosRuts = conCurso.map((e) => e.rut);
+          return Array.from(new Set([...prev, ...nuevosRuts]));
+        });
       }
     } else if (nivelId) {
       const cursosDelNivel = cursos.filter((c) => c.nivel_id === nivelId);
@@ -742,7 +753,10 @@ export default function App() {
           };
         });
         setEstudiantesCursoEval(conCurso);
-        setSeleccionadosImprimir(conCurso.map((e) => e.rut));
+        setSeleccionadosImprimir((prev) => {
+          const nuevosRuts = conCurso.map((e) => e.rut);
+          return Array.from(new Set([...prev, ...nuevosRuts]));
+        });
       }
     }
   };
@@ -1227,6 +1241,82 @@ export default function App() {
     }
   };
 
+  const imprimirHojasBlancasPDF = async (cantidad = 1) => {
+    const cant = Math.max(1, Math.min(6, Number(cantidad || 1)));
+    const cursoGlobalObj = cursos.find((c) => c.id === (cursoActivoId || config.cursoId || cursoFiltroObj?.id));
+    const nombreCursoRef = cursoGlobalObj ? cursoGlobalObj.nombre : '';
+
+    actualizarBarra(true, 'Completando descarga de PDF...', 15, `Generando ${cant} hoja(s) en blanco...`);
+
+    try {
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+      const opciones = config.alternativas.split('');
+      const totalPreg = Number(config.numPreguntas || 30);
+
+      for (let i = 0; i < cant; i++) {
+        if (i > 0) doc.addPage();
+
+        actualizarBarra(
+          true,
+          'Completando descarga de PDF...',
+          15 + Math.round(((i + 1) / cant) * 80),
+          `Generando hoja en blanco ${i + 1} de ${cant}...`
+        );
+
+        doc.setFillColor(0, 0, 0);
+        doc.rect(12, 12, 8, 8, 'F');
+        doc.rect(195, 12, 8, 8, 'F');
+        doc.rect(12, 258, 8, 8, 'F');
+        doc.rect(195, 258, 8, 8, 'F');
+
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+        doc.text(config.tituloPrueba || 'Evaluación', 25, 20);
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        doc.text(`Asignatura: ${config.asignatura}`, 25, 26);
+        doc.text('Estudiante: __________________________________________', 25, 32);
+        doc.text(`RUT: _____________________   |   Curso: ${nombreCursoRef || '______________'}`, 25, 38);
+
+        doc.setDrawColor(148, 163, 184);
+        doc.rect(162, 14, 28, 28, 'S');
+        doc.setFontSize(7.5);
+        doc.setTextColor(100, 116, 139);
+        doc.text('HOJA EN BLANCO', 176, 27, { align: 'center' });
+        doc.text('(SIN QR)', 176, 31, { align: 'center' });
+        doc.setTextColor(0, 0, 0);
+
+        doc.setDrawColor(60, 60, 60);
+        doc.setLineWidth(0.3);
+
+        for (let p = 1; p <= totalPreg; p++) {
+          const col = p <= 25 ? 0 : 1;
+          const fila = p <= 25 ? p - 1 : p - 26;
+          const baseX = col === 0 ? 32 : 122;
+          const baseY = 56 + fila * 7.8;
+
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'bold');
+          doc.text(`${p}.`, baseX - 8, baseY + 1.5);
+
+          opciones.forEach((letra, idx) => {
+            const cx = baseX + idx * 11;
+            doc.circle(cx, baseY, 2.7, 'S');
+            doc.setFontSize(7.5);
+            doc.setFont('helvetica', 'normal');
+            doc.text(letra, cx - 1.3, baseY + 1);
+          });
+        }
+      }
+
+      doc.save(`Hojas_En_Blanco_${config.tituloPrueba.replace(/\s+/g, '_')}_x${cant}.pdf`);
+      actualizarBarra(true, 'Descarga completada', 100, `${cant} hoja(s) en blanco descargada(s).`);
+      setTimeout(() => actualizarBarra(false), 900);
+    } catch {
+      actualizarBarra(false);
+    }
+  };
+
   const descargarHojasCorregidasPDF = (listaResultadosAExportar, sufijoArchivo = '', respetarOrden = false) => {
     if (!listaResultadosAExportar || listaResultadosAExportar.length === 0) {
       alert('No hay resultados corregidos para descargar.');
@@ -1380,10 +1470,20 @@ export default function App() {
     });
 
     if (sinQr.length > 0) {
+      const cursoDefault =
+        (contextoAperturaEval === 'curso' && cursoActivoId) ||
+        cursoFiltroObj?.id ||
+        config.cursoId ||
+        (cursosDelNivelActivo[0]?.id || '');
+
       setHojasSinQrPendientes(sinQr);
       setIndiceHojaSinQr(0);
       setBusquedaAlumnoModal('');
       setRutSeleccionadoModal('');
+      setMostrarFormNuevoAlumnoModal(false);
+      setNuevoRutModal('');
+      setNuevoNombreModal('');
+      setCursoIdNuevoAlumnoModal(cursoDefault);
     }
   };
 
@@ -1405,6 +1505,8 @@ export default function App() {
         cursoFiltroObj?.nombre ||
         '';
 
+      const calificacion = evaluarRespuestasConPauta(hojaActual.respuestas || {}, config);
+
       if (supabase && config.id && hojaActual.id) {
         await supabase
           .from('resultados')
@@ -1418,7 +1520,11 @@ export default function App() {
           .update({
             rut_estudiante: estElegido.rut,
             nombre_estudiante: estElegido.nombre,
-            curso: cursoNombreFinal
+            curso: cursoNombreFinal,
+            puntaje_obtenido: calificacion.puntosObtenidos,
+            puntaje_total: calificacion.puntosTotales,
+            porcentaje: calificacion.porcentaje,
+            nota: calificacion.nota
           })
           .eq('id', hojaActual.id);
 
@@ -1439,7 +1545,111 @@ export default function App() {
         setIndiceHojaSinQr(0);
         setRutSeleccionadoModal('');
         setBusquedaAlumnoModal('');
+        setMostrarFormNuevoAlumnoModal(false);
         alert('Todas las hojas han sido asignadas a sus estudiantes.');
+      } else {
+        setHojasSinQrPendientes(restantes);
+        setIndiceHojaSinQr(0);
+        setRutSeleccionadoModal('');
+        setBusquedaAlumnoModal('');
+        setMostrarFormNuevoAlumnoModal(false);
+      }
+    } finally {
+      setAsignandoHoja(false);
+    }
+  };
+
+  const crearEstudianteNuevoYAsignarHoja = async (e) => {
+    e.preventDefault();
+    const hojaActual = hojasSinQrPendientes[indiceHojaSinQr];
+    if (!hojaActual) return;
+
+    const rutLimpio = nuevoRutModal.trim();
+    const nombreLimpio = nuevoNombreModal.trim();
+    const destinoCursoId = cursoIdNuevoAlumnoModal || cursoFiltroEfectivo || config.cursoId || (cursosDelNivelActivo[0]?.id || '');
+
+    if (!rutLimpio || !nombreLimpio) {
+      alert('Ingresa el RUT y el nombre completo del estudiante nuevo.');
+      return;
+    }
+
+    if (!destinoCursoId) {
+      alert('Selecciona el curso al que pertenece el estudiante nuevo.');
+      return;
+    }
+
+    setCreandoAlumnoYAsignando(true);
+    try {
+      const cursoElegidoObj = cursos.find((c) => c.id === destinoCursoId);
+      const nombreCursoFinal = cursoElegidoObj?.nombre || '';
+
+      if (supabase) {
+        const { error: estError } = await supabase
+          .from('estudiantes')
+          .upsert(
+            [{ curso_id: destinoCursoId, rut: rutLimpio, nombre: nombreLimpio }],
+            { onConflict: 'curso_id,rut' }
+          );
+
+        if (estError) {
+          alert('Error al guardar el estudiante en la nómina: ' + estError.message);
+          return;
+        }
+      }
+
+      if (contextoAperturaEval === 'curso' && cursoActivoId) {
+        await cargarEstudiantesParaEval(cursoActivoId, null);
+      } else if (config.cursoId) {
+        await cargarEstudiantesParaEval(config.cursoId, null);
+      } else if (config.nivelId) {
+        await cargarEstudiantesParaEval(null, config.nivelId);
+      }
+
+      const calificacion = evaluarRespuestasConPauta(hojaActual.respuestas || {}, config);
+
+      if (supabase && config.id && hojaActual.id) {
+        await supabase
+          .from('resultados')
+          .delete()
+          .eq('evaluacion_id', config.id)
+          .eq('rut_estudiante', rutLimpio)
+          .neq('id', hojaActual.id);
+
+        const { error: resError } = await supabase
+          .from('resultados')
+          .update({
+            rut_estudiante: rutLimpio,
+            nombre_estudiante: nombreLimpio,
+            curso: nombreCursoFinal,
+            puntaje_obtenido: calificacion.puntosObtenidos,
+            puntaje_total: calificacion.puntosTotales,
+            porcentaje: calificacion.porcentaje,
+            nota: calificacion.nota
+          })
+          .eq('id', hojaActual.id);
+
+        if (resError) {
+          alert('El estudiante se guardó en la nómina, pero hubo un error al asignar la hoja: ' + resError.message);
+          return;
+        }
+      }
+
+      const nuevosRes = await cargarResultadosNube(config.id);
+      const restantes = nuevosRes.filter((r) => {
+        const rutNorm = (r.rut || '').trim().toLowerCase();
+        return !rutNorm || rutNorm === 'sin qr' || rutNorm === 'sin rut';
+      });
+
+      setNuevoRutModal('');
+      setNuevoNombreModal('');
+      setMostrarFormNuevoAlumnoModal(false);
+
+      if (restantes.length === 0) {
+        setHojasSinQrPendientes([]);
+        setIndiceHojaSinQr(0);
+        setRutSeleccionadoModal('');
+        setBusquedaAlumnoModal('');
+        alert(`Estudiante "${nombreLimpio}" agregado a la nómina y calificado (Nota ${calificacion.nota.toFixed(1)}).`);
       } else {
         setHojasSinQrPendientes(restantes);
         setIndiceHojaSinQr(0);
@@ -1447,11 +1657,14 @@ export default function App() {
         setBusquedaAlumnoModal('');
       }
     } finally {
-      setAsignandoHoja(false);
+      setCreandoAlumnoYAsignando(false);
     }
   };
 
   const omitirHojaSinQrActual = () => {
+    setMostrarFormNuevoAlumnoModal(false);
+    setNuevoRutModal('');
+    setNuevoNombreModal('');
     if (indiceHojaSinQr + 1 < hojasSinQrPendientes.length) {
       setIndiceHojaSinQr(indiceHojaSinQr + 1);
       setRutSeleccionadoModal('');
@@ -1859,6 +2072,9 @@ export default function App() {
       if (aPend !== bPend) return aPend ? -1 : 1;
       return (a.nombre || '').localeCompare(b.nombre || '', 'es');
     });
+
+  const cursosDisponiblesNuevoAlumno =
+    cursosDelNivelActivo.length > 0 ? cursosDelNivelActivo : cursos;
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#1e293b' }}>
@@ -2925,15 +3141,64 @@ export default function App() {
               <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
                   <h3 style={{ margin: 0, fontSize: '17px' }}>Nómina de Impresión de Hojas de Respuestas</h3>
-                  <button
-                    onClick={() => {
-                      const lista = estudiantesVisiblesEval.filter((e) => seleccionadosImprimir.includes(e.rut));
-                      imprimirHojasPDF(lista);
-                    }}
-                    style={{ background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px', padding: '10px 18px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
-                  >
-                    <FileDown size={18} /> Descargar PDF ({estudiantesVisiblesEval.filter((e) => seleccionadosImprimir.includes(e.rut)).length})
-                  </button>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => {
+                        const lista = estudiantesVisiblesEval.filter((e) => seleccionadosImprimir.includes(e.rut));
+                        imprimirHojasPDF(lista);
+                      }}
+                      style={{ background: '#16a34a', color: 'white', border: 'none', borderRadius: '8px', padding: '10px 18px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                    >
+                      <FileDown size={18} /> Descargar PDF ({estudiantesVisiblesEval.filter((e) => seleccionadosImprimir.includes(e.rut)).length})
+                    </button>
+
+                    <div style={{ display: 'inline-flex', alignItems: 'center', border: '1px solid #93c5fd', borderRadius: '8px', overflow: 'hidden', background: '#eff6ff' }}>
+                      <button
+                        type="button"
+                        onClick={() => imprimirHojasBlancasPDF(cantidadHojasBlancas)}
+                        style={{
+                          background: 'transparent',
+                          color: '#1e3a8a',
+                          border: 'none',
+                          padding: '10px 14px',
+                          fontWeight: '700',
+                          fontSize: '13.5px',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '7px'
+                        }}
+                      >
+                        <FileDown size={17} />
+                        Descargar hoja en blanco ({cantidadHojasBlancas})
+                      </button>
+
+                      <div style={{ display: 'flex', alignItems: 'center', borderLeft: '1px solid #93c5fd', background: '#ffffff', padding: '0 6px', gap: '4px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: '800', color: '#0f172a', minWidth: '16px', textAlign: 'center' }}>
+                          {cantidadHojasBlancas}
+                        </span>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <button
+                            type="button"
+                            onClick={() => setCantidadHojasBlancas((prev) => Math.min(6, prev + 1))}
+                            title="Aumentar cantidad (máx. 6)"
+                            style={{ background: 'transparent', border: 'none', padding: '1px 2px', cursor: 'pointer', color: '#1e3a8a', display: 'flex', alignItems: 'center' }}
+                          >
+                            <ChevronUp size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCantidadHojasBlancas((prev) => Math.max(1, prev - 1))}
+                            title="Disminuir cantidad (mín. 1)"
+                            style={{ background: 'transparent', border: 'none', padding: '1px 2px', cursor: 'pointer', color: '#1e3a8a', display: 'flex', alignItems: 'center' }}
+                          >
+                            <ChevronDown size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 {puedeAgregarEstudiantesActual && (
@@ -3488,7 +3753,7 @@ export default function App() {
                 {hojaSinQrActual.imagenProcesada && (
                   <div style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '12px', padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                     <div style={{ fontSize: '12px', fontWeight: '700', color: '#334155', marginBottom: '8px', textAlign: 'center' }}>
-                      Revisa el nombre impreso arriba a la izquierda de la hoja:
+                      Revisa los datos escritos o impresos en la hoja:
                     </div>
                     <div style={{ width: '100%', maxHeight: '62vh', overflow: 'auto', textAlign: 'center' }}>
                       <img
@@ -3502,105 +3767,221 @@ export default function App() {
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <div style={{ fontSize: '13.5px', fontWeight: '700', color: '#0f172a' }}>
-                      Busca y selecciona al estudiante del curso al que pertenece esta hoja:
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <div style={{ fontSize: '13.5px', fontWeight: '700', color: '#0f172a' }}>
+                        Selecciona un estudiante existente o crea uno nuevo:
+                      </div>
+
+                      {puedeAgregarEstudiantesActual && (
+                        <button
+                          type="button"
+                          onClick={() => setMostrarFormNuevoAlumnoModal((prev) => !prev)}
+                          style={{
+                            background: mostrarFormNuevoAlumnoModal ? '#e2e8f0' : '#eff6ff',
+                            color: mostrarFormNuevoAlumnoModal ? '#0f172a' : '#1d4ed8',
+                            border: '1px solid #93c5fd',
+                            borderRadius: '8px',
+                            padding: '6px 11px',
+                            fontSize: '12px',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px'
+                          }}
+                        >
+                          <UserPlus size={14} />
+                          {mostrarFormNuevoAlumnoModal ? 'Volver a buscar alumno' : 'Crear estudiante nuevo'}
+                        </button>
+                      )}
                     </div>
 
-                    <div style={{ position: 'relative' }}>
-                      <Search size={16} color="#64748b" style={{ position: 'absolute', left: '12px', top: '11px' }} />
-                      <input
-                        type="text"
-                        placeholder="Buscar por nombre o RUT..."
-                        value={busquedaAlumnoModal}
-                        onChange={(e) => {
-                          setBusquedaAlumnoModal(e.target.value);
-                          const q = e.target.value.trim().toLowerCase();
-                          if (q) {
-                            const coincidencia = estudiantesVisiblesEval.find(
-                              (est) =>
-                                (est.nombre || '').toLowerCase().includes(q) ||
-                                (est.rut || '').toLowerCase().includes(q)
-                            );
-                            if (coincidencia) setRutSeleccionadoModal(coincidencia.rut);
-                          }
-                        }}
+                    {mostrarFormNuevoAlumnoModal ? (
+                      <form
+                        onSubmit={crearEstudianteNuevoYAsignarHoja}
                         style={{
-                          width: '100%',
-                          padding: '9px 12px 9px 36px',
-                          borderRadius: '9px',
+                          background: '#f8fafc',
                           border: '1px solid #cbd5e1',
-                          fontSize: '14px',
-                          boxSizing: 'border-box'
-                        }}
-                      />
-                    </div>
-
-                    <div>
-                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '5px' }}>
-                        Estudiante del curso ({alumnosFiltradosModal.length} disponibles):
-                      </label>
-                      <select
-                        size={8}
-                        value={rutSeleccionadoModal}
-                        onChange={(e) => setRutSeleccionadoModal(e.target.value)}
-                        style={{
-                          width: '100%',
-                          padding: '6px',
-                          borderRadius: '9px',
-                          border: '1px solid #cbd5e1',
-                          fontSize: '13.5px',
-                          boxSizing: 'border-box',
-                          background: '#ffffff'
+                          borderRadius: '10px',
+                          padding: '14px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '10px'
                         }}
                       >
-                        {alumnosFiltradosModal.map((est) => {
-                          const yaTieneNota = rutsRendidos.has(est.rut.trim().toLowerCase());
-                          return (
-                            <option
-                              key={est.rut}
-                              value={est.rut}
-                              style={{
-                                padding: '6px 8px',
-                                fontWeight: yaTieneNota ? '400' : '700',
-                                color: yaTieneNota ? '#64748b' : '#0f172a'
-                              }}
+                        <div style={{ fontSize: '12.5px', fontWeight: '800', color: '#1e3a8a' }}>
+                          Nuevo Estudiante (se agregará a la nómina y al cálculo de notas)
+                        </div>
+
+                        {cursosDisponiblesNuevoAlumno.length > 0 && (
+                          <div>
+                            <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>
+                              Curso
+                            </label>
+                            <select
+                              value={cursoIdNuevoAlumnoModal}
+                              onChange={(e) => setCursoIdNuevoAlumnoModal(e.target.value)}
+                              style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#ffffff' }}
                             >
-                              {yaTieneNota ? '✓ ' : '• '}
-                              {est.nombre} ({est.rut}) {yaTieneNota ? '[Ya tiene nota]' : '[Pendiente]'}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </div>
+                              {cursosDisponiblesNuevoAlumno.map((c) => (
+                                <option key={c.id} value={c.id}>{c.nombre}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>
+                            RUT del Estudiante
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="Ej: 22.456.789-0"
+                            value={nuevoRutModal}
+                            onChange={(e) => setNuevoRutModal(e.target.value)}
+                            style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px', boxSizing: 'border-box' }}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>
+                            Nombre Completo (Apellido Paterno Materno Nombres)
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="Ej: Soto Pérez Camila Paz"
+                            value={nuevoNombreModal}
+                            onChange={(e) => setNuevoNombreModal(e.target.value)}
+                            style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px', boxSizing: 'border-box' }}
+                          />
+                        </div>
+
+                        <button
+                          type="submit"
+                          disabled={creandoAlumnoYAsignando}
+                          style={{
+                            width: '100%',
+                            background: '#2563eb',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: '9px',
+                            padding: '10px 14px',
+                            fontSize: '13.5px',
+                            fontWeight: '700',
+                            cursor: creandoAlumnoYAsignando ? 'wait' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '7px'
+                          }}
+                        >
+                          <UserPlus size={16} />
+                          {creandoAlumnoYAsignando ? 'Guardando estudiante...' : 'Guardar Estudiante y Asignar Hoja'}
+                        </button>
+                      </form>
+                    ) : (
+                      <>
+                        <div style={{ position: 'relative' }}>
+                          <Search size={16} color="#64748b" style={{ position: 'absolute', left: '12px', top: '11px' }} />
+                          <input
+                            type="text"
+                            placeholder="Buscar por nombre o RUT..."
+                            value={busquedaAlumnoModal}
+                            onChange={(e) => {
+                              setBusquedaAlumnoModal(e.target.value);
+                              const q = e.target.value.trim().toLowerCase();
+                              if (q) {
+                                const coincidencia = estudiantesVisiblesEval.find(
+                                  (est) =>
+                                    (est.nombre || '').toLowerCase().includes(q) ||
+                                    (est.rut || '').toLowerCase().includes(q)
+                                );
+                                if (coincidencia) setRutSeleccionadoModal(coincidencia.rut);
+                              }
+                            }}
+                            style={{
+                              width: '100%',
+                              padding: '9px 12px 9px 36px',
+                              borderRadius: '9px',
+                              border: '1px solid #cbd5e1',
+                              fontSize: '14px',
+                              boxSizing: 'border-box'
+                            }}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '5px' }}>
+                            Estudiante del curso ({alumnosFiltradosModal.length} disponibles):
+                          </label>
+                          <select
+                            size={8}
+                            value={rutSeleccionadoModal}
+                            onChange={(e) => setRutSeleccionadoModal(e.target.value)}
+                            style={{
+                              width: '100%',
+                              padding: '6px',
+                              borderRadius: '9px',
+                              border: '1px solid #cbd5e1',
+                              fontSize: '13.5px',
+                              boxSizing: 'border-box',
+                              background: '#ffffff'
+                            }}
+                          >
+                            {alumnosFiltradosModal.map((est) => {
+                              const yaTieneNota = rutsRendidos.has(est.rut.trim().toLowerCase());
+                              return (
+                                <option
+                                  key={est.rut}
+                                  value={est.rut}
+                                  style={{
+                                    padding: '6px 8px',
+                                    fontWeight: yaTieneNota ? '400' : '700',
+                                    color: yaTieneNota ? '#64748b' : '#0f172a'
+                                  }}
+                                >
+                                  {yaTieneNota ? '✓ ' : '• '}
+                                  {est.nombre} ({est.rut}) {yaTieneNota ? '[Ya tiene nota]' : '[Pendiente]'}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid #e2e8f0', paddingTop: '14px' }}>
-                    <button
-                      type="button"
-                      onClick={asignarEstudianteAHojaSinQr}
-                      disabled={!rutSeleccionadoModal || asignandoHoja}
-                      style={{
-                        width: '100%',
-                        background: !rutSeleccionadoModal ? '#94a3b8' : '#16a34a',
-                        color: '#ffffff',
-                        border: 'none',
-                        borderRadius: '10px',
-                        padding: '12px 16px',
-                        fontSize: '14.5px',
-                        fontWeight: '700',
-                        cursor: !rutSeleccionadoModal || asignandoHoja ? 'not-allowed' : 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '8px'
-                      }}
-                    >
-                      {asignandoHoja
-                        ? 'Asignando...'
-                        : indiceHojaSinQr + 1 < hojasSinQrPendientes.length
-                        ? <>Asignar y Siguiente <ArrowRight size={18} /></>
-                        : <>Asignar y Finalizar <CheckCircle2 size={18} /></>}
-                    </button>
+                    {!mostrarFormNuevoAlumnoModal && (
+                      <button
+                        type="button"
+                        onClick={asignarEstudianteAHojaSinQr}
+                        disabled={!rutSeleccionadoModal || asignandoHoja}
+                        style={{
+                          width: '100%',
+                          background: !rutSeleccionadoModal ? '#94a3b8' : '#16a34a',
+                          color: '#ffffff',
+                          border: 'none',
+                          borderRadius: '10px',
+                          padding: '12px 16px',
+                          fontSize: '14.5px',
+                          fontWeight: '700',
+                          cursor: !rutSeleccionadoModal || asignandoHoja ? 'not-allowed' : 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '8px'
+                        }}
+                      >
+                        {asignandoHoja
+                          ? 'Asignando...'
+                          : indiceHojaSinQr + 1 < hojasSinQrPendientes.length
+                          ? <>Asignar y Siguiente <ArrowRight size={18} /></>
+                          : <>Asignar y Finalizar <CheckCircle2 size={18} /></>}
+                      </button>
+                    )}
 
                     <button
                       type="button"
