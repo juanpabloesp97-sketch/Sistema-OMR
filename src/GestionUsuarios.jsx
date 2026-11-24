@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import {
   UserPlus, Users, BookOpen, CheckCircle2, XCircle,
-  GraduationCap, RefreshCw, ShieldCheck, Save, RotateCcw
+  GraduationCap, RefreshCw, ShieldCheck, Save, RotateCcw,
+  Eye, EyeOff, Copy, KeyRound, Mail
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import {
@@ -24,10 +25,16 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
 
   const [nombre, setNombre] = useState('');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState('evaluacionesatualcance');
   const [asignatura, setAsignatura] = useState('Matemática');
   const [rol, setRol] = useState('docente');
   const [creando, setCreando] = useState(false);
+
+  const [clavesVisibles, setClavesVisibles] = useState({});
+  const [editandoClaveUserId, setEditandoClaveUserId] = useState(null);
+  const [nuevaClaveUsuario, setNuevaClaveUsuario] = useState('');
+  const [guardandoClaveUserId, setGuardandoClaveUserId] = useState(null);
+  const [enviandoResetUserId, setEnviandoResetUserId] = useState(null);
 
   useEffect(() => {
     cargarTodo();
@@ -39,7 +46,8 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
     try {
       const { data: users, error: errUsers } = await supabase
         .from('perfiles')
-        .select('*');
+        .select('*')
+        .order('nombre');
 
       if (errUsers) {
         console.error('Error cargando perfiles:', errUsers);
@@ -180,7 +188,8 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
             nombre: nombre.trim(),
             asignatura: asignatura.trim(),
             rol,
-            activo: true
+            activo: true,
+            clave_referencia: password
           }
         ]);
       }
@@ -188,7 +197,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
       alert(`Cuenta creada correctamente para ${nombre.trim()}.`);
       setNombre('');
       setEmail('');
-      setPassword('');
+      setPassword('evaluacionesatualcance');
       await cargarTodo();
     } catch (err) {
       alert('Error inesperado: ' + err.message);
@@ -207,6 +216,65 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
     if (u.id === perfilActual?.id) return;
     await supabase.from('perfiles').update({ activo: !u.activo }).eq('id', u.id);
     cargarTodo();
+  };
+
+  const guardarCambioClaveDirecto = async (u) => {
+    const claveLimpia = nuevaClaveUsuario.trim();
+    if (claveLimpia.length < 6) {
+      alert('La nueva contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
+
+    setGuardandoClaveUserId(u.id);
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-cambiar-clave', {
+        body: {
+          userId: u.id,
+          nuevaPassword: claveLimpia
+        }
+      });
+
+      if (error || data?.error) {
+        alert('No se pudo cambiar la contraseña: ' + (data?.error || error?.message || 'Error desconocido'));
+        return;
+      }
+
+      alert(`Contraseña actualizada correctamente para ${u.nombre}.`);
+      setEditandoClaveUserId(null);
+      setNuevaClaveUsuario('');
+      setClavesVisibles((prev) => ({ ...prev, [u.id]: true }));
+      await cargarTodo();
+    } catch (err) {
+      alert('Error al conectar con la función de cambio de clave: ' + err.message);
+    } finally {
+      setGuardandoClaveUserId(null);
+    }
+  };
+
+  const enviarRestablecerCorreo = async (u) => {
+    if (!u?.email) return;
+    if (!confirm(`¿Enviar correo de restablecimiento de contraseña a ${u.email}?`)) return;
+
+    setEnviandoResetUserId(u.id);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(u.email.trim(), {
+        redirectTo: window.location.origin
+      });
+
+      if (error) {
+        alert('Error al enviar correo de restablecimiento: ' + error.message);
+      } else {
+        alert(`Enlace de restablecimiento enviado a ${u.email}.`);
+      }
+    } finally {
+      setEnviandoResetUserId(null);
+    }
+  };
+
+  const copiarClave = (texto) => {
+    if (!texto) return;
+    navigator.clipboard?.writeText(texto);
+    alert('Contraseña copiada al portapapeles.');
   };
 
   return (
@@ -343,7 +411,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
           </div>
           <div>
             <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Contraseña Inicial</label>
-            <input type="text" required minLength={6} placeholder="Mín. 6 caracteres" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
+            <input type="text" required minLength={6} placeholder="evaluacionesatualcance" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
           </div>
           <div>
             <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Asignatura / Departamento</label>
@@ -370,7 +438,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
           <h3 style={{ margin: 0, fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Users size={19} color="#0f172a" />
-            Usuarios y Cursos de Aula Asignados ({listaUsuarios.length})
+            Usuarios, Contraseñas y Cursos Asignados ({listaUsuarios.length})
           </h3>
           <button
             onClick={cargarTodo}
@@ -386,6 +454,10 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
               .filter((a) => a.docente_id === u.id)
               .map((a) => a.curso_id);
 
+            const claveMostrada = u.clave_referencia || 'evaluacionesatualcance';
+            const verClave = Boolean(clavesVisibles[u.id]);
+            const estaEditandoClave = editandoClaveUserId === u.id;
+
             return (
               <div key={u.id} style={{ padding: '16px', borderRadius: '10px', border: '1px solid #e2e8f0', background: u.activo === false ? '#f8fafc' : '#ffffff', opacity: u.activo === false ? 0.6 : 1 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '10px' }}>
@@ -396,7 +468,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                     <select
                       value={u.rol}
                       disabled={u.id === perfilActual?.id}
@@ -423,6 +495,174 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
                       {u.activo !== false ? <><CheckCircle2 size={13} /> Activo</> : <><XCircle size={13} /> Suspendido</>}
                     </button>
                   </div>
+                </div>
+
+                {/* Control de contraseña: ver, cambiar directamente o enviar a restablecer */}
+                <div
+                  style={{
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '8px',
+                    padding: '10px 12px',
+                    marginBottom: '10px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569' }}>
+                        Contraseña registrada:
+                      </span>
+                      <code
+                        style={{
+                          background: '#ffffff',
+                          border: '1px solid #cbd5e1',
+                          borderRadius: '6px',
+                          padding: '3px 8px',
+                          fontSize: '12.5px',
+                          fontWeight: '700',
+                          color: '#0f172a'
+                        }}
+                      >
+                        {verClave ? claveMostrada : '••••••••••••'}
+                      </code>
+
+                      <button
+                        type="button"
+                        onClick={() => setClavesVisibles((prev) => ({ ...prev, [u.id]: !prev[u.id] }))}
+                        title={verClave ? 'Ocultar contraseña' : 'Ver contraseña'}
+                        style={{
+                          background: '#ffffff',
+                          border: '1px solid #cbd5e1',
+                          borderRadius: '6px',
+                          padding: '4px 8px',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          fontSize: '12px',
+                          color: '#334155',
+                          fontWeight: '600'
+                        }}
+                      >
+                        {verClave ? <EyeOff size={13} /> : <Eye size={13} />}
+                        {verClave ? 'Ocultar' : 'Ver'}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => copiarClave(claveMostrada)}
+                        title="Copiar contraseña"
+                        style={{
+                          background: '#ffffff',
+                          border: '1px solid #cbd5e1',
+                          borderRadius: '6px',
+                          padding: '4px 8px',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          fontSize: '12px',
+                          color: '#334155',
+                          fontWeight: '600'
+                        }}
+                      >
+                        <Copy size={13} /> Copiar
+                      </button>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (estaEditandoClave) {
+                            setEditandoClaveUserId(null);
+                            setNuevaClaveUsuario('');
+                          } else {
+                            setEditandoClaveUserId(u.id);
+                            setNuevaClaveUsuario('evaluacionesatualcance');
+                          }
+                        }}
+                        style={{
+                          background: '#1e3a8a',
+                          color: '#ffffff',
+                          border: 'none',
+                          borderRadius: '6px',
+                          padding: '5px 10px',
+                          fontSize: '12px',
+                          fontWeight: '700',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px'
+                        }}
+                      >
+                        <KeyRound size={13} />
+                        {estaEditandoClave ? 'Cancelar' : 'Cambiar contraseña'}
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={enviandoResetUserId === u.id}
+                        onClick={() => enviarRestablecerCorreo(u)}
+                        style={{
+                          background: '#eff6ff',
+                          color: '#1d4ed8',
+                          border: '1px solid #93c5fd',
+                          borderRadius: '6px',
+                          padding: '5px 10px',
+                          fontSize: '12px',
+                          fontWeight: '700',
+                          cursor: enviandoResetUserId === u.id ? 'wait' : 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px'
+                        }}
+                      >
+                        <Mail size={13} />
+                        {enviandoResetUserId === u.id ? 'Enviando...' : 'Enviar a restablecer'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {estaEditandoClave && (
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', paddingTop: '6px', borderTop: '1px dashed #cbd5e1' }}>
+                      <input
+                        type="text"
+                        minLength={6}
+                        value={nuevaClaveUsuario}
+                        onChange={(e) => setNuevaClaveUsuario(e.target.value)}
+                        placeholder="Nueva contraseña (mín. 6 caracteres)"
+                        style={{
+                          flex: 1,
+                          minWidth: '210px',
+                          padding: '6px 10px',
+                          borderRadius: '6px',
+                          border: '1px solid #93c5fd',
+                          fontSize: '13px'
+                        }}
+                      />
+                      <button
+                        type="button"
+                        disabled={guardandoClaveUserId === u.id}
+                        onClick={() => guardarCambioClaveDirecto(u)}
+                        style={{
+                          background: '#16a34a',
+                          color: '#ffffff',
+                          border: 'none',
+                          borderRadius: '6px',
+                          padding: '6px 12px',
+                          fontSize: '12.5px',
+                          fontWeight: '700',
+                          cursor: guardandoClaveUserId === u.id ? 'wait' : 'pointer'
+                        }}
+                      >
+                        {guardandoClaveUserId === u.id ? 'Guardando...' : 'Guardar nueva clave'}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {u.rol === 'admin' ? (
