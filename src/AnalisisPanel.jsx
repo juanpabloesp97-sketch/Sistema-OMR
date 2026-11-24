@@ -25,7 +25,7 @@ export default function AnalisisPanel({
   const [modalGrupo, setModalGrupo] = useState(null);
   const [modalItemNum, setModalItemNum] = useState(null);
   const [opcionSeleccionadaItem, setOpcionSeleccionadaItem] = useState(null);
-  const [modalAlumno, setModalAlumno] = useState(null);
+  const [modalAlumnoId, setModalAlumnoId] = useState(null);
   const [modalTableroMaestro, setModalTableroMaestro] = useState(false);
 
   // Modal "Revisar preguntas dobles y blancas"
@@ -55,6 +55,11 @@ export default function AnalisisPanel({
   const opciones = (config.alternativas || 'ABCD').split('');
   const pauta = config.pauta || {};
 
+  const modalAlumno = useMemo(
+    () => (modalAlumnoId ? resultados.find((r) => r.id === modalAlumnoId) || null : null),
+    [resultados, modalAlumnoId]
+  );
+
   const obtenerClavesCorrectasItem = (item) => {
     if (!item) return [];
     if (typeof item === 'string') return item ? [item] : [];
@@ -72,7 +77,6 @@ export default function AnalisisPanel({
   const obtenerImagenHoja = (obj) =>
     obj?.imagenProcesada || obj?.imagenUrl || obj?.imagen_corregida || null;
 
-  // Lista de todas las preguntas DOBLE o BLANCO que aún NO han sido confirmadas
   const pendientesDoblesYBlancas = useMemo(() => {
     const lista = [];
     resultados.forEach((alumno) => {
@@ -133,7 +137,6 @@ export default function AnalisisPanel({
     }
   };
 
-  // Clasificador de los 5 grupos de desempeño
   const clasificarDesempeno = (pct) => {
     const val = Number(pct || 0);
     if (val >= cortes.muyBueno) {
@@ -151,7 +154,6 @@ export default function AnalisisPanel({
     return { id: 'muy_insuficiente', label: 'Muy Insuficiente', rango: `0-${cortes.insuficiente - 1}%`, color: '#ef4444', bg: '#fee2e2', text: '#991b1b' };
   };
 
-  // Indicadores consolidados
   const promedioNota = totalAlumnos > 0
     ? (resultados.reduce((acc, r) => acc + Number(r.nota || 1.0), 0) / totalAlumnos).toFixed(1)
     : '0.0';
@@ -160,7 +162,6 @@ export default function AnalisisPanel({
     ? Math.round(resultados.reduce((acc, r) => acc + Number(r.porcentaje || 0), 0) / totalAlumnos)
     : 0;
 
-  // Los 5 grupos de desempeño
   const gruposDesempeno = useMemo(() => {
     const definiciones = [
       { id: 'muy_insuficiente', label: 'Muy Insuficiente', rango: `0-${cortes.insuficiente - 1}%`, color: '#ef4444', bg: '#fee2e2', text: '#991b1b' },
@@ -180,7 +181,6 @@ export default function AnalisisPanel({
 
   const maxAlumnosGrupo = Math.max(1, ...gruposDesempeno.map((g) => g.estudiantes.length));
 
-  // Comparativo de cursos (barras apiladas al 100% para nivel completo)
   const comparativoCursosApilado = useMemo(() => {
     const mapa = new Map();
     resultados.forEach((r) => {
@@ -239,7 +239,6 @@ export default function AnalisisPanel({
     return filas;
   }, [resultados, cortes, gruposDesempeno, promedioNota]);
 
-  // Procesamiento de OAs y preguntas
   const { listaOAs, analisisPreguntas } = useMemo(() => {
     const mapaOA = {};
     const preguntasArr = [];
@@ -319,7 +318,6 @@ export default function AnalisisPanel({
     return { listaOAs: oasCalculados, analisisPreguntas: preguntasArr };
   }, [resultados, numPreguntas, pauta, opciones, totalAlumnos, cortes]);
 
-  // Preguntas ordenadas para el gráfico de barras
   const preguntasOrdenadas = useMemo(() => {
     const copia = [...analisisPreguntas];
     if (ordenItems === 'asc') return copia.sort((a, b) => a.pctLogro - b.pctLogro);
@@ -327,7 +325,6 @@ export default function AnalisisPanel({
     return copia.sort((a, b) => a.numero - b.numero);
   }, [analisisPreguntas, ordenItems]);
 
-  // Tablero Maestro ordenado de mayor a menor en ambos ejes
   const preguntasTableroOrdenadas = useMemo(() => {
     return [...analisisPreguntas].sort((a, b) => {
       if (a.anulada !== b.anulada) return a.anulada ? 1 : -1;
@@ -344,7 +341,6 @@ export default function AnalisisPanel({
     });
   }, [resultados]);
 
-  // Calcular % logro por cada OA para un estudiante
   const calcularLogroAlumnoEnOA = (alumno, oaObj, mapaRespuestasOverride = null) => {
     const mapa = mapaRespuestasOverride || alumno.respuestas || {};
     let ptsObtenidos = 0;
@@ -363,7 +359,6 @@ export default function AnalisisPanel({
     return ptsTotales > 0 ? Math.round((ptsObtenidos / ptsTotales) * 100) : 0;
   };
 
-  // Ordenamiento de la nómina individual
   const toggleOrdenTabla = (col) => {
     setOrdenTabla((prev) => ({
       col,
@@ -406,7 +401,7 @@ export default function AnalisisPanel({
   };
 
   const abrirModalAlumno = (al) => {
-    setModalAlumno(al);
+    setModalAlumnoId(al.id);
     setRespuestasEditadas({ ...(al.respuestas || {}) });
     setEditandoRespuestas(false);
     setZoomImagen(false);
@@ -415,18 +410,13 @@ export default function AnalisisPanel({
   const guardarCambiosAlumno = async () => {
     if (!modalAlumno || !onActualizarRespuesta) return;
     setGuardandoEdicion(true);
-    const actualizado = await onActualizarRespuesta(modalAlumno.id, respuestasEditadas);
-    setGuardandoEdicion(false);
-    if (actualizado) {
-      setModalAlumno((prev) => ({
-        ...prev,
-        respuestas: { ...respuestasEditadas },
-        puntaje: actualizado.puntaje,
-        total: actualizado.total,
-        porcentaje: actualizado.porcentaje,
-        nota: actualizado.nota
-      }));
-      setEditandoRespuestas(false);
+    try {
+      const actualizado = await onActualizarRespuesta(modalAlumno.id, respuestasEditadas);
+      if (actualizado) {
+        setEditandoRespuestas(false);
+      }
+    } finally {
+      setGuardandoEdicion(false);
     }
   };
 
@@ -498,7 +488,6 @@ export default function AnalisisPanel({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
-      {/* 1. CABECERA CONSOLIDADA Y 3 TARJETAS SUPERIORES */}
       <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '14px', marginBottom: '20px' }}>
           <div>
@@ -597,7 +586,6 @@ export default function AnalisisPanel({
           </div>
         </div>
 
-        {/* Panel editable de límites de los 5 niveles */}
         {mostrarConfigCortes && (
           <div style={{ background: '#f8fafc', padding: '14px', borderRadius: '10px', border: '1px solid #cbd5e1', marginBottom: '18px', display: 'flex', flexWrap: 'wrap', gap: '14px', alignItems: 'center', fontSize: '12.5px' }}>
             <strong style={{ color: '#0f172a' }}>Cortes mínimos (%):</strong>
@@ -621,7 +609,6 @@ export default function AnalisisPanel({
           </div>
         )}
 
-        {/* 3 Tarjetas Principales */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
           <div style={{ background: '#f8fafc', padding: '18px', borderRadius: '12px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
             <div style={{ fontSize: '12px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -652,7 +639,6 @@ export default function AnalisisPanel({
         </div>
       </div>
 
-      {/* 2. PORCENTAJE DE LOGRO POR OA + COMPARATIVO DE BARRAS */}
       <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
         <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase' }}>
           Porcentaje de Logro por Objetivo de Aprendizaje (OA)
@@ -715,7 +701,6 @@ export default function AnalisisPanel({
         </div>
       </div>
 
-      {/* 3. COMPARATIVO DE CURSOS (BARRAS APILADAS AL 100% EN NIVEL COMPLETO) */}
       {(esVistaNivelCompleto || comparativoCursosApilado.length > 1) && comparativoCursosApilado.length > 1 && (
         <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
@@ -793,7 +778,6 @@ export default function AnalisisPanel({
         </div>
       )}
 
-      {/* 4. GRUPOS DE DESEMPEÑO (5 BARRAS VERTICALES INTERACTIVAS) */}
       <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
           <div>
@@ -866,7 +850,6 @@ export default function AnalisisPanel({
         </div>
       </div>
 
-      {/* 5. PORCENTAJE DE LOGRO POR PREGUNTA + BOTÓN VER TABLERO MAESTRO */}
       <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
           <div>
@@ -984,7 +967,6 @@ export default function AnalisisPanel({
         </div>
       </div>
 
-      {/* 6. NÓMINA DE RESULTADOS INDIVIDUALES */}
       <div style={{ background: '#ffffff', padding: '24px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
           <div>
@@ -1097,9 +1079,6 @@ export default function AnalisisPanel({
         </div>
       </div>
 
-      {/* ===================================================================== */}
-      {/* MODAL NUEVO: REVISAR PREGUNTAS DOBLES Y BLANCAS                        */}
-      {/* ===================================================================== */}
       {modalDudasAbierto && dudaActiva && (
         <div
           onClick={() => setModalDudasAbierto(false)}
@@ -1280,9 +1259,6 @@ export default function AnalisisPanel({
         </div>
       )}
 
-      {/* ===================================================================== */}
-      {/* MODAL TABLERO MAESTRO (MATRIZ ESTUDIANTES X PREGUNTAS)                */}
-      {/* ===================================================================== */}
       {modalTableroMaestro && (
         <div
           onClick={() => setModalTableroMaestro(false)}
@@ -1398,9 +1374,6 @@ export default function AnalisisPanel({
         </div>
       )}
 
-      {/* ===================================================================== */}
-      {/* MODAL 1: GRUPO DE DESEMPEÑO                                           */}
-      {/* ===================================================================== */}
       {modalGrupo && (
         <div
           onClick={() => setModalGrupo(null)}
@@ -1472,9 +1445,6 @@ export default function AnalisisPanel({
         </div>
       )}
 
-      {/* ===================================================================== */}
-      {/* MODAL 2: DETALLE DEL ÍTEM P_X + ELECCIÓN POR ALTERNATIVA + VISOR PDF  */}
-      {/* ===================================================================== */}
       {itemActivoModal && (
         <div
           onClick={() => setModalItemNum(null)}
@@ -1634,7 +1604,7 @@ export default function AnalisisPanel({
                         : itemActivoModal.porOpcion[opcionSeleccionadaItem] || []
                       ).map((st, idx) => (
                         <div key={idx} style={{ padding: '3px 0', borderBottom: '1px solid #dbeafe' }}>
-                          • {st.nombre} ({st.curso || '-'})
+- {st.nombre} ({st.curso || '-'})
                         </div>
                       ))}
                     </div>
@@ -1670,12 +1640,9 @@ export default function AnalisisPanel({
         </div>
       )}
 
-      {/* ===================================================================== */}
-      {/* MODAL 3: DETALLE INDIVIDUAL + VISOR DE HOJA + EDICIÓN DE RESPUESTAS   */}
-      {/* ===================================================================== */}
       {modalAlumno && (
         <div
-          onClick={() => setModalAlumno(null)}
+          onClick={() => setModalAlumnoId(null)}
           style={{
             position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.65)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px'
@@ -1717,7 +1684,7 @@ export default function AnalisisPanel({
                 )}
 
                 <button
-                  onClick={() => setModalAlumno(null)}
+                  onClick={() => setModalAlumnoId(null)}
                   style={{ background: '#f1f5f9', border: 'none', borderRadius: '8px', padding: '8px 12px', cursor: 'pointer' }}
                 >
                   <X size={18} color="#475569" />
