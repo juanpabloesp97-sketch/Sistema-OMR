@@ -3027,8 +3027,7 @@ export default function App() {
                           puntaje_obtenido: calificacion.puntosObtenidos,
                           puntaje_total: calificacion.puntosTotales,
                           porcentaje: calificacion.porcentaje,
-                          nota: calificacion.nota,
-                          imagen_corregida: null
+                          nota: calificacion.nota
                         })
                         .eq('id', resultadoId);
 
@@ -3047,8 +3046,7 @@ export default function App() {
                               puntaje: calificacion.puntosObtenidos,
                               total: calificacion.puntosTotales,
                               porcentaje: calificacion.porcentaje,
-                              nota: calificacion.nota,
-                              imagenProcesada: null
+                              nota: calificacion.nota
                             }
                           : r
                       )
