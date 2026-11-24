@@ -25,7 +25,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
 
   const [nombre, setNombre] = useState('');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('evaluacionesatualcance');
+  const [password, setPassword] = useState('');
   const [asignatura, setAsignatura] = useState('Matemática');
   const [rol, setRol] = useState('docente');
   const [creando, setCreando] = useState(false);
@@ -197,7 +197,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
       alert(`Cuenta creada correctamente para ${nombre.trim()}.`);
       setNombre('');
       setEmail('');
-      setPassword('evaluacionesatualcance');
+      setPassword('');
       await cargarTodo();
     } catch (err) {
       alert('Error inesperado: ' + err.message);
@@ -397,7 +397,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
           Crear Nueva Cuenta de Usuario
         </h2>
         <p style={{ margin: '0 0 18px 0', fontSize: '13.5px', color: '#64748b' }}>
-          Crea las cuentas del personal, elige su rol (Administrador, UTP, Jefe de Depto. o Docente) y marca abajo sus cursos de aula.
+          Crea las cuentas del personal, escribe su contraseña inicial, elige su rol y marca abajo sus cursos de aula.
         </p>
 
         <form onSubmit={crearNuevaCuenta} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
@@ -411,7 +411,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
           </div>
           <div>
             <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Contraseña Inicial</label>
-            <input type="text" required minLength={6} placeholder="evaluacionesatualcance" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
+            <input type="text" required minLength={6} placeholder="Escribe una clave (mín. 6)" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
           </div>
           <div>
             <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Asignatura / Departamento</label>
@@ -454,7 +454,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
               .filter((a) => a.docente_id === u.id)
               .map((a) => a.curso_id);
 
-            const claveMostrada = u.clave_referencia || 'evaluacionesatualcance';
+            const claveMostrada = u.clave_referencia || '';
             const verClave = Boolean(clavesVisibles[u.id]);
             const estaEditandoClave = editandoClaveUserId === u.id;
 
@@ -497,7 +497,6 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
                   </div>
                 </div>
 
-                {/* Control de contraseña: ver, cambiar directamente o enviar a restablecer */}
                 <div
                   style={{
                     background: '#f8fafc',
@@ -526,51 +525,55 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
                           color: '#0f172a'
                         }}
                       >
-                        {verClave ? claveMostrada : '••••••••••••'}
+                        {claveMostrada ? (verClave ? claveMostrada : '••••••••••••') : 'No registrada'}
                       </code>
 
-                      <button
-                        type="button"
-                        onClick={() => setClavesVisibles((prev) => ({ ...prev, [u.id]: !prev[u.id] }))}
-                        title={verClave ? 'Ocultar contraseña' : 'Ver contraseña'}
-                        style={{
-                          background: '#ffffff',
-                          border: '1px solid #cbd5e1',
-                          borderRadius: '6px',
-                          padding: '4px 8px',
-                          cursor: 'pointer',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '4px',
-                          fontSize: '12px',
-                          color: '#334155',
-                          fontWeight: '600'
-                        }}
-                      >
-                        {verClave ? <EyeOff size={13} /> : <Eye size={13} />}
-                        {verClave ? 'Ocultar' : 'Ver'}
-                      </button>
+                      {claveMostrada && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setClavesVisibles((prev) => ({ ...prev, [u.id]: !prev[u.id] }))}
+                            title={verClave ? 'Ocultar contraseña' : 'Ver contraseña'}
+                            style={{
+                              background: '#ffffff',
+                              border: '1px solid #cbd5e1',
+                              borderRadius: '6px',
+                              padding: '4px 8px',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '12px',
+                              color: '#334155',
+                              fontWeight: '600'
+                            }}
+                          >
+                            {verClave ? <EyeOff size={13} /> : <Eye size={13} />}
+                            {verClave ? 'Ocultar' : 'Ver'}
+                          </button>
 
-                      <button
-                        type="button"
-                        onClick={() => copiarClave(claveMostrada)}
-                        title="Copiar contraseña"
-                        style={{
-                          background: '#ffffff',
-                          border: '1px solid #cbd5e1',
-                          borderRadius: '6px',
-                          padding: '4px 8px',
-                          cursor: 'pointer',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '4px',
-                          fontSize: '12px',
-                          color: '#334155',
-                          fontWeight: '600'
-                        }}
-                      >
-                        <Copy size={13} /> Copiar
-                      </button>
+                          <button
+                            type="button"
+                            onClick={() => copiarClave(claveMostrada)}
+                            title="Copiar contraseña"
+                            style={{
+                              background: '#ffffff',
+                              border: '1px solid #cbd5e1',
+                              borderRadius: '6px',
+                              padding: '4px 8px',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '12px',
+                              color: '#334155',
+                              fontWeight: '600'
+                            }}
+                          >
+                            <Copy size={13} /> Copiar
+                          </button>
+                        </>
+                      )}
                     </div>
 
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -582,7 +585,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
                             setNuevaClaveUsuario('');
                           } else {
                             setEditandoClaveUserId(u.id);
-                            setNuevaClaveUsuario('evaluacionesatualcance');
+                            setNuevaClaveUsuario('');
                           }
                         }}
                         style={{
@@ -634,7 +637,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
                         minLength={6}
                         value={nuevaClaveUsuario}
                         onChange={(e) => setNuevaClaveUsuario(e.target.value)}
-                        placeholder="Nueva contraseña (mín. 6 caracteres)"
+                        placeholder="Escribe nueva contraseña (mín. 6 caracteres)"
                         style={{
                           flex: 1,
                           minWidth: '210px',
