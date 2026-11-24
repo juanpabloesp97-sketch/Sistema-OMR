@@ -37,6 +37,49 @@ function obtenerPuntajeItem(item) {
   return 1;
 }
 
+function BarraProgresoAzul({ visible, titulo = 'Cargando...', porcentaje = 0, detalle = '' }) {
+  if (!visible) return null;
+  const pct = Math.max(5, Math.min(100, Math.round(porcentaje)));
+
+  return (
+    <div
+      style={{
+        background: '#ffffff',
+        border: '1px solid #93c5fd',
+        borderRadius: '12px',
+        padding: '14px 18px',
+        boxShadow: '0 4px 12px rgba(30, 58, 138, 0.08)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px'
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px', fontWeight: '700', color: '#1e3a8a' }}>
+        <span>{titulo}</span>
+        <span>{pct}%</span>
+      </div>
+
+      <div style={{ width: '100%', height: '10px', background: '#dbeafe', borderRadius: '999px', overflow: 'hidden' }}>
+        <div
+          style={{
+            width: `${pct}%`,
+            height: '100%',
+            background: '#1e3a8a',
+            borderRadius: '999px',
+            transition: 'width 0.25s ease'
+          }}
+        />
+      </div>
+
+      {detalle && (
+        <div style={{ fontSize: '12px', color: '#475569' }}>
+          {detalle}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [sesion, setSesion] = useState(null);
   const [modoRecuperacionClave, setModoRecuperacionClave] = useState(false);
@@ -103,11 +146,15 @@ export default function App() {
   const [eximidosRuts, setEximidosRuts] = useState([]);
   const [mostrarPendientesDetalle, setMostrarPendientesDetalle] = useState(true);
 
-  const [ultimoResultado, setUltimoResultado] = useState(null);
   const [procesando, setProcesando] = useState(false);
   const [recalculando, setRecalculando] = useState(false);
   const [progresoLote, setProgresoLote] = useState('');
   const [camaraAbierta, setCamaraAbierta] = useState(false);
+
+  const [barraVisible, setBarraVisible] = useState(false);
+  const [barraTitulo, setBarraTitulo] = useState('');
+  const [barraPct, setBarraPct] = useState(0);
+  const [barraDetalle, setBarraDetalle] = useState('');
 
   const [hojasSinQrPendientes, setHojasSinQrPendientes] = useState([]);
   const [indiceHojaSinQr, setIndiceHojaSinQr] = useState(0);
@@ -117,6 +164,13 @@ export default function App() {
 
   const [rutExtra, setRutExtra] = useState('');
   const [nombreExtra, setNombreExtra] = useState('');
+
+  const actualizarBarra = (visible, titulo = '', porcentaje = 0, detalle = '') => {
+    setBarraVisible(visible);
+    setBarraTitulo(titulo);
+    setBarraPct(porcentaje);
+    setBarraDetalle(detalle);
+  };
 
   const alternarOrdenHojasCorregidas = (col) => {
     setOrdenHojasCorregidas((prev) => ({
@@ -337,129 +391,152 @@ export default function App() {
   };
 
   const cargarPerfilUsuario = async (user) => {
-    let { data: perfilDB } = await supabase
-      .from('perfiles')
-      .select('*')
-      .or(`id.eq.${user.id},email.eq.${user.email}`)
-      .maybeSingle();
+    actualizarBarra(true, 'Cargando perfil y datos...', 20, 'Verificando cuenta...');
+    try {
+      let { data: perfilDB } = await supabase
+        .from('perfiles')
+        .select('*')
+        .or(`id.eq.${user.id},email.eq.${user.email}`)
+        .maybeSingle();
 
-    const esAdminPrincipal = user.email?.toLowerCase().trim() === 'juan.pabloesp97@gmail.com';
+      const esAdminPrincipal = user.email?.toLowerCase().trim() === 'juan.pabloesp97@gmail.com';
 
-    if (!perfilDB) {
-      const nuevoPerfil = {
+      if (!perfilDB) {
+        const nuevoPerfil = {
+          id: user.id,
+          email: user.email,
+          nombre: esAdminPrincipal ? 'Juan Pablo Esparza' : (user.user_metadata?.nombre || user.email.split('@')[0]),
+          asignatura: user.user_metadata?.asignatura || 'Matemática',
+          rol: esAdminPrincipal ? 'admin' : 'docente',
+          activo: true
+        };
+        await supabase.from('perfiles').upsert([nuevoPerfil]);
+        perfilDB = nuevoPerfil;
+      }
+
+      const rolFinal = esAdminPrincipal ? 'admin' : (perfilDB?.rol || 'docente');
+
+      const perfilFinal = {
         id: user.id,
         email: user.email,
-        nombre: esAdminPrincipal ? 'Juan Pablo Esparza' : (user.user_metadata?.nombre || user.email.split('@')[0]),
-        asignatura: user.user_metadata?.asignatura || 'Matemática',
-        rol: esAdminPrincipal ? 'admin' : 'docente',
-        activo: true
+        nombre: perfilDB?.nombre || (esAdminPrincipal ? 'Juan Pablo Esparza' : user.email.split('@')[0]),
+        asignatura: perfilDB?.asignatura || 'Matemática',
+        establecimiento: localStorage.getItem('omr_establecimiento') || 'Colegio / Liceo',
+        rol: rolFinal,
+        activo: perfilDB?.activo !== false
       };
-      await supabase.from('perfiles').upsert([nuevoPerfil]);
-      perfilDB = nuevoPerfil;
-    }
 
-    const rolFinal = esAdminPrincipal ? 'admin' : (perfilDB?.rol || 'docente');
+      if (!perfilFinal.activo) {
+        alert('Tu cuenta ha sido suspendida por el administrador del establecimiento.');
+        usuarioCargadoIdRef.current = null;
+        await supabase.auth.signOut();
+        setCargandoSesion(false);
+        return;
+      }
 
-    const perfilFinal = {
-      id: user.id,
-      email: user.email,
-      nombre: perfilDB?.nombre || (esAdminPrincipal ? 'Juan Pablo Esparza' : user.email.split('@')[0]),
-      asignatura: perfilDB?.asignatura || 'Matemática',
-      establecimiento: localStorage.getItem('omr_establecimiento') || 'Colegio / Liceo',
-      rol: rolFinal,
-      activo: perfilDB?.activo !== false
-    };
+      setProfesor(perfilFinal);
+      const permsUsuario = await cargarPermisosDeRol(rolFinal);
+      actualizarBarra(true, 'Cargando estructura escolar...', 55, 'Niveles y cursos...');
 
-    if (!perfilFinal.activo) {
-      alert('Tu cuenta ha sido suspendida por el administrador del establecimiento.');
-      usuarioCargadoIdRef.current = null;
-      await supabase.auth.signOut();
+      setConfig((prev) => ({
+        ...prev,
+        docenteId: perfilFinal.id,
+        docenteNombre: perfilFinal.nombre,
+        asignatura: perfilFinal.asignatura || 'Matemática'
+      }));
       setCargandoSesion(false);
-      return;
-    }
 
-    setProfesor(perfilFinal);
-    const permsUsuario = await cargarPermisosDeRol(rolFinal);
+      const { nivelesVisibles, cursosVisibles, idsAula } = await cargarEstructuraEscolar(perfilFinal, permsUsuario);
+      actualizarBarra(true, 'Cargando evaluaciones...', 85, 'Sincronizando panel...');
+      const { visibles } = await cargarEvaluacionesNube(perfilFinal, permsUsuario, idsAula, cursosVisibles);
 
-    setConfig((prev) => ({
-      ...prev,
-      docenteId: perfilFinal.id,
-      docenteNombre: perfilFinal.nombre,
-      asignatura: perfilFinal.asignatura || 'Matemática'
-    }));
-    setCargandoSesion(false);
+      let restaurado = false;
+      try {
+        const guardadoRaw = localStorage.getItem(`omr_nav_estado_${user.id}`);
+        if (guardadoRaw) {
+          const nav = JSON.parse(guardadoRaw);
+          if (nav.nivelActivoId && nivelesVisibles.some((n) => n.id === nav.nivelActivoId)) {
+            setNivelActivoId(nav.nivelActivoId);
+          } else if (nivelesVisibles.length > 0) {
+            setNivelActivoId(nivelesVisibles[0].id);
+          }
 
-    const { nivelesVisibles, cursosVisibles, idsAula } = await cargarEstructuraEscolar(perfilFinal, permsUsuario);
-    const { visibles } = await cargarEvaluacionesNube(perfilFinal, permsUsuario, idsAula, cursosVisibles);
+          if (nav.cursoActivoId && cursosVisibles.some((c) => c.id === nav.cursoActivoId)) {
+            setCursoActivoId(nav.cursoActivoId);
+          }
 
-    let restaurado = false;
-    try {
-      const guardadoRaw = localStorage.getItem(`omr_nav_estado_${user.id}`);
-      if (guardadoRaw) {
-        const nav = JSON.parse(guardadoRaw);
-        if (nav.nivelActivoId && nivelesVisibles.some((n) => n.id === nav.nivelActivoId)) {
-          setNivelActivoId(nav.nivelActivoId);
-        } else if (nivelesVisibles.length > 0) {
-          setNivelActivoId(nivelesVisibles[0].id);
-        }
-
-        if (nav.cursoActivoId && cursosVisibles.some((c) => c.id === nav.cursoActivoId)) {
-          setCursoActivoId(nav.cursoActivoId);
-        }
-
-        if (nav.vistaActiva === 'detalle-evaluacion' && nav.evalId) {
-          const evEncontrada = (visibles || []).find((e) => String(e.id) === String(nav.evalId));
-          if (evEncontrada) {
-            abrirEvaluacion(
-              evEncontrada,
-              nav.cursoActivoId || '',
-              nav.contextoAperturaEval || 'curso',
-              perfilFinal,
-              permsUsuario,
-              idsAula,
-              cursosVisibles
-            );
-            if (nav.subVistaEval) setSubVistaEval(nav.subVistaEval);
-            if (nav.filtroCursoEnNivel) setFiltroCursoEnNivel(nav.filtroCursoEnNivel);
+          if (nav.vistaActiva === 'detalle-evaluacion' && nav.evalId) {
+            const evEncontrada = (visibles || []).find((e) => String(e.id) === String(nav.evalId));
+            if (evEncontrada) {
+              abrirEvaluacion(
+                evEncontrada,
+                nav.cursoActivoId || '',
+                nav.contextoAperturaEval || 'curso',
+                perfilFinal,
+                permsUsuario,
+                idsAula,
+                cursosVisibles
+              );
+              if (nav.subVistaEval) setSubVistaEval(nav.subVistaEval);
+              if (nav.filtroCursoEnNivel) setFiltroCursoEnNivel(nav.filtroCursoEnNivel);
+              restaurado = true;
+            }
+          } else if (nav.vistaActiva && nav.vistaActiva !== 'crear-evaluacion') {
+            setVistaActiva(nav.vistaActiva);
             restaurado = true;
           }
-        } else if (nav.vistaActiva && nav.vistaActiva !== 'crear-evaluacion') {
-          setVistaActiva(nav.vistaActiva);
-          restaurado = true;
         }
+      } catch (err) {
+        console.warn('No se pudo restaurar navegación:', err);
       }
-    } catch (err) {
-      console.warn('No se pudo restaurar navegación:', err);
-    }
 
-    if (!restaurado) {
-      if (nivelesVisibles && nivelesVisibles.length > 0) {
-        setNivelActivoId(nivelesVisibles[0].id);
+      if (!restaurado) {
+        if (nivelesVisibles && nivelesVisibles.length > 0) {
+          setNivelActivoId(nivelesVisibles[0].id);
+        }
+        setVistaActiva('inicio');
       }
-      setVistaActiva('inicio');
+
+      actualizarBarra(true, 'Carga completada', 100, 'Panel listo.');
+      setTimeout(() => actualizarBarra(false), 600);
+    } catch {
+      actualizarBarra(false);
     }
   };
 
   useEffect(() => {
     if (!sesion?.user || vistaActiva !== 'detalle-evaluacion') return;
     setEscaneosSeleccionados([]);
-    if (config.id) {
-      cargarResultadosNube(config.id);
-    } else {
-      setResultadosCurso([]);
-      setEximidosRuts([]);
-    }
 
-    if (contextoAperturaEval === 'curso' && cursoActivoId) {
-      cargarEstudiantesParaEval(cursoActivoId, null);
-    } else if (config.cursoId) {
-      cargarEstudiantesParaEval(config.cursoId, null);
-    } else if (config.nivelId) {
-      cargarEstudiantesParaEval(null, config.nivelId);
-    } else {
-      setEstudiantesCursoEval([]);
-      setSeleccionadosImprimir([]);
-    }
+    const cargarDetalle = async () => {
+      actualizarBarra(true, 'Cargando avance y resultados...', 30, 'Consultando registros del curso...');
+      try {
+        if (config.id) {
+          await cargarResultadosNube(config.id);
+        } else {
+          setResultadosCurso([]);
+          setEximidosRuts([]);
+        }
+
+        actualizarBarra(true, 'Cargando nómina de estudiantes...', 70, 'Calculando porcentaje de completación...');
+        if (contextoAperturaEval === 'curso' && cursoActivoId) {
+          await cargarEstudiantesParaEval(cursoActivoId, null);
+        } else if (config.cursoId) {
+          await cargarEstudiantesParaEval(config.cursoId, null);
+        } else if (config.nivelId) {
+          await cargarEstudiantesParaEval(null, config.nivelId);
+        } else {
+          setEstudiantesCursoEval([]);
+          setSeleccionadosImprimir([]);
+        }
+        actualizarBarra(true, 'Carga completada', 100, 'Datos actualizados.');
+        setTimeout(() => actualizarBarra(false), 500);
+      } catch {
+        actualizarBarra(false);
+      }
+    };
+
+    cargarDetalle();
   }, [config.id, config.cursoId, config.nivelId, vistaActiva, contextoAperturaEval, cursoActivoId, cursos]);
 
   const cerrarSesion = async () => {
@@ -818,6 +895,8 @@ export default function App() {
       pdf_prueba_nombre: config.pdfPruebaNombre || null
     };
 
+    actualizarBarra(true, 'Guardando evaluación...', 25, 'Sincronizando configuración...');
+
     if (config.id) {
       if (recalcularNotasExistentes) setRecalculando(true);
       try {
@@ -827,58 +906,75 @@ export default function App() {
           .eq('id', config.id);
 
         if (error) {
+          actualizarBarra(false);
           alert('Error al guardar cambios: ' + error.message);
           return;
         }
 
         if (recalcularNotasExistentes && resultadosCurso.length > 0) {
-          await Promise.all(
-            resultadosCurso.map((res) => {
-              const evalNueva = evaluarRespuestasConPauta(res.respuestas || {}, config);
-              return supabase
-                .from('resultados')
-                .update({
-                  puntaje_obtenido: evalNueva.puntosObtenidos,
-                  puntaje_total: evalNueva.puntosTotales,
-                  porcentaje: evalNueva.porcentaje,
-                  nota: evalNueva.nota
-                })
-                .eq('id', res.id);
-            })
-          );
+          for (let i = 0; i < resultadosCurso.length; i++) {
+            const res = resultadosCurso[i];
+            const evalNueva = evaluarRespuestasConPauta(res.respuestas || {}, config);
+            actualizarBarra(
+              true,
+              'Recalculando notas...',
+              35 + Math.round(((i + 1) / resultadosCurso.length) * 60),
+              `Actualizando ${res.nombre} (${i + 1}/${resultadosCurso.length})`
+            );
+            await supabase
+              .from('resultados')
+              .update({
+                puntaje_obtenido: evalNueva.puntosObtenidos,
+                puntaje_total: evalNueva.puntosTotales,
+                porcentaje: evalNueva.porcentaje,
+                nota: evalNueva.nota
+              })
+              .eq('id', res.id);
+          }
           await cargarResultadosNube(config.id);
           await cargarEvaluacionesNube(profesor, permisosActivos);
+          actualizarBarra(true, 'Recálculo completado', 100, 'Notas actualizadas.');
+          setTimeout(() => actualizarBarra(false), 700);
           alert(`Pauta guardada y ${resultadosCurso.length} nota(s) recalculadas automáticamente.`);
         } else {
           await cargarEvaluacionesNube(profesor, permisosActivos);
+          actualizarBarra(true, 'Cambios guardados', 100, 'Evaluación actualizada en la nube.');
+          setTimeout(() => actualizarBarra(false), 700);
           alert('Cambios guardados en la nube.');
         }
       } finally {
         setRecalculando(false);
       }
     } else {
-      const { data, error } = await supabase
-        .from('evaluaciones')
-        .insert([
-          {
-            ...payload,
-            docente_id: profesor.id,
-            docente_nombre: profesor.nombre
-          }
-        ])
-        .select()
-        .single();
+      try {
+        const { data, error } = await supabase
+          .from('evaluaciones')
+          .insert([
+            {
+              ...payload,
+              docente_id: profesor.id,
+              docente_nombre: profesor.nombre
+            }
+          ])
+          .select()
+          .single();
 
-      if (error) {
-        alert('Error al crear evaluación: ' + error.message);
-      } else if (data) {
-        alert('Evaluación creada correctamente.');
-        await cargarEvaluacionesNube(profesor, permisosActivos);
-        if (data.curso_id) {
-          abrirEvaluacion(data, data.curso_id, 'curso');
-        } else {
-          abrirEvaluacion(data, '', 'nivel');
+        if (error) {
+          actualizarBarra(false);
+          alert('Error al crear evaluación: ' + error.message);
+        } else if (data) {
+          await cargarEvaluacionesNube(profesor, permisosActivos);
+          actualizarBarra(true, 'Evaluación creada', 100, 'Lista para usar.');
+          setTimeout(() => actualizarBarra(false), 700);
+          alert('Evaluación creada correctamente.');
+          if (data.curso_id) {
+            abrirEvaluacion(data, data.curso_id, 'curso');
+          } else {
+            abrirEvaluacion(data, '', 'nivel');
+          }
         }
+      } catch {
+        actualizarBarra(false);
       }
     }
   };
@@ -936,7 +1032,6 @@ export default function App() {
       return;
     }
 
-    setUltimoResultado(null);
     await cargarEvaluacionesNube(profesor, permisosActivos);
     if (cursoActivoId) setVistaActiva('panel-curso');
     else if (nivelActivoId) setVistaActiva('panel-nivel');
@@ -1058,63 +1153,78 @@ export default function App() {
       return (a.nombre || '').trim().localeCompare((b.nombre || '').trim(), 'es', { sensitivity: 'base' });
     });
 
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
-    const opciones = config.alternativas.split('');
-    const totalPreg = Number(config.numPreguntas);
+    actualizarBarra(true, 'Completando descarga de PDF...', 10, `Preparando ${listaOrdenada.length} hoja(s)...`);
 
-    for (let i = 0; i < listaOrdenada.length; i++) {
-      if (i > 0) doc.addPage();
-      const est = listaOrdenada[i];
-      const nombreCursoEst = est.curso_nombre || (cursoGlobalObj ? cursoGlobalObj.nombre : '');
+    try {
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+      const opciones = config.alternativas.split('');
+      const totalPreg = Number(config.numPreguntas);
 
-      doc.setFillColor(0, 0, 0);
-      doc.rect(12, 12, 8, 8, 'F');
-      doc.rect(195, 12, 8, 8, 'F');
-      doc.rect(12, 258, 8, 8, 'F');
-      doc.rect(195, 258, 8, 8, 'F');
+      for (let i = 0; i < listaOrdenada.length; i++) {
+        if (i > 0) doc.addPage();
+        const est = listaOrdenada[i];
+        const nombreCursoEst = est.curso_nombre || (cursoGlobalObj ? cursoGlobalObj.nombre : '');
 
-      doc.setFontSize(14);
-      doc.setFont('helvetica', 'bold');
-      doc.text(config.tituloPrueba, 25, 20);
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'normal');
-      doc.text(`Asignatura: ${config.asignatura}`, 25, 26);
-      doc.text(`Estudiante: ${est.nombre}`, 25, 32);
-      doc.text(`RUT: ${est.rut}   |   Curso: ${nombreCursoEst || '-'}`, 25, 38);
+        actualizarBarra(
+          true,
+          'Completando descarga de PDF...',
+          10 + Math.round(((i + 1) / listaOrdenada.length) * 85),
+          `Generando hoja ${i + 1} de ${listaOrdenada.length} (${est.nombre})...`
+        );
 
-      const qrPayload = JSON.stringify({
-        r: est.rut,
-        n: est.nombre,
-        c: nombreCursoEst,
-        e: config.id || ''
-      });
-      const qrDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 120 });
-      doc.addImage(qrDataUrl, 'PNG', 162, 14, 28, 28);
+        doc.setFillColor(0, 0, 0);
+        doc.rect(12, 12, 8, 8, 'F');
+        doc.rect(195, 12, 8, 8, 'F');
+        doc.rect(12, 258, 8, 8, 'F');
+        doc.rect(195, 258, 8, 8, 'F');
 
-      doc.setDrawColor(60, 60, 60);
-      doc.setLineWidth(0.3);
-
-      for (let p = 1; p <= totalPreg; p++) {
-        const col = p <= 25 ? 0 : 1;
-        const fila = p <= 25 ? p - 1 : p - 26;
-        const baseX = col === 0 ? 32 : 122;
-        const baseY = 56 + fila * 7.8;
-
-        doc.setFontSize(9);
+        doc.setFontSize(14);
         doc.setFont('helvetica', 'bold');
-        doc.text(`${p}.`, baseX - 8, baseY + 1.5);
+        doc.text(config.tituloPrueba, 25, 20);
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        doc.text(`Asignatura: ${config.asignatura}`, 25, 26);
+        doc.text(`Estudiante: ${est.nombre}`, 25, 32);
+        doc.text(`RUT: ${est.rut}   |   Curso: ${nombreCursoEst || '-'}`, 25, 38);
 
-        opciones.forEach((letra, idx) => {
-          const cx = baseX + idx * 11;
-          doc.circle(cx, baseY, 2.7, 'S');
-          doc.setFontSize(7.5);
-          doc.setFont('helvetica', 'normal');
-          doc.text(letra, cx - 1.3, baseY + 1);
+        const qrPayload = JSON.stringify({
+          r: est.rut,
+          n: est.nombre,
+          c: nombreCursoEst,
+          e: config.id || ''
         });
-      }
-    }
+        const qrDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 120 });
+        doc.addImage(qrDataUrl, 'PNG', 162, 14, 28, 28);
 
-    doc.save(`Hojas_${config.tituloPrueba.replace(/\s+/g, '_')}${sufijoArchivo}.pdf`);
+        doc.setDrawColor(60, 60, 60);
+        doc.setLineWidth(0.3);
+
+        for (let p = 1; p <= totalPreg; p++) {
+          const col = p <= 25 ? 0 : 1;
+          const fila = p <= 25 ? p - 1 : p - 26;
+          const baseX = col === 0 ? 32 : 122;
+          const baseY = 56 + fila * 7.8;
+
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'bold');
+          doc.text(`${p}.`, baseX - 8, baseY + 1.5);
+
+          opciones.forEach((letra, idx) => {
+            const cx = baseX + idx * 11;
+            doc.circle(cx, baseY, 2.7, 'S');
+            doc.setFontSize(7.5);
+            doc.setFont('helvetica', 'normal');
+            doc.text(letra, cx - 1.3, baseY + 1);
+          });
+        }
+      }
+
+      doc.save(`Hojas_${config.tituloPrueba.replace(/\s+/g, '_')}${sufijoArchivo}.pdf`);
+      actualizarBarra(true, 'Descarga completada', 100, 'Archivo PDF descargado correctamente.');
+      setTimeout(() => actualizarBarra(false), 900);
+    } catch {
+      actualizarBarra(false);
+    }
   };
 
   const descargarHojasCorregidasPDF = (listaResultadosAExportar, sufijoArchivo = '', respetarOrden = false) => {
@@ -1133,119 +1243,134 @@ export default function App() {
           return (a.nombre || '').trim().localeCompare((b.nombre || '').trim(), 'es', { sensitivity: 'base' });
         });
 
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
-    const opciones = config.alternativas.split('');
-    const totalPreg = Number(config.numPreguntas);
+    actualizarBarra(true, 'Completando descarga de PDF...', 10, `Armando ${listaOrdenada.length} hoja(s) corregida(s)...`);
 
-    for (let i = 0; i < listaOrdenada.length; i++) {
-      if (i > 0) doc.addPage();
-      const res = listaOrdenada[i];
-      const respuestasAl = res.respuestas || {};
+    try {
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+      const opciones = config.alternativas.split('');
+      const totalPreg = Number(config.numPreguntas);
 
-      doc.setDrawColor(200, 210, 225);
-      doc.setFillColor(248, 250, 252);
-      doc.roundedRect(14, 10, 188, 28, 3, 3, 'FD');
+      for (let i = 0; i < listaOrdenada.length; i++) {
+        if (i > 0) doc.addPage();
+        const res = listaOrdenada[i];
+        const respuestasAl = res.respuestas || {};
 
-      doc.setTextColor(15, 23, 42);
-      doc.setFontSize(12);
-      doc.setFont('helvetica', 'bold');
-      doc.text(`${config.tituloPrueba} - Revision OMR`, 18, 17);
+        actualizarBarra(
+          true,
+          'Completando descarga de PDF...',
+          10 + Math.round(((i + 1) / listaOrdenada.length) * 85),
+          `Procesando hoja ${i + 1} de ${listaOrdenada.length} (${res.nombre})...`
+        );
 
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'normal');
-      doc.text(`Estudiante: ${res.nombre}`, 18, 23);
-      doc.text(`RUT: ${res.rut}   |   Curso: ${res.curso || '-'}   |   Asignatura: ${config.asignatura}`, 18, 28.5);
-      doc.text(`Puntaje: ${res.puntaje} / ${res.total} pts (${res.porcentaje}%)   |   Exigencia: ${config.exigencia}%`, 18, 34);
+        doc.setDrawColor(200, 210, 225);
+        doc.setFillColor(248, 250, 252);
+        doc.roundedRect(14, 10, 188, 28, 3, 3, 'FD');
 
-      const aprobado = Number(res.nota) >= Number(config.notaAprob || 4.0);
-      doc.setFillColor(aprobado ? 22 : 220, aprobado ? 163 : 38, aprobado ? 74 : 38);
-      doc.roundedRect(167, 12.5, 31, 23, 2.5, 2.5, 'F');
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'bold');
-      doc.text('NOTA FINAL', 182.5, 18.5, { align: 'center' });
-      doc.setFontSize(15);
-      doc.text(Number(res.nota).toFixed(1), 182.5, 30, { align: 'center' });
+        doc.setTextColor(15, 23, 42);
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`${config.tituloPrueba} - Revision OMR`, 18, 17);
 
-      if (res.imagenProcesada) {
-        doc.addImage(res.imagenProcesada, 'JPEG', 18, 41, 180, 228);
-      } else {
-        doc.setTextColor(71, 85, 105);
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.text(`Estudiante: ${res.nombre}`, 18, 23);
+        doc.text(`RUT: ${res.rut}   |   Curso: ${res.curso || '-'}   |   Asignatura: ${config.asignatura}`, 18, 28.5);
+        doc.text(`Puntaje: ${res.puntaje} / ${res.total} pts (${res.porcentaje}%)   |   Exigencia: ${config.exigencia}%`, 18, 34);
+
+        const aprobado = Number(res.nota) >= Number(config.notaAprob || 4.0);
+        doc.setFillColor(aprobado ? 22 : 220, aprobado ? 163 : 38, aprobado ? 74 : 38);
+        doc.roundedRect(167, 12.5, 31, 23, 2.5, 2.5, 'F');
+        doc.setTextColor(255, 255, 255);
         doc.setFontSize(8);
-        doc.text('Leyenda: [Verde] Correcta | [Rojo] Incorrecta | [Azul] Clave | [Gris] Anulada | BLANCO / DOBLE', 18, 44);
+        doc.setFont('helvetica', 'bold');
+        doc.text('NOTA FINAL', 182.5, 18.5, { align: 'center' });
+        doc.setFontSize(15);
+        doc.text(Number(res.nota).toFixed(1), 182.5, 30, { align: 'center' });
 
-        for (let p = 1; p <= totalPreg; p++) {
-          const col = p <= 25 ? 0 : 1;
-          const fila = p <= 25 ? p - 1 : p - 26;
-          const baseX = col === 0 ? 24 : 116;
-          const baseY = 52 + fila * 7.8;
+        if (res.imagenProcesada) {
+          doc.addImage(res.imagenProcesada, 'JPEG', 18, 41, 180, 228);
+        } else {
+          doc.setTextColor(71, 85, 105);
+          doc.setFontSize(8);
+          doc.text('Leyenda: [Verde] Correcta | [Rojo] Incorrecta | [Azul] Clave | [Gris] Anulada | BLANCO / DOBLE', 18, 44);
 
-          const respMarcada = respuestasAl[p] || '';
-          const itemPauta = (config.pauta || {})[p];
-          const clavesValidas = obtenerClavesCorrectas(itemPauta);
-          const puntajeItem = obtenerPuntajeItem(itemPauta);
-          const esAnulada = puntajeItem === 0;
-          const esCorrecta = !esAnulada && clavesValidas.length > 0 && clavesValidas.includes(respMarcada);
+          for (let p = 1; p <= totalPreg; p++) {
+            const col = p <= 25 ? 0 : 1;
+            const fila = p <= 25 ? p - 1 : p - 26;
+            const baseX = col === 0 ? 24 : 116;
+            const baseY = 52 + fila * 7.8;
 
-          doc.setTextColor(15, 23, 42);
-          doc.setFontSize(9);
-          doc.setFont('helvetica', 'bold');
-          doc.text(`${p}.`, baseX - 7, baseY + 1.2);
+            const respMarcada = respuestasAl[p] || '';
+            const itemPauta = (config.pauta || {})[p];
+            const clavesValidas = obtenerClavesCorrectas(itemPauta);
+            const puntajeItem = obtenerPuntajeItem(itemPauta);
+            const esAnulada = puntajeItem === 0;
+            const esCorrecta = !esAnulada && clavesValidas.length > 0 && clavesValidas.includes(respMarcada);
 
-          opciones.forEach((letra, idx) => {
-            const cx = baseX + idx * 10;
+            doc.setTextColor(15, 23, 42);
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'bold');
+            doc.text(`${p}.`, baseX - 7, baseY + 1.2);
 
-            if (esAnulada) {
-              doc.setDrawColor(148, 163, 184);
-              doc.setLineWidth(0.3);
-              doc.circle(cx, baseY, 2.7, 'S');
-              doc.setTextColor(148, 163, 184);
-            } else if (respMarcada === letra) {
-              doc.setFillColor(esCorrecta ? 22 : 220, esCorrecta ? 163 : 38, esCorrecta ? 74 : 38);
-              doc.circle(cx, baseY, 2.7, 'F');
-              doc.setTextColor(255, 255, 255);
-            } else if (clavesValidas.includes(letra) && !esCorrecta) {
-              doc.setDrawColor(37, 99, 235);
-              doc.setLineWidth(0.6);
-              doc.circle(cx, baseY, 2.7, 'S');
-              doc.setTextColor(37, 99, 235);
-            } else {
-              doc.setDrawColor(160, 170, 185);
-              doc.setLineWidth(0.25);
-              doc.circle(cx, baseY, 2.7, 'S');
-              doc.setTextColor(100, 116, 139);
-            }
+            opciones.forEach((letra, idx) => {
+              const cx = baseX + idx * 10;
 
+              if (esAnulada) {
+                doc.setDrawColor(148, 163, 184);
+                doc.setLineWidth(0.3);
+                doc.circle(cx, baseY, 2.7, 'S');
+                doc.setTextColor(148, 163, 184);
+              } else if (respMarcada === letra) {
+                doc.setFillColor(esCorrecta ? 22 : 220, esCorrecta ? 163 : 38, esCorrecta ? 74 : 38);
+                doc.circle(cx, baseY, 2.7, 'F');
+                doc.setTextColor(255, 255, 255);
+              } else if (clavesValidas.includes(letra) && !esCorrecta) {
+                doc.setDrawColor(37, 99, 235);
+                doc.setLineWidth(0.6);
+                doc.circle(cx, baseY, 2.7, 'S');
+                doc.setTextColor(37, 99, 235);
+              } else {
+                doc.setDrawColor(160, 170, 185);
+                doc.setLineWidth(0.25);
+                doc.circle(cx, baseY, 2.7, 'S');
+                doc.setTextColor(100, 116, 139);
+              }
+
+              doc.setFontSize(7.5);
+              doc.setFont('helvetica', 'bold');
+              doc.text(letra, cx - 1.2, baseY + 0.9);
+            });
+
+            const estadoX = baseX + opciones.length * 10 + 1;
             doc.setFontSize(7.5);
             doc.setFont('helvetica', 'bold');
-            doc.text(letra, cx - 1.2, baseY + 0.9);
-          });
 
-          const estadoX = baseX + opciones.length * 10 + 1;
-          doc.setFontSize(7.5);
-          doc.setFont('helvetica', 'bold');
-
-          if (esAnulada) {
-            doc.setTextColor(100, 116, 139);
-            doc.text('ANULADA', estadoX, baseY + 1);
-          } else if (respMarcada === '') {
-            doc.setTextColor(100, 116, 139);
-            doc.text('X  BLANCO', estadoX, baseY + 1);
-          } else if (respMarcada === 'DOBLE') {
-            doc.setTextColor(217, 119, 6);
-            doc.text('X  DOBLE', estadoX, baseY + 1);
-          } else if (esCorrecta) {
-            doc.setTextColor(22, 163, 74);
-            doc.text('OK', estadoX, baseY + 1);
-          } else if (clavesValidas.length > 0) {
-            doc.setTextColor(220, 38, 38);
-            doc.text(`X (${clavesValidas.join('/')})`, estadoX, baseY + 1);
+            if (esAnulada) {
+              doc.setTextColor(100, 116, 139);
+              doc.text('ANULADA', estadoX, baseY + 1);
+            } else if (respMarcada === '') {
+              doc.setTextColor(100, 116, 139);
+              doc.text('X  BLANCO', estadoX, baseY + 1);
+            } else if (respMarcada === 'DOBLE') {
+              doc.setTextColor(217, 119, 6);
+              doc.text('X  DOBLE', estadoX, baseY + 1);
+            } else if (esCorrecta) {
+              doc.setTextColor(22, 163, 74);
+              doc.text('OK', estadoX, baseY + 1);
+            } else if (clavesValidas.length > 0) {
+              doc.setTextColor(220, 38, 38);
+              doc.text(`X (${clavesValidas.join('/')})`, estadoX, baseY + 1);
+            }
           }
         }
       }
-    }
 
-    doc.save(`Corregidas_${config.tituloPrueba.replace(/\s+/g, '_')}${sufijoArchivo}.pdf`);
+      doc.save(`Corregidas_${config.tituloPrueba.replace(/\s+/g, '_')}${sufijoArchivo}.pdf`);
+      actualizarBarra(true, 'Descarga completada', 100, 'PDF de devolución listo.');
+      setTimeout(() => actualizarBarra(false), 900);
+    } catch {
+      actualizarBarra(false);
+    }
   };
 
   const abrirAsistenteHojasSinQr = (listaResultadosActualizados) => {
@@ -1345,13 +1470,16 @@ export default function App() {
 
     setProcesando(true);
     setProgresoLote('Preparando archivos...');
+    actualizarBarra(true, 'Completando lectura de archivos...', 5, 'Preparando lote...');
 
     try {
       let colaImagenes = [];
       for (const file of files) {
         if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
           const paginasImg = await convertirPdfAImagenes(file, (actual, total) => {
-            setProgresoLote(`Extrayendo página ${actual} de ${total} del PDF...`);
+            const msg = `Extrayendo página ${actual} de ${total} del PDF...`;
+            setProgresoLote(msg);
+            actualizarBarra(true, 'Completando extracción de PDF...', Math.round((actual / total) * 35), msg);
           });
           colaImagenes = colaImagenes.concat(paginasImg);
         } else {
@@ -1366,7 +1494,14 @@ export default function App() {
         '';
 
       for (let idx = 0; idx < colaImagenes.length; idx++) {
-        setProgresoLote(`Corrigiendo hoja ${idx + 1} de ${colaImagenes.length}...`);
+        const msgCorr = `Corrigiendo hoja ${idx + 1} de ${colaImagenes.length}...`;
+        setProgresoLote(msgCorr);
+        actualizarBarra(
+          true,
+          'Completando corrección OMR...',
+          35 + Math.round(((idx + 1) / colaImagenes.length) * 40),
+          msgCorr
+        );
         const imgFile = colaImagenes[idx];
 
         try {
@@ -1426,10 +1561,9 @@ export default function App() {
           : nuevosResultados.filter((n) => !rutsExistentesMap.has(n.rut.trim().toLowerCase()));
 
         if (resultadosAGuardar.length > 0) {
-          setUltimoResultado(resultadosAGuardar[resultadosAGuardar.length - 1]);
-
           if (supabase && config.id) {
             setProgresoLote('Guardando resultados en la nube...');
+            actualizarBarra(true, 'Completando guardado en la nube...', 78, 'Preparando registros...');
             if (sobreescribir && duplicados.length > 0) {
               const rutsABorrar = duplicados.map((d) => d.rut);
               await supabase.from('resultados').delete().eq('evaluacion_id', config.id).in('rut_estudiante', rutsABorrar);
@@ -1452,7 +1586,15 @@ export default function App() {
             const tamanoLote = 10;
             for (let i = 0; i < filasSupabase.length; i += tamanoLote) {
               const bloque = filasSupabase.slice(i, i + tamanoLote);
-              setProgresoLote(`Guardando en la nube (${Math.min(i + tamanoLote, filasSupabase.length)}/${filasSupabase.length})...`);
+              const finLote = Math.min(i + tamanoLote, filasSupabase.length);
+              const msgSave = `Guardando en la nube (${finLote}/${filasSupabase.length})...`;
+              setProgresoLote(msgSave);
+              actualizarBarra(
+                true,
+                'Completando guardado en la nube...',
+                78 + Math.round((finLote / filasSupabase.length) * 22),
+                msgSave
+              );
               const { error } = await supabase.from('resultados').insert(bloque);
               if (error) {
                 insertError = error;
@@ -1461,9 +1603,13 @@ export default function App() {
             }
 
             if (insertError) {
+              actualizarBarra(false);
               alert('Error al guardar en la nube: ' + insertError.message);
             } else {
               const listaActualizada = await cargarResultadosNube(config.id);
+              actualizarBarra(true, 'Proceso completado', 100, 'Resultados guardados.');
+              setTimeout(() => actualizarBarra(false), 800);
+
               const sinQrCount = listaActualizada.filter((r) => {
                 const rn = (r.rut || '').trim().toLowerCase();
                 return !rn || rn === 'sin qr' || rn === 'sin rut';
@@ -1477,8 +1623,11 @@ export default function App() {
             }
           }
         }
+      } else {
+        actualizarBarra(false);
       }
     } catch (err) {
+      actualizarBarra(false);
       alert('Error al procesar el archivo: ' + err.message);
     } finally {
       setProcesando(false);
@@ -1739,7 +1888,14 @@ export default function App() {
         onCerrarSesion={cerrarSesion}
       />
 
-      <main style={{ flex: 1, padding: '24px', maxWidth: '1100px', margin: '0 auto', boxSizing: 'border-box' }}>
+      <main style={{ flex: 1, padding: '24px', maxWidth: '1100px', margin: '0 auto', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <BarraProgresoAzul
+          visible={barraVisible}
+          titulo={barraTitulo}
+          porcentaje={barraPct}
+          detalle={barraDetalle}
+        />
+
         {vistaActiva === 'inicio' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             <div
@@ -2936,38 +3092,6 @@ export default function App() {
                       manejarEscaneo({ target: { files: [fileCapturado], value: '' } });
                     }}
                   />
-                )}
-
-                {ultimoResultado && (
-                  <div style={{ marginTop: '20px', padding: '16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #cbd5e1' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>
-                      <div>
-                        <strong style={{ fontSize: '16px' }}>{ultimoResultado.nombre}</strong>
-                        <div style={{ fontSize: '13px', color: '#64748b' }}>RUT: {ultimoResultado.rut}</div>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                        <button
-                          onClick={() => descargarHojasCorregidasPDF([ultimoResultado], `_${ultimoResultado.rut}`)}
-                          style={{
-                            background: '#16a34a', color: '#ffffff', border: 'none', borderRadius: '8px',
-                            padding: '8px 12px', fontSize: '13px', fontWeight: '700', cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', gap: '6px'
-                          }}
-                        >
-                          <FileDown size={16} /> Descargar Esta Hoja en PDF
-                        </button>
-                        <div style={{ textAlign: 'right' }}>
-                          <span style={{ fontSize: '24px', fontWeight: '800', color: Number(ultimoResultado.nota) >= Number(config.notaAprob || 4.0) ? '#16a34a' : '#dc2626' }}>
-                            Nota: {Number(ultimoResultado.nota).toFixed(1)}
-                          </span>
-                          <div style={{ fontSize: '13px', color: '#475569' }}>{ultimoResultado.puntaje} / {ultimoResultado.total} pts ({ultimoResultado.porcentaje}%)</div>
-                        </div>
-                      </div>
-                    </div>
-                    {ultimoResultado.imagenProcesada && (
-                      <img src={ultimoResultado.imagenProcesada} alt="Hoja procesada" style={{ maxWidth: '100%', maxHeight: '520px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
-                    )}
-                  </div>
                 )}
               </div>
             )}
