@@ -27,10 +27,10 @@ function leerCodigoQR(canvas) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const { width, height } = canvas;
 
-  const cropX = Math.floor(width * 0.55);
+  const cropX = Math.floor(width * 0.50);
   const cropY = 0;
   const cropW = width - cropX;
-  const cropH = Math.floor(height * 0.30);
+  const cropH = Math.floor(height * 0.35);
 
   const cropData = ctx.getImageData(cropX, cropY, cropW, cropH);
   let code = jsQR(cropData.data, cropW, cropH, { inversionAttempts: 'attemptBoth' });
@@ -66,6 +66,27 @@ function ordenarEsquinas(puntos) {
   const infIzq = puntos[restas.indexOf(Math.max(...restas))];
 
   return [supIzq, supDer, infDer, infIzq];
+}
+
+function completarCuatroEsquinas(cuadrantes) {
+  const [tl, tr, br, bl] = cuadrantes;
+  const presentes = [tl, tr, br, bl].filter(Boolean);
+  if (presentes.length === 4) return [tl, tr, br, bl];
+  if (presentes.length < 3) return null;
+
+  if (!tl && tr && br && bl) {
+    return [{ x: bl.x + (tr.x - br.x), y: bl.y + (tr.y - br.y) }, tr, br, bl];
+  }
+  if (!tr && tl && br && bl) {
+    return [tl, { x: br.x + (tl.x - bl.x), y: br.y + (tl.y - bl.y) }, br, bl];
+  }
+  if (!br && tl && tr && bl) {
+    return [tl, tr, { x: tr.x + (bl.x - tl.x), y: tr.y + (bl.y - tl.y) }, bl];
+  }
+  if (!bl && tl && tr && br) {
+    return [tl, tr, br, { x: tl.x + (br.x - tr.x), y: tl.y + (br.y - tr.y) }];
+  }
+  return null;
 }
 
 function dibujarTicketVerde(ctx, x, y) {
@@ -122,7 +143,7 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     reader.readAsDataURL(archivoImagen);
   });
 
-  const maxDim = 2200;
+  const maxDim = 2400;
   const escala = Math.min(1, maxDim / Math.max(img.width, img.height));
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(img.width * escala);
@@ -131,7 +152,6 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
   const qrData = archivoImagen.qrPreDetectado || leerCodigoQR(canvas);
-  const esFotoCamara = archivoImagen.name?.startsWith('captura_omr_');
 
   const totalPreguntas = Number(configEvaluacion.numPreguntas || 30);
   const alternativasStr = configEvaluacion.alternativas || 'ABCD';
@@ -157,65 +177,42 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   for (let i = 0; i < contours.size(); i++) {
     const cnt = contours.get(i);
     const area = cv.contourArea(cnt);
-    if (area > areaTotal * 0.0005 && area < areaTotal * 0.006) {
+    if (area > areaTotal * 0.00015 && area < areaTotal * 0.015) {
       const rect = cv.boundingRect(cnt);
       const aspecto = rect.width / rect.height;
       const extension = area / (rect.width * rect.height);
-      if (aspecto >= 0.78 && aspecto <= 1.28 && extension >= 0.78) {
+      if (aspecto >= 0.65 && aspecto <= 1.45 && extension >= 0.65) {
         candidatos.push({
           x: rect.x + rect.width / 2,
-          y: rect.y + rect.height / 2
+          y: rect.y + rect.height / 2,
+          area
         });
       }
     }
     cnt.delete();
   }
 
-  let esquinasDetectadas = null;
+  const corteX = canvas.width * 0.5;
+  const corteY = canvas.height * 0.5;
 
-  if (esFotoCamara && candidatos.length >= 4) {
-    const mitadX = canvas.width * 0.5;
-    const mitadY = canvas.height * 0.5;
-    const qSupIzq = candidatos.filter((c) => c.x < mitadX && c.y < mitadY);
-    const qSupDer = candidatos.filter((c) => c.x >= mitadX && c.y < mitadY);
-    const qInfDer = candidatos.filter((c) => c.x >= mitadX && c.y >= mitadY);
-    const qInfIzq = candidatos.filter((c) => c.x < mitadX && c.y >= mitadY);
+  const elegirEnCuadrante = (lista, scoreFn) => {
+    if (!lista.length) return null;
+    return lista.reduce((mejor, actual) => (scoreFn(actual) < scoreFn(mejor) ? actual : mejor));
+  };
 
-    if (qSupIzq.length > 0 && qSupDer.length > 0 && qInfDer.length > 0 && qInfIzq.length > 0) {
-      const supIzq = qSupIzq.reduce((best, c) => (c.x + c.y < best.x + best.y ? c : best));
-      const supDer = qSupDer.reduce((best, c) => (c.y - c.x < best.y - best.x ? c : best));
-      const infDer = qInfDer.reduce((best, c) => (c.x + c.y > best.x + best.y ? c : best));
-      const infIzq = qInfIzq.reduce((best, c) => (c.y - c.x > best.y - best.x ? c : best));
-      esquinasDetectadas = ordenarEsquinas([supIzq, supDer, infDer, infIzq]);
-    }
-  } else if (candidatos.length >= 4) {
-    const objetivos = [
-      { x: canvas.width * (16 / 215.9), y: canvas.height * (16 / 279.4) },
-      { x: canvas.width * (199 / 215.9), y: canvas.height * (16 / 279.4) },
-      { x: canvas.width * (199 / 215.9), y: canvas.height * (262 / 279.4) },
-      { x: canvas.width * (16 / 215.9), y: canvas.height * (262 / 279.4) }
-    ];
+  const qTL = candidatos.filter((c) => c.x < corteX && c.y < corteY);
+  const qTR = candidatos.filter((c) => c.x >= corteX && c.y < corteY);
+  const qBR = candidatos.filter((c) => c.x >= corteX && c.y >= corteY);
+  const qBL = candidatos.filter((c) => c.x < corteX && c.y >= corteY);
 
-    const maxDistTolerada = canvas.width * 0.08;
-    const elegidos = objetivos.map((obj) => {
-      let mejor = null;
-      let distMin = Infinity;
-      for (const c of candidatos) {
-        const d = Math.hypot(c.x - obj.x, c.y - obj.y);
-        if (d < distMin && d < maxDistTolerada) {
-          distMin = d;
-          mejor = c;
-        }
-      }
-      return mejor;
-    });
+  const tl = elegirEnCuadrante(qTL, (c) => Math.hypot(c.x, c.y));
+  const tr = elegirEnCuadrante(qTR, (c) => Math.hypot(canvas.width - c.x, c.y));
+  const br = elegirEnCuadrante(qBR, (c) => Math.hypot(canvas.width - c.x, canvas.height - c.y));
+  const bl = elegirEnCuadrante(qBL, (c) => Math.hypot(c.x, canvas.height - c.y));
 
-    if (elegidos.every(Boolean)) {
-      const unicos = new Set(elegidos.map((p) => `${Math.round(p.x)}_${Math.round(p.y)}`));
-      if (unicos.size === 4) {
-        esquinasDetectadas = ordenarEsquinas(elegidos);
-      }
-    }
+  let esquinasDetectadas = completarCuatroEsquinas([tl, tr, br, bl]);
+  if (esquinasDetectadas) {
+    esquinasDetectadas = ordenarEsquinas(esquinasDetectadas);
   }
 
   const W = 1830;
@@ -236,11 +233,12 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     dstPts.delete();
     M.delete();
   } else {
-    const x0 = Math.round(canvas.width * (16 / 215.9));
-    const y0 = Math.round(canvas.height * (16 / 279.4));
-    const rw = Math.round(canvas.width * (183 / 215.9));
-    const rh = Math.round(canvas.height * (246 / 279.4));
-    const rect = new cv.Rect(x0, y0, Math.min(rw, canvas.width - x0), Math.min(rh, canvas.height - y0));
+    // Ajuste adaptativo proporcional al tamaño/zoom real de la página (Carta, Oficio o A4)
+    const x0 = Math.max(0, Math.round(canvas.width * 0.055));
+    const y0 = Math.max(0, Math.round(canvas.height * 0.043));
+    const rw = Math.max(10, Math.min(canvas.width - x0, Math.round(canvas.width * 0.85)));
+    const rh = Math.max(10, Math.min(canvas.height - y0, Math.round(canvas.height * 0.88)));
+    const rect = new cv.Rect(x0, y0, rw, rh);
     const cropped = src.roi(rect);
     cv.resize(cropped, warped, new cv.Size(W, H));
     cropped.delete();
@@ -249,14 +247,15 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   const warpedGray = new cv.Mat();
   const warpedBin = new cv.Mat();
   cv.cvtColor(warped, warpedGray, cv.COLOR_RGBA2GRAY);
-  cv.threshold(warpedGray, warpedBin, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+  cv.GaussianBlur(warpedGray, warpedGray, new cv.Size(3, 3), 0);
+  cv.adaptiveThreshold(warpedGray, warpedBin, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 31, 10);
 
   const outCanvas = document.createElement('canvas');
   cv.imshow(outCanvas, warped);
   const outCtx = outCanvas.getContext('2d');
 
-  const radioPx = 21;
-  const radioNucleoPx = 12;
+  const radioPx = 22;
+  const radioNucleoPx = 13;
   const respuestas = {};
 
   for (let p = 1; p <= totalPreguntas; p++) {
@@ -300,28 +299,35 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       return { letra, ratio, brilloNucleo, px, py };
     });
 
-    const ordenadosRatio = [...densidades].sort((a, b) => a.ratio - b.ratio);
-    const fondoFilaRatio = (ordenadosRatio[0].ratio + ordenadosRatio[1].ratio) / 2;
-
     const ordenadosBrillo = [...densidades].sort((a, b) => b.brilloNucleo - a.brilloNucleo);
     const fondoFilaBrillo = (ordenadosBrillo[0].brilloNucleo + ordenadosBrillo[1].brilloNucleo) / 2;
 
-    const marcadas = densidades.filter((d) => {
-      const marcaFuerte = d.ratio > 0.32 && d.ratio - fondoFilaRatio > 0.14;
-      const marcaTenueGrafito = d.brilloNucleo < 195 && fondoFilaBrillo - d.brilloNucleo > 32;
-      return marcaFuerte || marcaTenueGrafito;
+    const candidatosMarcados = densidades.filter((d) => {
+      const oscuridadRelativa = fondoFilaBrillo - d.brilloNucleo;
+      return (d.brilloNucleo < 185 && oscuridadRelativa > 26) || d.ratio > 0.36;
     });
+
+    let marcadas = [];
+    if (candidatosMarcados.length === 1) {
+      marcadas = candidatosMarcados;
+    } else if (candidatosMarcados.length > 1) {
+      const ordenadosOscuridad = [...candidatosMarcados].sort((a, b) => a.brilloNucleo - b.brilloNucleo);
+      const masOscura = ordenadosOscuridad[0];
+      const segundaMasOscura = ordenadosOscuridad[1];
+      const diferenciaBrillo = segundaMasOscura.brilloNucleo - masOscura.brilloNucleo;
+
+      if (diferenciaBrillo > 35 && segundaMasOscura.brilloNucleo > 155) {
+        marcadas = [masOscura];
+      } else {
+        marcadas = candidatosMarcados;
+      }
+    }
 
     let respuestaFinal = '';
     if (marcadas.length === 1) {
       respuestaFinal = marcadas[0].letra;
     } else if (marcadas.length > 1) {
-      const muyLlenas = marcadas.filter((m) => m.ratio > 0.50);
-      if (muyLlenas.length === 1 && marcadas.every((m) => m === muyLlenas[0] || m.ratio < 0.36)) {
-        respuestaFinal = muyLlenas[0].letra;
-      } else {
-        respuestaFinal = 'DOBLE';
-      }
+      respuestaFinal = 'DOBLE';
     }
 
     respuestas[p] = respuestaFinal;
