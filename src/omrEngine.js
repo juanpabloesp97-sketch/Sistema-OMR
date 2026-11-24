@@ -1,45 +1,42 @@
 import jsQR from 'jsqr';
 
-let cvInstanciaCache = null;
+let cvCache = null;
 
-function obtenerOpenCV() {
-  if (cvInstanciaCache && cvInstanciaCache.Mat) {
-    return Promise.resolve(cvInstanciaCache);
-  }
-  if (typeof window !== 'undefined' && window.cv && window.cv.Mat) {
-    cvInstanciaCache = window.cv;
-    return Promise.resolve(cvInstanciaCache);
+async function obtenerOpenCV() {
+  if (cvCache && cvCache.Mat) {
+    return cvCache;
   }
 
-  return new Promise((resolve, reject) => {
-    const scriptId = 'opencv-runtime-script';
-    const existente = document.getElementById(scriptId);
+  const mod = await import('@techstark/opencv-js');
+  let candidato = mod && mod.default ? mod.default : mod;
 
-    const esperarMat = () => {
-      const revisar = () => {
-        if (window.cv && window.cv.Mat) {
-          cvInstanciaCache = window.cv;
-          resolve(cvInstanciaCache);
-        } else {
-          setTimeout(revisar, 50);
-        }
-      };
-      revisar();
-    };
-
-    if (existente) {
-      esperarMat();
-      return;
+  if (candidato && typeof candidato.then === 'function') {
+    candidato = await candidato;
+    if (candidato && candidato.default) {
+      candidato = candidato.default;
     }
+  }
 
-    const script = document.createElement('script');
-    script.id = scriptId;
-    script.async = true;
-    script.src = 'https://docs.opencv.org/4.8.0/opencv.js';
-    script.onload = esperarMat;
-    script.onerror = () => reject(new Error('No se pudo cargar OpenCV'));
-    document.head.appendChild(script);
-  });
+  if (candidato && candidato.Mat) {
+    cvCache = candidato;
+    return cvCache;
+  }
+
+  if (candidato) {
+    await new Promise((resolve) => {
+      const anterior = candidato.onRuntimeInitialized;
+      candidato.onRuntimeInitialized = () => {
+        if (typeof anterior === 'function') {
+          anterior();
+        }
+        resolve();
+      };
+    });
+    cvCache = candidato;
+    return cvCache;
+  }
+
+  throw new Error('No se pudo inicializar OpenCV');
 }
 
 function obtenerClavesItem(item) {
