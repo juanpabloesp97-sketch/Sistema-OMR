@@ -6,46 +6,39 @@ function obtenerOpenCV() {
   if (cvInstanciaCache && cvInstanciaCache.Mat) {
     return Promise.resolve(cvInstanciaCache);
   }
+  if (typeof window !== 'undefined' && window.cv && window.cv.Mat) {
+    cvInstanciaCache = window.cv;
+    return Promise.resolve(cvInstanciaCache);
+  }
 
   return new Promise((resolve, reject) => {
-    const finalizarConCv = (cvObj) => {
-      if (!cvObj) {
-        reject(new Error('No se pudo inicializar OpenCV'));
-        return;
-      }
-      if (cvObj.Mat) {
-        cvInstanciaCache = cvObj;
-        resolve(cvInstanciaCache);
-        return;
-      }
-      if (typeof cvObj.onRuntimeInitialized === 'function') {
-        const prevInit = cvObj.onRuntimeInitialized;
-        cvObj.onRuntimeInitialized = () => {
-          prevInit();
-          cvInstanciaCache = cvObj;
+    const scriptId = 'opencv-runtime-script';
+    const existente = document.getElementById(scriptId);
+
+    const esperarMat = () => {
+      const revisar = () => {
+        if (window.cv && window.cv.Mat) {
+          cvInstanciaCache = window.cv;
           resolve(cvInstanciaCache);
-        };
-      } else {
-        cvObj.onRuntimeInitialized = () => {
-          cvInstanciaCache = cvObj;
-          resolve(cvInstanciaCache);
-        };
-      }
+        } else {
+          setTimeout(revisar, 50);
+        }
+      };
+      revisar();
     };
 
-    import('@techstark/opencv-js')
-      .then((mod) => {
-        const candidato = mod && mod.default ? mod.default : mod;
-        if (candidato && typeof candidato.then === 'function') {
-          Promise.resolve(candidato).then(
-            (resuelto) => finalizarConCv(resuelto && resuelto.default ? resuelto.default : resuelto),
-            reject
-          );
-        } else {
-          finalizarConCv(candidato);
-        }
-      })
-      .catch(reject);
+    if (existente) {
+      esperarMat();
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.id = scriptId;
+    script.async = true;
+    script.src = 'https://docs.opencv.org/4.8.0/opencv.js';
+    script.onload = esperarMat;
+    script.onerror = () => reject(new Error('No se pudo cargar OpenCV'));
+    document.head.appendChild(script);
   });
 }
 
@@ -85,7 +78,6 @@ function leerCodigoQR(canvas) {
     return null;
   };
 
-  // Pasada 1: Cuadrante superior derecho ampliado
   const cropX = Math.floor(width * 0.52);
   const cropY = 0;
   const cropW = width - cropX;
@@ -95,7 +87,6 @@ function leerCodigoQR(canvas) {
   let resultado = intentarDecodificar(cropData, cropW, cropH);
   if (resultado) return resultado;
 
-  // Pasada 2: Mismo recorte binarizado en blanco/negro de alto contraste
   const binData = new ImageData(new Uint8ClampedArray(cropData.data), cropW, cropH);
   const d = binData.data;
   for (let i = 0; i < d.length; i += 4) {
@@ -108,7 +99,6 @@ function leerCodigoQR(canvas) {
   resultado = intentarDecodificar(binData, cropW, cropH);
   if (resultado) return resultado;
 
-  // Pasada 3: Reducción al 55% del recorte
   const smallCanvas = document.createElement('canvas');
   smallCanvas.width = Math.floor(cropW * 0.55);
   smallCanvas.height = Math.floor(cropH * 0.55);
@@ -118,7 +108,6 @@ function leerCodigoQR(canvas) {
   resultado = intentarDecodificar(smallData, smallCanvas.width, smallCanvas.height);
   if (resultado) return resultado;
 
-  // Pasada 4: Búsqueda en la hoja completa
   const fullData = ctx.getImageData(0, 0, width, height);
   return intentarDecodificar(fullData, width, height);
 }
@@ -448,7 +437,6 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   warpedGray.delete();
   warpedBin.delete();
 
-  // Vista previa comprimida (915x1230, JPEG 0.6) para subida rápida a Supabase
   const previewCanvas = document.createElement('canvas');
   previewCanvas.width = 915;
   previewCanvas.height = 1230;
