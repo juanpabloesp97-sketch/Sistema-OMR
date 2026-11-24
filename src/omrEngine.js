@@ -1,25 +1,66 @@
 import jsQR from 'jsqr';
 
-let cvCache = null;
+let cvInstanciaCache = null;
 
-async function obtenerOpenCV() {
-  if (cvCache && cvCache.Mat) return cvCache;
-  const mod = await import('@techstark/opencv-js');
-  const cvModule = mod.default || mod;
-  if (cvModule && cvModule.Mat) {
-    cvCache = cvModule;
-    return cvCache;
+function obtenerOpenCV() {
+  if (cvInstanciaCache && cvInstanciaCache.Mat) {
+    return Promise.resolve(cvInstanciaCache);
   }
-  if (cvModule instanceof Promise) {
-    cvCache = await cvModule;
-    return cvCache;
-  }
-  return new Promise((resolve) => {
-    cvModule.onRuntimeInitialized = () => {
-      cvCache = cvModule;
-      resolve(cvCache);
+
+  return new Promise((resolve, reject) => {
+    const finalizarConCv = (cvObj) => {
+      if (!cvObj) {
+        reject(new Error('No se pudo inicializar OpenCV'));
+        return;
+      }
+      if (cvObj.Mat) {
+        cvInstanciaCache = cvObj;
+        resolve(cvInstanciaCache);
+        return;
+      }
+      if (typeof cvObj.onRuntimeInitialized === 'function') {
+        const prevInit = cvObj.onRuntimeInitialized;
+        cvObj.onRuntimeInitialized = () => {
+          prevInit();
+          cvInstanciaCache = cvObj;
+          resolve(cvInstanciaCache);
+        };
+      } else {
+        cvObj.onRuntimeInitialized = () => {
+          cvInstanciaCache = cvObj;
+          resolve(cvInstanciaCache);
+        };
+      }
     };
+
+    import('@techstark/opencv-js')
+      .then((mod) => {
+        const candidato = mod && mod.default ? mod.default : mod;
+        if (candidato && typeof candidato.then === 'function') {
+          Promise.resolve(candidato).then(
+            (resuelto) => finalizarConCv(resuelto && resuelto.default ? resuelto.default : resuelto),
+            reject
+          );
+        } else {
+          finalizarConCv(candidato);
+        }
+      })
+      .catch(reject);
   });
+}
+
+function obtenerClavesItem(item) {
+  if (!item) return [];
+  if (typeof item === 'string') return item ? [item] : [];
+  if (Array.isArray(item.correcta)) return item.correcta;
+  return item.correcta ? [item.correcta] : [];
+}
+
+function obtenerPuntajeItem(item) {
+  if (typeof item === 'object' && item !== null && item.puntaje !== undefined) {
+    return Number(item.puntaje);
+  }
+  return 1;
 }
 
 function leerCodigoQR(canvas) {
@@ -54,7 +95,7 @@ function leerCodigoQR(canvas) {
   let resultado = intentarDecodificar(cropData, cropW, cropH);
   if (resultado) return resultado;
 
-  // Pasada 2: Binarizado blanco/negro puro para eliminar sombras o tóner oscuro
+  // Pasada 2: Mismo recorte binarizado en blanco/negro de alto contraste
   const binData = new ImageData(new Uint8ClampedArray(cropData.data), cropW, cropH);
   const d = binData.data;
   for (let i = 0; i < d.length; i += 4) {
@@ -67,7 +108,7 @@ function leerCodigoQR(canvas) {
   resultado = intentarDecodificar(binData, cropW, cropH);
   if (resultado) return resultado;
 
-  // Pasada 3: Reducción al 55% del recorte (limpia ruido del escáner)
+  // Pasada 3: Reducción al 55% del recorte
   const smallCanvas = document.createElement('canvas');
   smallCanvas.width = Math.floor(cropW * 0.55);
   smallCanvas.height = Math.floor(cropH * 0.55);
@@ -77,7 +118,7 @@ function leerCodigoQR(canvas) {
   resultado = intentarDecodificar(smallData, smallCanvas.width, smallCanvas.height);
   if (resultado) return resultado;
 
-  // Pasada 4: Hoja completa
+  // Pasada 4: Búsqueda en la hoja completa
   const fullData = ctx.getImageData(0, 0, width, height);
   return intentarDecodificar(fullData, width, height);
 }
@@ -144,6 +185,7 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       image.onerror = reject;
       image.src = e.target.result;
     };
+    reader.onerror = reject;
     reader.readAsDataURL(archivoImagen);
   });
 
@@ -345,8 +387,8 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     if (marcadas.length === 1) {
       respuestaFinal = marcadas[0].letra;
     } else if (marcadas.length > 1) {
-      const muyLlenas = marcadas.filter((m) => m.ratio > 0.52);
-      if (muyLlenas.length === 1 && marcadas.every((m) => m === muyLlenas[0] || m.ratio < 0.40)) {
+      const muyLlenas = marcadas.filter((m) => m.ratio > 0.50);
+      if (muyLlenas.length === 1 && marcadas.every((m) => m === muyLlenas[0] || m.ratio < 0.36)) {
         respuestaFinal = muyLlenas[0].letra;
       } else {
         respuestaFinal = 'DOBLE';
@@ -356,25 +398,23 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     respuestas[p] = respuestaFinal;
 
     const itemPauta = pauta[p];
-    const correcta = typeof itemPauta === 'object' ? itemPauta?.correcta : itemPauta;
-    const esCorrecta = Boolean(correcta) && respuestaFinal === correcta;
+    const clavesValidas = obtenerClavesItem(itemPauta);
+    const puntajeItem = obtenerPuntajeItem(itemPauta);
+    const esAnulada = puntajeItem === 0;
+    const esCorrecta = !esAnulada && clavesValidas.length > 0 && clavesValidas.includes(respuestaFinal);
 
     const ultimaBurbuja = densidades[densidades.length - 1];
     const posXIcono = ultimaBurbuja.px + 54;
     const posYIcono = ultimaBurbuja.py;
 
     densidades.forEach((d) => {
-      const fueElegida =
-        respuestaFinal === d.letra ||
-        (respuestaFinal === 'DOBLE' && marcadas.some((m) => m.letra === d.letra));
-
-      if (fueElegida) {
+      if (marcadas.some((m) => m.letra === d.letra)) {
         outCtx.beginPath();
         outCtx.arc(d.px, d.py, 28, 0, 2 * Math.PI);
         outCtx.lineWidth = 6;
-        outCtx.strokeStyle = esCorrecta ? '#16a34a' : '#dc2626';
+        outCtx.strokeStyle = esAnulada ? '#64748b' : esCorrecta ? '#16a34a' : '#dc2626';
         outCtx.stroke();
-      } else if (correcta && d.letra === correcta && !esCorrecta) {
+      } else if (!esAnulada && clavesValidas.includes(d.letra) && !esCorrecta) {
         outCtx.beginPath();
         outCtx.arc(d.px, d.py, 26, 0, 2 * Math.PI);
         outCtx.lineWidth = 4;
@@ -383,7 +423,9 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       }
     });
 
-    if (respuestaFinal === '') {
+    if (esAnulada) {
+      dibujarEtiquetaEstado(outCtx, posXIcono, posYIcono, 'ANULADA', '#64748b');
+    } else if (respuestaFinal === '') {
       dibujarCruzRoja(outCtx, posXIcono, posYIcono);
       dibujarEtiquetaEstado(outCtx, posXIcono + 22, posYIcono, 'BLANCO', '#64748b');
     } else if (respuestaFinal === 'DOBLE') {
@@ -391,16 +433,10 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
       dibujarEtiquetaEstado(outCtx, posXIcono + 22, posYIcono, 'DOBLE', '#d97706');
     } else if (esCorrecta) {
       dibujarTicketVerde(outCtx, posXIcono, posYIcono);
-    } else if (correcta) {
+    } else if (clavesValidas.length > 0) {
       dibujarCruzRoja(outCtx, posXIcono, posYIcono);
     }
   }
-
-  const previewCanvas = document.createElement('canvas');
-  previewCanvas.width = Math.round(W * 0.5);
-  previewCanvas.height = Math.round(H * 0.5);
-  const previewCtx = previewCanvas.getContext('2d');
-  previewCtx.drawImage(outCanvas, 0, 0, previewCanvas.width, previewCanvas.height);
 
   src.delete();
   gray.delete();
@@ -412,9 +448,16 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   warpedGray.delete();
   warpedBin.delete();
 
+  // Vista previa comprimida (915x1230, JPEG 0.6) para subida rápida a Supabase
+  const previewCanvas = document.createElement('canvas');
+  previewCanvas.width = 915;
+  previewCanvas.height = 1230;
+  const previewCtx = previewCanvas.getContext('2d');
+  previewCtx.drawImage(outCanvas, 0, 0, previewCanvas.width, previewCanvas.height);
+
   return {
     qrData,
     respuestas,
-    imagenProcesada: previewCanvas.toDataURL('image/jpeg', 0.5)
+    imagenProcesada: previewCanvas.toDataURL('image/jpeg', 0.6)
   };
 }
