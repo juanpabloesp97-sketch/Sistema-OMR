@@ -128,6 +128,155 @@ function dibujarEtiquetaEstado(ctx, x, y, texto, colorFondo) {
   ctx.restore();
 }
 
+function pintarAnotacionesSobreCanvas(outCtx, respuestas, configEvaluacion) {
+  const totalPreguntas = Number(configEvaluacion.numPreguntas || 30);
+  const alternativasStr = configEvaluacion.alternativas || 'ABCD';
+  const opciones = alternativasStr.split('');
+  const pauta = configEvaluacion.pauta || {};
+  const respMap = respuestas || {};
+
+  for (let p = 1; p <= totalPreguntas; p++) {
+    const col = p <= 25 ? 0 : 1;
+    const fila = p <= 25 ? p - 1 : p - 26;
+    const baseX = col === 0 ? 32 : 122;
+    const baseY = 56 + fila * 7.8;
+
+    const burbujas = opciones.map((letra, idx) => {
+      const cx = baseX + idx * 11;
+      const px = Math.round((cx - 16) * 10);
+      const py = Math.round((baseY - 16) * 10);
+      return { letra, px, py };
+    });
+
+    const respuestaFinal = respMap[p] || '';
+    const itemPauta = pauta[p];
+    const clavesValidas = obtenerClavesItem(itemPauta);
+    const puntajeItem = obtenerPuntajeItem(itemPauta);
+    const esAnulada = puntajeItem === 0;
+    const esCorrecta =
+      !esAnulada &&
+      clavesValidas.length > 0 &&
+      respuestaFinal !== '' &&
+      respuestaFinal !== 'DOBLE' &&
+      clavesValidas.includes(respuestaFinal);
+
+    const ultimaBurbuja = burbujas[burbujas.length - 1];
+    const posXIcono = ultimaBurbuja.px + 54;
+    const posYIcono = ultimaBurbuja.py;
+
+    burbujas.forEach((b) => {
+      if (respuestaFinal === b.letra) {
+        outCtx.beginPath();
+        outCtx.arc(b.px, b.py, 28, 0, 2 * Math.PI);
+        outCtx.lineWidth = 6;
+        outCtx.strokeStyle = esAnulada ? '#64748b' : esCorrecta ? '#16a34a' : '#dc2626';
+        outCtx.stroke();
+      } else if (!esAnulada && clavesValidas.includes(b.letra) && !esCorrecta) {
+        outCtx.beginPath();
+        outCtx.arc(b.px, b.py, 26, 0, 2 * Math.PI);
+        outCtx.lineWidth = 4;
+        outCtx.strokeStyle = '#2563eb';
+        outCtx.stroke();
+      }
+    });
+
+    if (esAnulada) {
+      dibujarEtiquetaEstado(outCtx, posXIcono, posYIcono, 'ANULADA', '#64748b');
+    } else if (respuestaFinal === '') {
+      dibujarCruzRoja(outCtx, posXIcono, posYIcono);
+      dibujarEtiquetaEstado(outCtx, posXIcono + 22, posYIcono, 'BLANCO', '#64748b');
+    } else if (respuestaFinal === 'DOBLE') {
+      dibujarCruzRoja(outCtx, posXIcono, posYIcono);
+      dibujarEtiquetaEstado(outCtx, posXIcono + 22, posYIcono, 'DOBLE', '#d97706');
+    } else if (esCorrecta) {
+      dibujarTicketVerde(outCtx, posXIcono, posYIcono);
+    } else if (clavesValidas.length > 0) {
+      dibujarCruzRoja(outCtx, posXIcono, posYIcono);
+    }
+  }
+}
+
+export async function actualizarAnotacionesImagenOMR(imagenBase64, respuestasMap, configEvaluacion) {
+  if (!imagenBase64) return null;
+
+  const img = await new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = reject;
+    image.src = imagenBase64;
+  });
+
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  const totalPreguntas = Number(configEvaluacion?.numPreguntas || 30);
+  const alternativasStr = configEvaluacion?.alternativas || 'ABCD';
+  const opciones = alternativasStr.split('');
+  const escalaX = canvas.width / 1830;
+  const escalaY = canvas.height / 2460;
+
+  ctx.save();
+  ctx.scale(escalaX, escalaY);
+  for (let p = 1; p <= totalPreguntas; p++) {
+    const col = p <= 25 ? 0 : 1;
+    const fila = p <= 25 ? p - 1 : p - 26;
+    const baseX = col === 0 ? 32 : 122;
+    const baseY = 56 + fila * 7.8;
+
+    const primX = Math.round((baseX - 16) * 10);
+    const ultX = Math.round((baseX + (opciones.length - 1) * 11 - 16) * 10);
+    const py = Math.round((baseY - 16) * 10);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(primX - 34, py - 34, (ultX - primX) + 250, 68);
+  }
+  ctx.restore();
+
+  const canvasRestaurado = document.createElement('canvas');
+  canvasRestaurado.width = img.width;
+  canvasRestaurado.height = img.height;
+  const ctxRest = canvasRestaurado.getContext('2d');
+  ctxRest.drawImage(img, 0, 0);
+
+  ctx.save();
+  ctx.scale(escalaX, escalaY);
+  for (let p = 1; p <= totalPreguntas; p++) {
+    const col = p <= 25 ? 0 : 1;
+    const fila = p <= 25 ? p - 1 : p - 26;
+    const baseX = col === 0 ? 32 : 122;
+    const baseY = 56 + fila * 7.8;
+    const py = Math.round((baseY - 16) * 10);
+
+    opciones.forEach((_, idx) => {
+      const cx = baseX + idx * 11;
+      const px = Math.round((cx - 16) * 10);
+      const sx = Math.max(0, Math.round((px - 22) * escalaX));
+      const sy = Math.max(0, Math.round((py - 22) * escalaY));
+      const sw = Math.max(1, Math.round(44 * escalaX));
+      const sh = Math.max(1, Math.round(44 * escalaY));
+      ctx.drawImage(
+        canvasRestaurado,
+        sx,
+        sy,
+        sw,
+        sh,
+        px - 22,
+        py - 22,
+        44,
+        44
+      );
+    });
+  }
+
+  pintarAnotacionesSobreCanvas(ctx, respuestasMap, configEvaluacion);
+  ctx.restore();
+
+  return canvas.toDataURL('image/jpeg', 0.72);
+}
+
 export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   const cv = await obtenerOpenCV();
 
@@ -233,7 +382,6 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     dstPts.delete();
     M.delete();
   } else {
-    // Ajuste adaptativo proporcional al tamaño/zoom real de la página (Carta, Oficio o A4)
     const x0 = Math.max(0, Math.round(canvas.width * 0.055));
     const y0 = Math.max(0, Math.round(canvas.height * 0.043));
     const rw = Math.max(10, Math.min(canvas.width - x0, Math.round(canvas.width * 0.85)));
@@ -331,47 +479,9 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     }
 
     respuestas[p] = respuestaFinal;
-
-    const itemPauta = pauta[p];
-    const clavesValidas = obtenerClavesItem(itemPauta);
-    const puntajeItem = obtenerPuntajeItem(itemPauta);
-    const esAnulada = puntajeItem === 0;
-    const esCorrecta = !esAnulada && clavesValidas.length > 0 && clavesValidas.includes(respuestaFinal);
-
-    const ultimaBurbuja = densidades[densidades.length - 1];
-    const posXIcono = ultimaBurbuja.px + 54;
-    const posYIcono = ultimaBurbuja.py;
-
-    densidades.forEach((d) => {
-      if (marcadas.some((m) => m.letra === d.letra)) {
-        outCtx.beginPath();
-        outCtx.arc(d.px, d.py, 28, 0, 2 * Math.PI);
-        outCtx.lineWidth = 6;
-        outCtx.strokeStyle = esAnulada ? '#64748b' : esCorrecta ? '#16a34a' : '#dc2626';
-        outCtx.stroke();
-      } else if (!esAnulada && clavesValidas.includes(d.letra) && !esCorrecta) {
-        outCtx.beginPath();
-        outCtx.arc(d.px, d.py, 26, 0, 2 * Math.PI);
-        outCtx.lineWidth = 4;
-        outCtx.strokeStyle = '#2563eb';
-        outCtx.stroke();
-      }
-    });
-
-    if (esAnulada) {
-      dibujarEtiquetaEstado(outCtx, posXIcono, posYIcono, 'ANULADA', '#64748b');
-    } else if (respuestaFinal === '') {
-      dibujarCruzRoja(outCtx, posXIcono, posYIcono);
-      dibujarEtiquetaEstado(outCtx, posXIcono + 22, posYIcono, 'BLANCO', '#64748b');
-    } else if (respuestaFinal === 'DOBLE') {
-      dibujarCruzRoja(outCtx, posXIcono, posYIcono);
-      dibujarEtiquetaEstado(outCtx, posXIcono + 22, posYIcono, 'DOBLE', '#d97706');
-    } else if (esCorrecta) {
-      dibujarTicketVerde(outCtx, posXIcono, posYIcono);
-    } else if (clavesValidas.length > 0) {
-      dibujarCruzRoja(outCtx, posXIcono, posYIcono);
-    }
   }
+
+  pintarAnotacionesSobreCanvas(outCtx, respuestas, configEvaluacion);
 
   src.delete();
   gray.delete();
@@ -386,6 +496,6 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   return {
     qrData,
     respuestas,
-    imagenProcesada: outCanvas.toDataURL('image/jpeg', 0.6)
+    imagenProcesada: outCanvas.toDataURL('image/jpeg', 0.65)
   };
 }

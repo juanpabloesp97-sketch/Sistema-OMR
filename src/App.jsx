@@ -15,7 +15,7 @@ import AnalisisPanel from './AnalisisPanel';
 import Login from './Login';
 import GestionUsuarios from './GestionUsuarios';
 import CamaraOMR from './CamaraOMR';
-import { procesarHojaOMR } from './omrEngine';
+import { procesarHojaOMR, actualizarAnotacionesImagenOMR } from './omrEngine';
 import { convertirPdfAImagenes } from './pdfToImages';
 import { supabase } from './supabaseClient';
 import {
@@ -3407,17 +3407,30 @@ export default function App() {
                   esVistaNivelCompleto={!cursoFiltroEfectivo}
                   onActualizarRespuesta={async (resultadoId, nuevasRespuestas) => {
                     const calificacion = evaluarRespuestasConPauta(nuevasRespuestas, config);
+                    const resultadoActual = resultadosCurso.find((r) => r.id === resultadoId);
+                    const nuevaImagenProcesada = resultadoActual?.imagenProcesada
+                      ? await actualizarAnotacionesImagenOMR(
+                          resultadoActual.imagenProcesada,
+                          nuevasRespuestas,
+                          config
+                        )
+                      : null;
 
                     if (supabase && resultadoId) {
+                      const updatePayload = {
+                        respuestas_alumno: nuevasRespuestas,
+                        puntaje_obtenido: calificacion.puntosObtenidos,
+                        puntaje_total: calificacion.puntosTotales,
+                        porcentaje: calificacion.porcentaje,
+                        nota: calificacion.nota
+                      };
+                      if (nuevaImagenProcesada) {
+                        updatePayload.imagen_corregida = nuevaImagenProcesada;
+                      }
+
                       const { error } = await supabase
                         .from('resultados')
-                        .update({
-                          respuestas_alumno: nuevasRespuestas,
-                          puntaje_obtenido: calificacion.puntosObtenidos,
-                          puntaje_total: calificacion.puntosTotales,
-                          porcentaje: calificacion.porcentaje,
-                          nota: calificacion.nota
-                        })
+                        .update(updatePayload)
                         .eq('id', resultadoId);
 
                       if (error) {
@@ -3435,7 +3448,8 @@ export default function App() {
                               puntaje: calificacion.puntosObtenidos,
                               total: calificacion.puntosTotales,
                               porcentaje: calificacion.porcentaje,
-                              nota: calificacion.nota
+                              nota: calificacion.nota,
+                              imagenProcesada: nuevaImagenProcesada || r.imagenProcesada
                             }
                           : r
                       )
