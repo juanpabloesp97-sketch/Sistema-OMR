@@ -1149,7 +1149,7 @@ export default function App() {
       doc.setTextColor(15, 23, 42);
       doc.setFontSize(12);
       doc.setFont('helvetica', 'bold');
-      doc.text(`${config.tituloPrueba} — Revisión OMR`, 18, 17);
+      doc.text(`${config.tituloPrueba} - Revision OMR`, 18, 17);
 
       doc.setFontSize(9);
       doc.setFont('helvetica', 'normal');
@@ -1172,7 +1172,7 @@ export default function App() {
       } else {
         doc.setTextColor(71, 85, 105);
         doc.setFontSize(8);
-        doc.text('Leyenda: [Verde] Correcta | [Rojo] Incorrecta | [Azul] Respuesta Correcta | BLANCO / DOBLE', 18, 44);
+        doc.text('Leyenda: [Verde] Correcta | [Rojo] Incorrecta | [Azul] Clave | [Gris] Anulada | BLANCO / DOBLE', 18, 44);
 
         for (let p = 1; p <= totalPreg; p++) {
           const col = p <= 25 ? 0 : 1;
@@ -1181,9 +1181,11 @@ export default function App() {
           const baseY = 52 + fila * 7.8;
 
           const respMarcada = respuestasAl[p] || '';
-          const itemPauta = config.pauta[p];
+          const itemPauta = (config.pauta || {})[p];
           const clavesValidas = obtenerClavesCorrectas(itemPauta);
-          const esCorrecta = clavesValidas.length > 0 && clavesValidas.includes(respMarcada);
+          const puntajeItem = obtenerPuntajeItem(itemPauta);
+          const esAnulada = puntajeItem === 0;
+          const esCorrecta = !esAnulada && clavesValidas.length > 0 && clavesValidas.includes(respMarcada);
 
           doc.setTextColor(15, 23, 42);
           doc.setFontSize(9);
@@ -1193,7 +1195,12 @@ export default function App() {
           opciones.forEach((letra, idx) => {
             const cx = baseX + idx * 10;
 
-            if (respMarcada === letra) {
+            if (esAnulada) {
+              doc.setDrawColor(148, 163, 184);
+              doc.setLineWidth(0.3);
+              doc.circle(cx, baseY, 2.7, 'S');
+              doc.setTextColor(148, 163, 184);
+            } else if (respMarcada === letra) {
               doc.setFillColor(esCorrecta ? 22 : 220, esCorrecta ? 163 : 38, esCorrecta ? 74 : 38);
               doc.circle(cx, baseY, 2.7, 'F');
               doc.setTextColor(255, 255, 255);
@@ -1218,7 +1225,10 @@ export default function App() {
           doc.setFontSize(7.5);
           doc.setFont('helvetica', 'bold');
 
-          if (respMarcada === '') {
+          if (esAnulada) {
+            doc.setTextColor(100, 116, 139);
+            doc.text('ANULADA', estadoX, baseY + 1);
+          } else if (respMarcada === '') {
             doc.setTextColor(100, 116, 139);
             doc.text('X  BLANCO', estadoX, baseY + 1);
           } else if (respMarcada === 'DOBLE') {
@@ -3017,7 +3027,8 @@ export default function App() {
                           puntaje_obtenido: calificacion.puntosObtenidos,
                           puntaje_total: calificacion.puntosTotales,
                           porcentaje: calificacion.porcentaje,
-                          nota: calificacion.nota
+                          nota: calificacion.nota,
+                          imagen_corregida: null
                         })
                         .eq('id', resultadoId);
 
@@ -3036,7 +3047,8 @@ export default function App() {
                               puntaje: calificacion.puntosObtenidos,
                               total: calificacion.puntosTotales,
                               porcentaje: calificacion.porcentaje,
-                              nota: calificacion.nota
+                              nota: calificacion.nota,
+                              imagenProcesada: null
                             }
                           : r
                       )
