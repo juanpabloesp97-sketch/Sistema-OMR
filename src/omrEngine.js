@@ -1,42 +1,12 @@
+import cvModule from '@techstark/opencv-js';
 import jsQR from 'jsqr';
 
-let cvCache = null;
-
 async function obtenerOpenCV() {
-  if (cvCache && cvCache.Mat) {
-    return cvCache;
-  }
-
-  const mod = await import('@techstark/opencv-js');
-  let candidato = mod && mod.default ? mod.default : mod;
-
-  if (candidato && typeof candidato.then === 'function') {
-    candidato = await candidato;
-    if (candidato && candidato.default) {
-      candidato = candidato.default;
-    }
-  }
-
-  if (candidato && candidato.Mat) {
-    cvCache = candidato;
-    return cvCache;
-  }
-
-  if (candidato) {
-    await new Promise((resolve) => {
-      const anterior = candidato.onRuntimeInitialized;
-      candidato.onRuntimeInitialized = () => {
-        if (typeof anterior === 'function') {
-          anterior();
-        }
-        resolve();
-      };
-    });
-    cvCache = candidato;
-    return cvCache;
-  }
-
-  throw new Error('No se pudo inicializar OpenCV');
+  if (cvModule && cvModule.Mat) return cvModule;
+  if (cvModule instanceof Promise) return await cvModule;
+  return new Promise((resolve) => {
+    cvModule.onRuntimeInitialized = () => resolve(cvModule);
+  });
 }
 
 function obtenerClavesItem(item) {
@@ -57,56 +27,33 @@ function leerCodigoQR(canvas) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const { width, height } = canvas;
 
-  const intentarDecodificar = (imageData, w, h) => {
-    const code = jsQR(imageData.data, w, h, { inversionAttempts: 'attemptBoth' });
-    if (code && code.data) {
-      try {
-        const parsed = JSON.parse(code.data);
-        return {
-          r: parsed.r || parsed.rut || 'Sin RUT',
-          n: parsed.n || parsed.nombre || 'Estudiante',
-          c: parsed.c || parsed.curso || '',
-          e: parsed.e || ''
-        };
-      } catch {
-        return { r: code.data, n: 'Estudiante QR', c: '' };
-      }
-    }
-    return null;
-  };
-
-  const cropX = Math.floor(width * 0.52);
+  const cropX = Math.floor(width * 0.55);
   const cropY = 0;
   const cropW = width - cropX;
-  const cropH = Math.floor(height * 0.32);
+  const cropH = Math.floor(height * 0.30);
+
   const cropData = ctx.getImageData(cropX, cropY, cropW, cropH);
+  let code = jsQR(cropData.data, cropW, cropH, { inversionAttempts: 'attemptBoth' });
 
-  let resultado = intentarDecodificar(cropData, cropW, cropH);
-  if (resultado) return resultado;
-
-  const binData = new ImageData(new Uint8ClampedArray(cropData.data), cropW, cropH);
-  const d = binData.data;
-  for (let i = 0; i < d.length; i += 4) {
-    const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-    const bw = lum < 155 ? 0 : 255;
-    d[i] = bw;
-    d[i + 1] = bw;
-    d[i + 2] = bw;
+  if (!code) {
+    const fullData = ctx.getImageData(0, 0, width, height);
+    code = jsQR(fullData.data, width, height, { inversionAttempts: 'attemptBoth' });
   }
-  resultado = intentarDecodificar(binData, cropW, cropH);
-  if (resultado) return resultado;
 
-  const smallCanvas = document.createElement('canvas');
-  smallCanvas.width = Math.floor(cropW * 0.55);
-  smallCanvas.height = Math.floor(cropH * 0.55);
-  const sCtx = smallCanvas.getContext('2d', { willReadFrequently: true });
-  sCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, smallCanvas.width, smallCanvas.height);
-  const smallData = sCtx.getImageData(0, 0, smallCanvas.width, smallCanvas.height);
-  resultado = intentarDecodificar(smallData, smallCanvas.width, smallCanvas.height);
-  if (resultado) return resultado;
-
-  const fullData = ctx.getImageData(0, 0, width, height);
-  return intentarDecodificar(fullData, width, height);
+  if (code && code.data) {
+    try {
+      const parsed = JSON.parse(code.data);
+      return {
+        r: parsed.r || parsed.rut || 'Sin RUT',
+        n: parsed.n || parsed.nombre || 'Estudiante',
+        c: parsed.c || parsed.curso || '',
+        e: parsed.e || ''
+      };
+    } catch {
+      return { r: code.data, n: 'Estudiante QR', c: '' };
+    }
+  }
+  return null;
 }
 
 function ordenarEsquinas(puntos) {
@@ -309,7 +256,7 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   const outCtx = outCanvas.getContext('2d');
 
   const radioPx = 21;
-  const radioNucleoPx = 11;
+  const radioNucleoPx = 12;
   const respuestas = {};
 
   for (let p = 1; p <= totalPreguntas; p++) {
@@ -356,16 +303,12 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
     const ordenadosRatio = [...densidades].sort((a, b) => a.ratio - b.ratio);
     const fondoFilaRatio = (ordenadosRatio[0].ratio + ordenadosRatio[1].ratio) / 2;
 
-    const ordenadosOscuridad = [...densidades].sort((a, b) => a.brilloNucleo - b.brilloNucleo);
-    const segundaMasOscuraBrillo = ordenadosOscuridad[1].brilloNucleo;
-    const fondoFilaBrillo = (ordenadosOscuridad[2].brilloNucleo + ordenadosOscuridad[3].brilloNucleo) / 2;
+    const ordenadosBrillo = [...densidades].sort((a, b) => b.brilloNucleo - a.brilloNucleo);
+    const fondoFilaBrillo = (ordenadosBrillo[0].brilloNucleo + ordenadosBrillo[1].brilloNucleo) / 2;
 
     const marcadas = densidades.filter((d) => {
-      const marcaFuerte = d.ratio > 0.36 && d.ratio - fondoFilaRatio > 0.16;
-      const marcaTenueGrafito =
-        d.brilloNucleo < 208 &&
-        fondoFilaBrillo - d.brilloNucleo > 32 &&
-        segundaMasOscuraBrillo - d.brilloNucleo >= 22;
+      const marcaFuerte = d.ratio > 0.32 && d.ratio - fondoFilaRatio > 0.14;
+      const marcaTenueGrafito = d.brilloNucleo < 195 && fondoFilaBrillo - d.brilloNucleo > 32;
       return marcaFuerte || marcaTenueGrafito;
     });
 
@@ -434,15 +377,9 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   warpedGray.delete();
   warpedBin.delete();
 
-  const previewCanvas = document.createElement('canvas');
-  previewCanvas.width = 915;
-  previewCanvas.height = 1230;
-  const previewCtx = previewCanvas.getContext('2d');
-  previewCtx.drawImage(outCanvas, 0, 0, previewCanvas.width, previewCanvas.height);
-
   return {
     qrData,
     respuestas,
-    imagenProcesada: previewCanvas.toDataURL('image/jpeg', 0.6)
+    imagenProcesada: outCanvas.toDataURL('image/jpeg', 0.6)
   };
 }
