@@ -274,6 +274,11 @@ export default function AnalisisPanel({
 
     setGuardandoIa(true);
     try {
+      setImagenesBajoDemanda((prev) => {
+      const copia = { ...prev };
+      delete copia[alumno.id];
+      return copia;
+    });
       await onActualizarRespuesta(alumno.id, nuevasRespuestas);
     } finally {
       setGuardandoIa(false);
@@ -297,6 +302,11 @@ export default function AnalisisPanel({
 
     setGuardandoDuda(true);
     try {
+      setImagenesBajoDemanda((prev) => {
+      const copia = { ...prev };
+      delete copia[alumno.id];
+      return copia;
+    });
       await onActualizarRespuesta(alumno.id, nuevasRespuestas);
       setClaveDudaSeleccionada('');
     } finally {

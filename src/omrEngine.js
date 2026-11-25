@@ -196,13 +196,32 @@ function dibujarCruzRoja(ctx, x, y) {
 
 function dibujarEtiquetaEstado(ctx, x, y, texto, colorFondo) {
   ctx.save();
-  ctx.font = 'bold 20px sans-serif';
-  const ancho = ctx.measureText(texto).width + 16;
+  ctx.font = 'bold 19px sans-serif';
+  const ancho = ctx.measureText(texto).width + 14;
   ctx.fillStyle = colorFondo;
-  ctx.fillRect(x, y - 15, ancho, 28);
+  ctx.fillRect(x, y - 14, ancho, 26);
   ctx.fillStyle = '#ffffff';
-  ctx.fillText(texto, x + 8, y + 6);
+  ctx.fillText(texto, x + 7, y + 5);
   ctx.restore();
+}
+
+function obtenerNivelAlcanzadoEnRubrica(itemPauta, ptsObtenidos) {
+  const rubrica = Array.isArray(itemPauta?.rubrica) ? itemPauta.rubrica : [];
+  if (rubrica.length === 0) return '';
+  let mejor = rubrica[0];
+  let menorDiff = Math.abs(Number(rubrica[0].puntaje || 0) - Number(ptsObtenidos));
+  for (const niv of rubrica) {
+    const diff = Math.abs(Number(niv.puntaje || 0) - Number(ptsObtenidos));
+    if (diff < menorDiff) {
+      menorDiff = diff;
+      mejor = niv;
+    }
+  }
+  return mejor?.nivel || '';
+}
+
+function normalizarNumeroTexto(val) {
+  return String(val ?? '').trim().replace(',', '.').toLowerCase();
 }
 
 function pintarAnotacionesSobreCanvas(outCtx, respuestas, configEvaluacion, paginaHoja = 1) {
@@ -210,72 +229,159 @@ function pintarAnotacionesSobreCanvas(outCtx, respuestas, configEvaluacion, pagi
   const opciones = alternativasStr.split('');
   const pauta = configEvaluacion?.pauta || {};
   const respMap = respuestas || {};
+  const iaMap = respMap._ia || {};
 
   const { seccionesP1, seccionesP2 } = construirMapaPaginasDesdeConfig(configEvaluacion);
   const sec = paginaHoja === 2 ? seccionesP2 : seccionesP1;
   const soloAlternativas = sec.completacion.length === 0 && sec.desarrollo.length === 0;
-  const inicioYAlt = soloAlternativas ? 56 : 62.2;
-  const mitad = soloAlternativas ? 25 : Math.ceil(sec.alternativas.length / 2);
+  let yCursor = 54;
 
-  sec.alternativas.forEach(({ p }, idxItem) => {
-    const col = idxItem < mitad ? 0 : 1;
-    const fila = idxItem < mitad ? idxItem : idxItem - mitad;
-    const baseX = col === 0 ? 32 : 122;
-    const baseY = inicioYAlt + fila * 7.8;
+  if (sec.alternativas.length > 0) {
+    const inicioYAlt = soloAlternativas ? 56 : 62.2;
+    const mitad = soloAlternativas ? 25 : Math.ceil(sec.alternativas.length / 2);
 
-    const burbujas = opciones.map((letra, idx) => {
-      const cx = baseX + idx * 11;
-      const px = Math.round((cx - 16) * 10);
-      const py = Math.round((baseY - 16) * 10);
-      return { letra, px, py };
-    });
+    sec.alternativas.forEach(({ p }, idxItem) => {
+      const col = idxItem < mitad ? 0 : 1;
+      const fila = idxItem < mitad ? idxItem : idxItem - mitad;
+      const baseX = col === 0 ? 32 : 122;
+      const baseY = inicioYAlt + fila * 7.8;
 
-    const respuestaFinal = respMap[p] || '';
-    const itemPauta = pauta[p];
-    const clavesValidas = obtenerClavesItem(itemPauta);
-    const puntajeItem = obtenerPuntajeItem(itemPauta);
-    const esAnulada = puntajeItem === 0;
-    const esCorrecta =
-      !esAnulada &&
-      clavesValidas.length > 0 &&
-      respuestaFinal !== '' &&
-      respuestaFinal !== 'DOBLE' &&
-      clavesValidas.includes(respuestaFinal);
+      const burbujas = opciones.map((letra, idx) => {
+        const cx = baseX + idx * 11;
+        const px = Math.round((cx - 16) * 10);
+        const py = Math.round((baseY - 16) * 10);
+        return { letra, px, py };
+      });
 
-    const ultimaBurbuja = burbujas[burbujas.length - 1];
-    const posXIcono = ultimaBurbuja.px + 54;
-    const posYIcono = ultimaBurbuja.py;
+      const respuestaFinal = respMap[p] || '';
+      const itemPauta = pauta[p];
+      const clavesValidas = obtenerClavesItem(itemPauta);
+      const puntajeItem = obtenerPuntajeItem(itemPauta);
+      const esAnulada = puntajeItem === 0;
+      const esCorrecta =
+        !esAnulada &&
+        clavesValidas.length > 0 &&
+        respuestaFinal !== '' &&
+        respuestaFinal !== 'DOBLE' &&
+        clavesValidas.includes(respuestaFinal);
 
-    burbujas.forEach((b) => {
-      if (respuestaFinal === b.letra) {
-        outCtx.beginPath();
-        outCtx.arc(b.px, b.py, 28, 0, 2 * Math.PI);
-        outCtx.lineWidth = 6;
-        outCtx.strokeStyle = esAnulada ? '#64748b' : esCorrecta ? '#16a34a' : '#dc2626';
-        outCtx.stroke();
-      } else if (!esAnulada && clavesValidas.includes(b.letra) && !esCorrecta) {
-        outCtx.beginPath();
-        outCtx.arc(b.px, b.py, 26, 0, 2 * Math.PI);
-        outCtx.lineWidth = 4;
-        outCtx.strokeStyle = '#2563eb';
-        outCtx.stroke();
+      const ultimaBurbuja = burbujas[burbujas.length - 1];
+      const posXIcono = ultimaBurbuja.px + 50;
+      const posYIcono = ultimaBurbuja.py;
+
+      burbujas.forEach((b) => {
+        if (respuestaFinal === b.letra) {
+          outCtx.beginPath();
+          outCtx.arc(b.px, b.py, 28, 0, 2 * Math.PI);
+          outCtx.lineWidth = 6;
+          outCtx.strokeStyle = esAnulada ? '#64748b' : esCorrecta ? '#16a34a' : '#dc2626';
+          outCtx.stroke();
+        } else if (!esAnulada && clavesValidas.includes(b.letra) && !esCorrecta) {
+          outCtx.beginPath();
+          outCtx.arc(b.px, b.py, 26, 0, 2 * Math.PI);
+          outCtx.lineWidth = 4;
+          outCtx.strokeStyle = '#2563eb';
+          outCtx.stroke();
+        }
+      });
+
+      if (esAnulada) {
+        dibujarEtiquetaEstado(outCtx, posXIcono, posYIcono, 'ANULADA', '#64748b');
+      } else if (respuestaFinal === '') {
+        dibujarCruzRoja(outCtx, posXIcono, posYIcono);
+        dibujarEtiquetaEstado(outCtx, posXIcono + 22, posYIcono, 'BLANCO', '#64748b');
+      } else if (respuestaFinal === 'DOBLE') {
+        dibujarCruzRoja(outCtx, posXIcono, posYIcono);
+        dibujarEtiquetaEstado(outCtx, posXIcono + 22, posYIcono, 'DOBLE', '#d97706');
+      } else if (esCorrecta) {
+        dibujarTicketVerde(outCtx, posXIcono, posYIcono);
+      } else if (clavesValidas.length > 0) {
+        dibujarCruzRoja(outCtx, posXIcono, posYIcono);
       }
     });
 
-    if (esAnulada) {
-      dibujarEtiquetaEstado(outCtx, posXIcono, posYIcono, 'ANULADA', '#64748b');
-    } else if (respuestaFinal === '') {
-      dibujarCruzRoja(outCtx, posXIcono, posYIcono);
-      dibujarEtiquetaEstado(outCtx, posXIcono + 22, posYIcono, 'BLANCO', '#64748b');
-    } else if (respuestaFinal === 'DOBLE') {
-      dibujarCruzRoja(outCtx, posXIcono, posYIcono);
-      dibujarEtiquetaEstado(outCtx, posXIcono + 22, posYIcono, 'DOBLE', '#d97706');
-    } else if (esCorrecta) {
-      dibujarTicketVerde(outCtx, posXIcono, posYIcono);
-    } else if (clavesValidas.length > 0) {
-      dibujarCruzRoja(outCtx, posXIcono, posYIcono);
-    }
-  });
+    const filasUsadas = Math.min(mitad, sec.alternativas.length);
+    yCursor = inicioYAlt + filasUsadas * 7.8 + 3;
+  }
+
+  if (sec.completacion.length > 0) {
+    yCursor += 6.8;
+    const mitadComp = Math.ceil(sec.completacion.length / 2);
+
+    sec.completacion.forEach(({ p, item }, idx) => {
+      const col = idx < mitadComp ? 0 : 1;
+      const fila = idx < mitadComp ? idx : idx - mitadComp;
+      const xBox = col === 0 ? 34 : 122;
+      const yRow = yCursor + fila * 13;
+
+      const ptsMax = obtenerPuntajeItem(item);
+      const infoIa = iaMap[p] || {};
+      const ptsObtenidos = infoIa.puntajeFinal !== undefined && infoIa.puntajeFinal !== null
+        ? Number(infoIa.puntajeFinal)
+        : infoIa.puntajeSugerido !== undefined && infoIa.puntajeSugerido !== null
+        ? Number(infoIa.puntajeSugerido)
+        : 0;
+
+      const pxDer = Math.round((xBox + 67 - 16) * 10);
+      const pyCentro = Math.round((yRow + 5.2 - 16) * 10);
+
+      if (ptsMax === 0) {
+        dibujarEtiquetaEstado(outCtx, pxDer, pyCentro, 'ANULADA', '#64748b');
+      } else if (ptsObtenidos >= ptsMax && ptsMax > 0) {
+        dibujarTicketVerde(outCtx, pxDer + 14, pyCentro);
+        dibujarEtiquetaEstado(outCtx, pxDer + 36, pyCentro, `OK (${ptsObtenidos}/${ptsMax} pt)`, '#16a34a');
+      } else {
+        const esp = normalizarNumeroTexto(item?.respuestaExacta || '');
+        dibujarCruzRoja(outCtx, pxDer + 14, pyCentro);
+        dibujarEtiquetaEstado(
+          outCtx,
+          pxDer + 36,
+          pyCentro,
+          esp ? `Esp: ${item.respuestaExacta} (${ptsObtenidos}/${ptsMax})` : `${ptsObtenidos}/${ptsMax} pt`,
+          '#dc2626'
+        );
+      }
+    });
+
+    yCursor += mitadComp * 13 + 3;
+  }
+
+  if (sec.desarrollo.length > 0) {
+    yCursor += 6.5;
+
+    sec.desarrollo.forEach(({ p, item }) => {
+      const numLineas = Math.max(3, Number(item?.lineas || 5));
+      const interlineado = 7.5;
+      const altoCaja = 5.5 + numLineas * interlineado;
+
+      const ptsMax = obtenerPuntajeItem(item);
+      const infoIa = iaMap[p] || {};
+      const ptsObtenidos = infoIa.puntajeFinal !== undefined && infoIa.puntajeFinal !== null
+        ? Number(infoIa.puntajeFinal)
+        : infoIa.puntajeSugerido !== undefined && infoIa.puntajeSugerido !== null
+        ? Number(infoIa.puntajeSugerido)
+        : 0;
+
+      const nivelNombre = obtenerNivelAlcanzadoEnRubrica(item, ptsObtenidos);
+      const labelDes = nivelNombre
+        ? `${ptsObtenidos}/${ptsMax} pts — ${nivelNombre}`
+        : `${ptsObtenidos}/${ptsMax} pts`;
+
+      const pxBadge = Math.round((191 - 16) * 10);
+      const pyBadge = Math.round((yCursor + 2.5 - 16) * 10);
+
+      outCtx.save();
+      outCtx.font = 'bold 17px sans-serif';
+      const ancho = outCtx.measureText(labelDes).width + 16;
+      outCtx.fillStyle = ptsObtenidos >= ptsMax ? '#16a34a' : ptsObtenidos > 0 ? '#7c3aed' : '#dc2626';
+      outCtx.fillRect(pxBadge - ancho, pyBadge - 12, ancho, 24);
+      outCtx.fillStyle = '#ffffff';
+      outCtx.fillText(labelDes, pxBadge - ancho + 8, pyBadge + 5);
+      outCtx.restore();
+
+      yCursor += altoCaja + 4;
+    });
+  }
 }
 
 export async function actualizarAnotacionesImagenOMR(imagenBase64, respuestasMap, configEvaluacion) {
@@ -304,6 +410,7 @@ export async function actualizarAnotacionesImagenOMR(imagenBase64, respuestasMap
   const inicioYAlt = soloAlternativas ? 56 : 62.2;
   const mitad = soloAlternativas ? 25 : Math.ceil(seccionesP1.alternativas.length / 2);
 
+  // Limpia toda la franja de cada fila (incluyendo etiquetas BLANCO / DOBLE / cruces anteriores)
   ctx.save();
   ctx.scale(escalaX, escalaY);
   seccionesP1.alternativas.forEach((_, idxItem) => {
@@ -317,44 +424,7 @@ export async function actualizarAnotacionesImagenOMR(imagenBase64, respuestasMap
     const py = Math.round((baseY - 16) * 10);
 
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(primX - 34, py - 34, (ultX - primX) + 250, 68);
-  });
-  ctx.restore();
-
-  const canvasRestaurado = document.createElement('canvas');
-  canvasRestaurado.width = img.width;
-  canvasRestaurado.height = img.height;
-  const ctxRest = canvasRestaurado.getContext('2d');
-  ctxRest.drawImage(img, 0, 0);
-
-  ctx.save();
-  ctx.scale(escalaX, escalaY);
-  seccionesP1.alternativas.forEach((_, idxItem) => {
-    const col = idxItem < mitad ? 0 : 1;
-    const fila = idxItem < mitad ? idxItem : idxItem - mitad;
-    const baseX = col === 0 ? 32 : 122;
-    const baseY = inicioYAlt + fila * 7.8;
-    const py = Math.round((baseY - 16) * 10);
-
-    opciones.forEach((_, idx) => {
-      const cx = baseX + idx * 11;
-      const px = Math.round((cx - 16) * 10);
-      const sx = Math.max(0, Math.round((px - 22) * escalaX));
-      const sy = Math.max(0, Math.round((py - 22) * escalaY));
-      const sw = Math.max(1, Math.round(44 * escalaX));
-      const sh = Math.max(1, Math.round(44 * escalaY));
-      ctx.drawImage(
-        canvasRestaurado,
-        sx,
-        sy,
-        sw,
-        sh,
-        px - 22,
-        py - 22,
-        44,
-        44
-      );
-    });
+    ctx.fillRect(primX - 36, py - 35, (ultX - primX) + 330, 70);
   });
 
   pintarAnotacionesSobreCanvas(ctx, respuestasMap, configEvaluacion, 1);

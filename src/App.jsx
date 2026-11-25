@@ -1800,11 +1800,13 @@ export default function App() {
       const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
       const opciones = config.alternativas.split('');
       const totalPreg = Number(config.numPreguntas);
+      const secciones = obtenerSeccionesPauta(config);
 
       for (let i = 0; i < listaOrdenada.length; i++) {
         if (i > 0) doc.addPage();
         const res = listaOrdenada[i];
         const respuestasAl = res.respuestas || {};
+        const iaMapAl = respuestasAl._ia || {};
         const imgHojaRes = (res.id && mapaImagenes.get(res.id)) || res.imagenProcesada || null;
 
         actualizarBarra(
@@ -1914,6 +1916,102 @@ export default function App() {
               doc.text(`X (${clavesValidas.join('/')})`, estadoX, baseY + 1);
             }
           }
+        }
+
+        if (secciones.desarrollo.length > 0) {
+          doc.addPage();
+          let yRub = 14;
+
+          doc.setFillColor(245, 243, 255);
+          doc.setDrawColor(196, 181, 253);
+          doc.roundedRect(14, yRub, 188, 16, 2.5, 2.5, 'FD');
+          doc.setTextColor(76, 29, 149);
+          doc.setFontSize(11);
+          doc.setFont('helvetica', 'bold');
+          doc.text(`RÚBRICA DE EVALUACIÓN — ${res.nombre}`, 18, yRub + 6.5);
+          doc.setFontSize(8.5);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(51, 65, 85);
+          doc.text(`${config.tituloPrueba}   |   RUT: ${res.rut}   |   Curso: ${res.curso || '-'}`, 18, yRub + 12.5);
+          yRub += 22;
+
+          secciones.desarrollo.forEach(({ p, item }) => {
+            const ptsMax = obtenerPuntajeItem(item);
+            const infoIa = iaMapAl[p] || {};
+            const ptsObtenidos = infoIa.puntajeFinal !== undefined && infoIa.puntajeFinal !== null
+              ? Number(infoIa.puntajeFinal)
+              : infoIa.puntajeSugerido !== undefined && infoIa.puntajeSugerido !== null
+              ? Number(infoIa.puntajeSugerido)
+              : 0;
+
+            const rubrica = Array.isArray(item?.rubrica) ? item.rubrica : [];
+            let idxAlcanzado = 0;
+            if (rubrica.length > 0) {
+              let minDiff = Math.abs(Number(rubrica[0].puntaje || 0) - ptsObtenidos);
+              rubrica.forEach((niv, idxN) => {
+                const diff = Math.abs(Number(niv.puntaje || 0) - ptsObtenidos);
+                if (diff < minDiff) {
+                  minDiff = diff;
+                  idxAlcanzado = idxN;
+                }
+              });
+            }
+
+            const altoBloqueBase = 16 + Math.max(1, rubrica.length) * 11;
+            if (yRub + altoBloqueBase > 265) {
+              doc.addPage();
+              yRub = 14;
+            }
+
+            doc.setDrawColor(203, 213, 225);
+            doc.setFillColor(248, 250, 252);
+            doc.rect(14, yRub, 188, 7.5, 'FD');
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(9);
+            doc.setTextColor(15, 23, 42);
+            doc.text(`Pregunta ${p} ${item?.oa ? `(${item.oa})` : ''}`, 17, yRub + 5);
+            doc.setTextColor(109, 40, 217);
+            doc.text(`Puntaje: ${ptsObtenidos} / ${ptsMax} pts`, 199, yRub + 5, { align: 'right' });
+            yRub += 9;
+
+            if (item?.enunciado) {
+              const enunLineas = doc.splitTextToSize(`Enunciado: ${item.enunciado}`, 182);
+              doc.setFont('helvetica', 'normal');
+              doc.setFontSize(8);
+              doc.setTextColor(51, 65, 85);
+              doc.text(enunLineas.slice(0, 2), 17, yRub + 3.5);
+              yRub += enunLineas.slice(0, 2).length * 4 + 2;
+            }
+
+            rubrica.forEach((niv, idxN) => {
+              const esAlcanzado = idxN === idxAlcanzado;
+              const descLineas = doc.splitTextToSize(niv.descriptor || '-', 126).slice(0, 2);
+              const hFila = Math.max(8.5, descLineas.length * 3.8 + 3);
+
+              if (yRub + hFila > 266) {
+                doc.addPage();
+                yRub = 14;
+              }
+
+              doc.setDrawColor(esAlcanzado ? 22 : 226, esAlcanzado ? 163 : 232, esAlcanzado ? 74 : 240);
+              doc.setFillColor(esAlcanzado ? 240 : 255, esAlcanzado ? 253 : 255, esAlcanzado ? 244 : 255);
+              doc.rect(14, yRub, 188, hFila, 'FD');
+
+              doc.setFont('helvetica', 'bold');
+              doc.setFontSize(8);
+              doc.setTextColor(esAlcanzado ? 22 : 71, esAlcanzado ? 163 : 85, esAlcanzado ? 74 : 105);
+              doc.text(`${esAlcanzado ? '✓ ' : ''}${niv.nivel} (${niv.puntaje} pts)`, 17, yRub + 4.5);
+
+              doc.setFont('helvetica', 'normal');
+              doc.setFontSize(7.6);
+              doc.setTextColor(30, 41, 59);
+              doc.text(descLineas, 70, yRub + 4.2);
+
+              yRub += hFila + 1.5;
+            });
+
+            yRub += 5;
+          });
         }
       }
 
