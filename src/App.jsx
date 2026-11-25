@@ -6,7 +6,7 @@ import {
   Cloud, BarChart3, Printer, Clock, AlertCircle, Save, Trash2, UserPlus,
   UserX, UserCheck, Share2, GraduationCap, Users, FolderOpen, ArrowLeft,
   FilePlus2, Filter, Eye, Upload, ShieldAlert, RefreshCw, Search, ArrowRight, X,
-  ChevronUp, ChevronDown
+  ChevronUp, ChevronDown, Image as ImageIcon
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import VisorCurso from './VisorCurso';
@@ -17,6 +17,7 @@ import GestionUsuarios from './GestionUsuarios';
 import CamaraOMR from './CamaraOMR';
 import { procesarHojaOMR, actualizarAnotacionesImagenOMR } from './omrEngine';
 import { convertirPdfAImagenes } from './pdfToImages';
+import { procesarLogoBlancoYNegro } from './utils/logoEscuela';
 import { supabase } from './supabaseClient';
 import {
   MATRIZ_DEFECTO,
@@ -103,6 +104,15 @@ export default function App() {
   });
   const [permisosActivos, setPermisosActivos] = useState(() => obtenerPermisosRol(MATRIZ_DEFECTO, 'docente'));
 
+  const [logoEscuela, setLogoEscuela] = useState(() => {
+    try {
+      return localStorage.getItem('omr_logo_escuela') || null;
+    } catch {
+      return null;
+    }
+  });
+  const [guardandoLogo, setGuardandoLogo] = useState(false);
+
   const [vistaActiva, setVistaActiva] = useState('inicio');
   const [nivelActivoId, setNivelActivoId] = useState('');
   const [cursoActivoId, setCursoActivoId] = useState('');
@@ -178,6 +188,80 @@ export default function App() {
     setBarraTitulo(titulo);
     setBarraPct(porcentaje);
     setBarraDetalle(detalle);
+  };
+
+  const cargarLogoInstitucionalNube = async () => {
+    if (!supabase) return;
+    try {
+      const { data, error } = await supabase
+        .from('configuracion_institucional')
+        .select('logo_url')
+        .eq('id', 'default')
+        .maybeSingle();
+
+      if (!error && data) {
+        const urlNube = data.logo_url || null;
+        setLogoEscuela(urlNube);
+        if (urlNube) {
+          localStorage.setItem('omr_logo_escuela', urlNube);
+        } else {
+          localStorage.removeItem('omr_logo_escuela');
+        }
+      }
+    } catch (err) {
+      console.warn('No se pudo sincronizar logo institucional:', err);
+    }
+  };
+
+  const manejarSubidaLogo = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setGuardandoLogo(true);
+    try {
+      const dataUrlBN = await procesarLogoBlancoYNegro(file);
+
+      if (supabase) {
+        const { error } = await supabase
+          .from('configuracion_institucional')
+          .upsert([{ id: 'default', logo_url: dataUrlBN, updated_at: new Date().toISOString() }]);
+
+        if (error) {
+          alert('Error al guardar el logo en la nube: ' + error.message);
+          return;
+        }
+      }
+
+      setLogoEscuela(dataUrlBN);
+      localStorage.setItem('omr_logo_escuela', dataUrlBN);
+      alert('Logo institucional actualizado para todos los docentes de la escuela.');
+    } catch {
+      alert('No se pudo procesar el logo. Intenta con una imagen PNG o JPG.');
+    } finally {
+      setGuardandoLogo(false);
+      e.target.value = '';
+    }
+  };
+
+  const eliminarLogoEscuela = async () => {
+    if (!confirm('¿Quitar el logo institucional para todos los docentes de la escuela?')) return;
+    setGuardandoLogo(true);
+    try {
+      if (supabase) {
+        const { error } = await supabase
+          .from('configuracion_institucional')
+          .upsert([{ id: 'default', logo_url: null, updated_at: new Date().toISOString() }]);
+
+        if (error) {
+          alert('Error al quitar el logo en la nube: ' + error.message);
+          return;
+        }
+      }
+
+      setLogoEscuela(null);
+      localStorage.removeItem('omr_logo_escuela');
+    } finally {
+      setGuardandoLogo(false);
+    }
   };
 
   const alternarOrdenHojasCorregidas = (col) => {
@@ -444,6 +528,7 @@ export default function App() {
 
       setProfesor(perfilFinal);
       const permsUsuario = await cargarPermisosDeRol(rolFinal);
+      await cargarLogoInstitucionalNube();
       actualizarBarra(true, 'Cargando estructura escolar...', 55, 'Niveles y cursos...');
 
       setConfig((prev) => ({
@@ -1151,6 +1236,145 @@ export default function App() {
     setSeleccionadosImprimir((prev) => prev.filter((r) => r !== rut));
   };
 
+  const dibujarCabeceraHojaOMR = (doc, {
+    tituloPrueba,
+    asignatura,
+    totalPreg,
+    alternativas,
+    nombreEstudiante,
+    rutEstudiante,
+    cursoEstudiante,
+    qrDataUrl = null,
+    esHojaBlanca = false
+  }) => {
+    doc.setFillColor(0, 0, 0);
+    doc.rect(12, 12, 8, 8, 'F');
+    doc.rect(195, 12, 8, 8, 'F');
+    doc.rect(12, 258, 8, 8, 'F');
+    doc.rect(195, 258, 8, 8, 'F');
+
+    const topY = 12;
+    const boxH = 31;
+    doc.setDrawColor(0, 0, 0);
+    doc.setTextColor(0, 0, 0);
+    doc.setLineWidth(0.35);
+
+    // 1. RECUADRO LOGO DE LA ESCUELA (X: 23 a 50 mm -> ancho 27 mm)
+    doc.rect(23, topY, 27, boxH);
+    if (logoEscuela) {
+      doc.addImage(logoEscuela, 'PNG', 25, topY + 3.5, 23, 24, undefined, 'FAST');
+    } else {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(120, 120, 120);
+      doc.text('LOGO', 36.5, topY + 14.5, { align: 'center' });
+      doc.text('INSTITUCIÓN', 36.5, topY + 18, { align: 'center' });
+      doc.setTextColor(0, 0, 0);
+    }
+
+    // 2. RECUADRO DATOS DE LA PRUEBA (X: 52 a 106 mm -> ancho 54 mm)
+    doc.rect(52, topY, 54, boxH);
+    doc.setFillColor(235, 235, 235);
+    doc.rect(52, topY, 54, 5.2, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.8);
+    doc.text('DATOS DE LA EVALUACIÓN', 54, topY + 3.6);
+
+    doc.setFontSize(8);
+    const tituloLineas = doc.splitTextToSize((tituloPrueba || 'EVALUACIÓN').toUpperCase(), 50);
+    doc.text(tituloLineas.slice(0, 2), 54, topY + 9.5);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    const asigLineas = doc.splitTextToSize(`Asignatura: ${asignatura || '-'}`, 50);
+    doc.text(asigLineas[0], 54, topY + 20.5);
+    doc.text(`Ítems: ${totalPreg} (${alternativas})`, 54, topY + 26.5);
+
+    // 3. RECUADRO DATOS DEL ESTUDIANTE (X: 108 a 161 mm -> ancho 53 mm)
+    doc.rect(108, topY, 53, boxH);
+    doc.setFillColor(235, 235, 235);
+    doc.rect(108, topY, 53, 5.2, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.8);
+    doc.text('DATOS DEL ESTUDIANTE', 110, topY + 3.6);
+
+    if (esHojaBlanca) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.3);
+      doc.text('Nombre:', 110, topY + 10);
+      doc.line(122, topY + 10.3, 159, topY + 10.3);
+      doc.line(110, topY + 15.8, 159, topY + 15.8);
+
+      doc.text('RUT:', 110, topY + 22.3);
+      doc.line(118, topY + 22.6, 159, topY + 22.6);
+
+      doc.text('Curso:', 110, topY + 27.8);
+      if (cursoEstudiante) {
+        doc.setFont('helvetica', 'bold');
+        doc.text(cursoEstudiante, 120, topY + 27.8);
+        doc.setFont('helvetica', 'normal');
+      } else {
+        doc.line(120, topY + 28.1, 159, topY + 28.1);
+      }
+    } else {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.text('Nombre:', 110, topY + 9.2);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      const nombreLineas = doc.splitTextToSize(nombreEstudiante || '', 49);
+      doc.text(nombreLineas.slice(0, 2), 110, topY + 13.5);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.text(`RUT: ${rutEstudiante || '-'}`, 110, topY + 22.8);
+      doc.text(`Curso: ${cursoEstudiante || '-'}`, 110, topY + 27.8);
+    }
+
+    // 4. RECUADRO CÓDIGO QR + PRECAUCIÓN (X: 163 a 192 mm -> ancho 29 mm)
+    doc.rect(163, topY, 29, boxH);
+    if (qrDataUrl) {
+      doc.addImage(qrDataUrl, 'PNG', 166.5, topY + 1, 22, 22);
+      doc.setLineWidth(0.25);
+      doc.line(163, topY + 23.8, 192, topY + 23.8);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(5.1);
+      doc.text('PRECAUCIÓN:', 177.5, topY + 26.6, { align: 'center' });
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(4.9);
+      doc.text('No rayes este código QR', 177.5, topY + 29.4, { align: 'center' });
+    } else {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.5);
+      doc.setTextColor(90, 90, 90);
+      doc.text('HOJA EN BLANCO', 177.5, topY + 13, { align: 'center' });
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6);
+      doc.text('(SIN QR)', 177.5, topY + 16.5, { align: 'center' });
+      doc.setTextColor(0, 0, 0);
+      doc.setLineWidth(0.25);
+      doc.line(163, topY + 23.8, 192, topY + 23.8);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(5.1);
+      doc.text('PRECAUCIÓN:', 177.5, topY + 26.6, { align: 'center' });
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(4.9);
+      doc.text('No rayes este recuadro', 177.5, topY + 29.4, { align: 'center' });
+    }
+
+    // BARRA INFERIOR DE INSTRUCCIONES (X: 23 a 192 mm)
+    doc.setLineWidth(0.25);
+    doc.rect(23, 45, 169, 5.2);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.7);
+    doc.text(
+      'INSTRUCCIONES: Rellena completamente el círculo con lápiz grafito o pasta negro/azul. Evita doblar o manchar la hoja.',
+      107.5,
+      48.5,
+      { align: 'center' }
+    );
+  };
+
   const imprimirHojasPDF = async (listaEstudiantesAImprimir, sufijoArchivo = '') => {
     if (!listaEstudiantesAImprimir || listaEstudiantesAImprimir.length === 0) {
       alert('No hay estudiantes seleccionados para imprimir.');
@@ -1186,21 +1410,6 @@ export default function App() {
           `Generando hoja ${i + 1} de ${listaOrdenada.length} (${est.nombre})...`
         );
 
-        doc.setFillColor(0, 0, 0);
-        doc.rect(12, 12, 8, 8, 'F');
-        doc.rect(195, 12, 8, 8, 'F');
-        doc.rect(12, 258, 8, 8, 'F');
-        doc.rect(195, 258, 8, 8, 'F');
-
-        doc.setFontSize(14);
-        doc.setFont('helvetica', 'bold');
-        doc.text(config.tituloPrueba, 25, 20);
-        doc.setFontSize(10);
-        doc.setFont('helvetica', 'normal');
-        doc.text(`Asignatura: ${config.asignatura}`, 25, 26);
-        doc.text(`Estudiante: ${est.nombre}`, 25, 32);
-        doc.text(`RUT: ${est.rut}   |   Curso: ${nombreCursoEst || '-'}`, 25, 38);
-
         const qrPayload = JSON.stringify({
           r: est.rut,
           n: est.nombre,
@@ -1208,7 +1417,18 @@ export default function App() {
           e: config.id || ''
         });
         const qrDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 120 });
-        doc.addImage(qrDataUrl, 'PNG', 162, 14, 28, 28);
+
+        dibujarCabeceraHojaOMR(doc, {
+          tituloPrueba: config.tituloPrueba,
+          asignatura: config.asignatura,
+          totalPreg,
+          alternativas: config.alternativas,
+          nombreEstudiante: est.nombre,
+          rutEstudiante: est.rut,
+          cursoEstudiante: nombreCursoEst,
+          qrDataUrl,
+          esHojaBlanca: false
+        });
 
         doc.setDrawColor(60, 60, 60);
         doc.setLineWidth(0.3);
@@ -1263,28 +1483,17 @@ export default function App() {
           `Generando hoja en blanco ${i + 1} de ${cant}...`
         );
 
-        doc.setFillColor(0, 0, 0);
-        doc.rect(12, 12, 8, 8, 'F');
-        doc.rect(195, 12, 8, 8, 'F');
-        doc.rect(12, 258, 8, 8, 'F');
-        doc.rect(195, 258, 8, 8, 'F');
-
-        doc.setFontSize(14);
-        doc.setFont('helvetica', 'bold');
-        doc.text(config.tituloPrueba || 'Evaluación', 25, 20);
-        doc.setFontSize(10);
-        doc.setFont('helvetica', 'normal');
-        doc.text(`Asignatura: ${config.asignatura}`, 25, 26);
-        doc.text('Estudiante: __________________________________________', 25, 32);
-        doc.text(`RUT: _____________________   |   Curso: ${nombreCursoRef || '______________'}`, 25, 38);
-
-        doc.setDrawColor(148, 163, 184);
-        doc.rect(162, 14, 28, 28, 'S');
-        doc.setFontSize(7.5);
-        doc.setTextColor(100, 116, 139);
-        doc.text('HOJA EN BLANCO', 176, 27, { align: 'center' });
-        doc.text('(SIN QR)', 176, 31, { align: 'center' });
-        doc.setTextColor(0, 0, 0);
+        dibujarCabeceraHojaOMR(doc, {
+          tituloPrueba: config.tituloPrueba || 'Evaluación',
+          asignatura: config.asignatura,
+          totalPreg,
+          alternativas: config.alternativas,
+          nombreEstudiante: '',
+          rutEstudiante: '',
+          cursoEstudiante: nombreCursoRef,
+          qrDataUrl: null,
+          esHojaBlanca: true
+        });
 
         doc.setDrawColor(60, 60, 60);
         doc.setLineWidth(0.3);
@@ -1977,6 +2186,7 @@ export default function App() {
   const puedeGestionarUsuarios =
     puedeCrearPerfilesActual || puedeEditarPerfilesActual || puedeConfigurarMatrizActual;
   const puedeCrearEvaluaciones = esSuperAdmin || Boolean(permisosActivos?.crear_evaluaciones);
+  const puedeAdministrarLogoInstitucional = esSuperAdmin || Boolean(permisosActivos?.configurar_matriz_permisos);
 
   const nivelActualObj = niveles.find((n) => n.id === nivelActivoId);
   const cursoActualObj = cursos.find((c) => c.id === cursoActivoId);
@@ -2606,6 +2816,88 @@ export default function App() {
               </button>
             </div>
 
+            <div style={{ marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <ImageIcon size={18} color="#2563eb" />
+                Logo Institucional Compartido (Hojas de Respuesta)
+              </h3>
+              <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>
+                {puedeAdministrarLogoInstitucional
+                  ? 'Como administrador, el logo que subas aquí se sincroniza en la nube y aparece automáticamente en las hojas de respuesta de todos los docentes del colegio.'
+                  : 'Este logo institucional está sincronizado para todos los docentes del colegio y se imprime automáticamente en tus hojas de respuesta.'}
+              </p>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+                <div
+                  style={{
+                    width: '72px',
+                    height: '72px',
+                    borderRadius: '10px',
+                    border: '1px dashed #94a3b8',
+                    background: '#f8fafc',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    overflow: 'hidden',
+                    padding: '6px'
+                  }}
+                >
+                  {logoEscuela ? (
+                    <img src={logoEscuela} alt="Logo institución" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                  ) : (
+                    <span style={{ fontSize: '11px', color: '#94a3b8', textAlign: 'center', fontWeight: '600' }}>Sin logo</span>
+                  )}
+                </div>
+
+                {puedeAdministrarLogoInstitucional && (
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <label
+                      style={{
+                        background: guardandoLogo ? '#e2e8f0' : '#eff6ff',
+                        color: '#1d4ed8',
+                        border: '1px solid #93c5fd',
+                        borderRadius: '8px',
+                        padding: '9px 14px',
+                        fontSize: '13px',
+                        fontWeight: '700',
+                        cursor: guardandoLogo ? 'wait' : 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      <Upload size={15} />
+                      {guardandoLogo ? 'Guardando...' : logoEscuela ? 'Cambiar Logo' : 'Subir Logo'}
+                      <input type="file" accept="image/*" disabled={guardandoLogo} onChange={manejarSubidaLogo} style={{ display: 'none' }} />
+                    </label>
+
+                    {logoEscuela && (
+                      <button
+                        type="button"
+                        disabled={guardandoLogo}
+                        onClick={eliminarLogoEscuela}
+                        style={{
+                          background: '#fef2f2',
+                          color: '#dc2626',
+                          border: '1px solid #fecaca',
+                          borderRadius: '8px',
+                          padding: '9px 12px',
+                          fontSize: '13px',
+                          fontWeight: '700',
+                          cursor: guardandoLogo ? 'wait' : 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px'
+                        }}
+                      >
+                        <Trash2 size={14} /> Quitar
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
             <form onSubmit={manejarActualizarContrasena} style={{ marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <h3 style={{ margin: 0, fontSize: '16px', color: '#0f172a' }}>Cambiar Contraseña</h3>
               <div>
@@ -3140,7 +3432,30 @@ export default function App() {
             {subVistaEval === 'imprimir' && (
               <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
-                  <h3 style={{ margin: 0, fontSize: '17px' }}>Nómina de Impresión de Hojas de Respuestas</h3>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '17px' }}>Nómina de Impresión de Hojas de Respuestas</h3>
+                    <div style={{ fontSize: '12.5px', color: '#64748b', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                      <span>Logo institucional: <strong>{logoEscuela ? 'Activo (Compartido B/N)' : 'Sin logo'}</strong></span>
+                      {puedeAdministrarLogoInstitucional && (
+                        <>
+                          <label style={{ color: '#2563eb', fontWeight: '700', cursor: guardandoLogo ? 'wait' : 'pointer', textDecoration: 'underline' }}>
+                            {guardandoLogo ? 'Guardando...' : logoEscuela ? 'Cambiar logo escuela' : '+ Subir logo escuela'}
+                            <input type="file" accept="image/*" disabled={guardandoLogo} onChange={manejarSubidaLogo} style={{ display: 'none' }} />
+                          </label>
+                          {logoEscuela && (
+                            <button
+                              type="button"
+                              disabled={guardandoLogo}
+                              onClick={eliminarLogoEscuela}
+                              style={{ background: 'transparent', border: 'none', color: '#dc2626', fontSize: '12px', fontWeight: '700', cursor: 'pointer', padding: 0 }}
+                            >
+                              (Quitar)
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                     <button
