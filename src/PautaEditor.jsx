@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   CheckSquare, Wand2, FileText, Upload, ExternalLink,
   Trash2, PlusCircle, Calculator, X, ListChecks, FileEdit,
-  Hash, Sparkles, AlignLeft
+  Hash, Sparkles, AlignLeft, Settings2
 } from 'lucide-react';
 import { obtenerOAsPorNivel } from './oaMatematica';
 import { supabase } from './supabaseClient';
@@ -42,6 +42,9 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
   const [cantidadAgregar, setCantidadAgregar] = useState(10);
   const [tipoPreguntaAgregar, setTipoPreguntaAgregar] = useState('alternativa');
 
+  // Modal amplio para configurar pregunta de desarrollo y rúbrica IA
+  const [modalDesarrolloNum, setModalDesarrolloNum] = useState(null);
+
   // Asignación masiva de OA
   const [rangoInicio, setRangoInicio] = useState(1);
   const [rangoFin, setRangoFin] = useState(10);
@@ -76,7 +79,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
     return 1;
   };
 
-  // Reordena siempre agrupado por sección: Alternativa -> Completación -> Desarrollo
   const normalizarYAgruparPauta = (listaItems) => {
     const alternativas = listaItems.filter((it) => obtenerTipoItem(it) === 'alternativa');
     const completacion = listaItems.filter((it) => obtenerTipoItem(it) === 'completacion');
@@ -127,6 +129,7 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
   };
 
   const seleccionarTipoEnModal = (tipo) => {
+    if (tipo === tipoPreguntaAgregar) return;
     setTipoPreguntaAgregar(tipo);
     if (tipo === 'alternativa') {
       setCantidadAgregar(Math.min(10, Math.max(1, 50 - countAlternativas)));
@@ -194,6 +197,10 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
   const eliminarPreguntaIndividual = (numAEliminar) => {
     const filtrados = itemsActuales.filter((_, idx) => idx + 1 !== numAEliminar);
     const { nuevaPauta, total } = normalizarYAgruparPauta(filtrados);
+
+    if (modalDesarrolloNum === numAEliminar) {
+      setModalDesarrolloNum(null);
+    }
 
     setConfig((prev) => ({
       ...prev,
@@ -315,8 +322,7 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
       } else {
         throw new Error('Respuesta sin formato de rúbrica');
       }
-    } catch (err) {
-      // Respaldo inteligente local mientras se activa la Edge Function en el Paso 3
+    } catch {
       const base = generarNivelesRubricaBase(cantNiveles, puntajeMax).map((niv, idx) => {
         const tema = enunciado ? `"${enunciado.slice(0, 70)}${enunciado.length > 70 ? '...' : ''}"` : `la pregunta ${numP}`;
         let desc = '';
@@ -326,7 +332,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
         return { ...niv, descriptor: desc };
       });
       actualizarItem(numP, 'rubrica', base);
-      alert('Se generó la estructura base de la rúbrica (cuando conectemos la función IA en el Paso 3, la redactará automáticamente desde tu PDF/enunciado).');
     } finally {
       setGenerandoIaPregunta(null);
     }
@@ -437,7 +442,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
     }
   };
 
-  // Separar preguntas con su número correlativo 1..N
   const listaAlternativas = [];
   const listaCompletacion = [];
   const listaDesarrollo = [];
@@ -449,6 +453,15 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
     else if (tipo === 'desarrollo') listaDesarrollo.push({ p, item });
     else listaAlternativas.push({ p, item });
   }
+
+  const maxPorTipoModal =
+    tipoPreguntaAgregar === 'alternativa'
+      ? Math.max(1, 50 - countAlternativas)
+      : tipoPreguntaAgregar === 'completacion'
+      ? Math.max(1, 10 - countCompletacion)
+      : Math.max(1, 5 - countDesarrollo);
+
+  const itemModalDesarrollo = modalDesarrolloNum ? pauta[modalDesarrolloNum] : null;
 
   return (
     <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
@@ -464,7 +477,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
           </p>
         </div>
 
-        {/* Escala + Puntaje Ideal Total + PDF */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', width: '100%' }}>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', fontSize: '12.5px', background: '#f8fafc', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', background: '#dbeafe', color: '#1e3a8a', padding: '4px 10px', borderRadius: '6px', fontWeight: '800' }}>
@@ -515,7 +527,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
             </label>
           </div>
 
-          {/* PDF de la prueba */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             {config.pdfPruebaUrl ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: '8px', padding: '7px 12px', fontSize: '12.5px' }}>
@@ -553,7 +564,7 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
         </div>
       </div>
 
-      {/* Único botón superior para agregar preguntas + resumen de secciones */}
+      {/* Botón superior + resumen */}
       <div style={{ marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
         <button
           type="button"
@@ -598,7 +609,7 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
         </div>
       </div>
 
-      {/* Herramientas rápidas por rango (OA + Puntaje) */}
+      {/* Herramientas rápidas por rango */}
       {numPreguntas > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
           <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', padding: '9px 14px', borderRadius: '10px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px', fontSize: '13px' }}>
@@ -938,260 +949,91 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
             </div>
           )}
 
-          {/* SECCIÓN III: PREGUNTAS DE DESARROLLO + RÚBRICA IA */}
+          {/* SECCIÓN III: PREGUNTAS DE DESARROLLO (TARJETA COMPACTA + BOTÓN MODAL RÚBRICA) */}
           {listaDesarrollo.length > 0 && (
             <div>
               <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', fontWeight: '800', color: '#5b21b6', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <FileEdit size={17} /> Sección III: Preguntas de Desarrollo y Rúbrica IA ({listaDesarrollo.length})
               </h4>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {listaDesarrollo.map(({ p, item }) => {
                   const oaActual = item?.oa || '';
-                  const descActual = item?.habilidad || '';
                   const puntajeActual = obtenerPuntajeItem(item);
                   const lineasActual = Number(item?.lineas || 5);
                   const cantNiveles = Number(item?.cantidadNiveles || item?.rubrica?.length || 3);
-                  const rubricaActual = Array.isArray(item?.rubrica) && item.rubrica.length > 0
-                    ? item.rubrica
-                    : generarNivelesRubricaBase(cantNiveles, puntajeActual || 3);
+                  const tieneDescriptores = Array.isArray(item?.rubrica) && item.rubrica.some((n) => (n.descriptor || '').trim() !== '');
 
                   return (
                     <div
                       key={p}
                       style={{
-                        padding: '14px 16px',
-                        borderRadius: '12px',
+                        padding: '12px 14px',
+                        borderRadius: '11px',
                         border: '1px solid #c4b5fd',
                         background: '#faf5ff',
                         display: 'flex',
-                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        flexWrap: 'wrap',
                         gap: '10px'
                       }}
                     >
-                      {/* Barra superior de la tarjeta de desarrollo */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                          <span style={{ background: '#7c3aed', color: '#ffffff', fontWeight: '800', fontSize: '13px', padding: '3px 9px', borderRadius: '7px' }}>
-                            Pregunta {p} (Desarrollo)
-                          </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: '240px' }}>
+                        <span style={{ background: '#7c3aed', color: '#ffffff', fontWeight: '800', fontSize: '13px', padding: '4px 10px', borderRadius: '7px', whiteSpace: 'nowrap' }}>
+                          P{p} • Desarrollo
+                        </span>
 
-                          {/* Cantidad de renglones en la hoja */}
-                          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: '700', color: '#4c1d95', background: '#ffffff', padding: '4px 8px', borderRadius: '6px', border: '1px solid #ddd6fe' }}>
-                            <AlignLeft size={13} /> Renglones:
-                            <select
-                              value={lineasActual}
-                              onChange={(e) => actualizarItem(p, 'lineas', Number(e.target.value))}
-                              style={{ border: 'none', fontWeight: '800', color: '#4c1d95', background: 'transparent' }}
-                            >
-                              <option value={3}>3 líneas</option>
-                              <option value={5}>5 líneas</option>
-                              <option value={8}>8 líneas</option>
-                              <option value={12}>12 líneas</option>
-                              <option value={16}>16 líneas</option>
-                            </select>
-                          </label>
-
-                          {/* Cantidad de niveles de graduación */}
-                          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: '700', color: '#4c1d95', background: '#ffffff', padding: '4px 8px', borderRadius: '6px', border: '1px solid #ddd6fe' }}>
-                            Graduación:
-                            <select
-                              value={cantNiveles}
-                              onChange={(e) => actualizarItem(p, 'cantidadNiveles', Number(e.target.value))}
-                              style={{ border: 'none', fontWeight: '800', color: '#4c1d95', background: 'transparent' }}
-                            >
-                              <option value={2}>2 niveles</option>
-                              <option value={3}>3 niveles</option>
-                              <option value={4}>4 niveles</option>
-                              <option value={5}>5 niveles</option>
-                            </select>
-                          </label>
-                        </div>
-
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          {listaOAsNivel.length > 0 ? (
-                            <select
-                              value={oaActual}
-                              onChange={(e) => actualizarItem(p, 'oa', e.target.value)}
-                              title={descActual || 'Selecciona un OA'}
-                              style={{
-                                width: '82px',
-                                padding: '5px 4px',
-                                borderRadius: '6px',
-                                border: '1px solid #cbd5e1',
-                                fontSize: '11.5px',
-                                fontWeight: '700',
-                                background: '#ffffff'
-                              }}
-                            >
-                              <option value="">OA...</option>
-                              {listaOAsNivel.map((oa) => (
-                                <option key={oa.codigo} value={oa.codigo}>
-                                  {oa.codigo} — {oa.descripcion}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <input
-                              type="text"
-                              placeholder="OA"
-                              value={oaActual}
-                              onChange={(e) => actualizarItem(p, 'oa', e.target.value)}
-                              style={{ width: '66px', padding: '5px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '11.5px' }}
-                            />
-                          )}
-
-                          <select
-                            value={puntajeActual}
-                            onChange={(e) => actualizarItem(p, 'puntaje', Number(e.target.value))}
-                            style={{
-                              width: '74px',
-                              padding: '5px 4px',
-                              borderRadius: '6px',
-                              border: '1px solid #cbd5e1',
-                              fontSize: '11.5px',
-                              fontWeight: '800',
-                              background: '#ffffff'
-                            }}
-                          >
-                            {[1, 2, 3, 4, 5, 6, 8, 10].map((pts) => (
-                              <option key={pts} value={pts}>{pts} pt{pts === 1 ? '' : 's'}</option>
-                            ))}
-                          </select>
-
-                          <button
-                            type="button"
-                            onClick={() => eliminarPreguntaIndividual(p)}
-                            title={`Eliminar pregunta ${p}`}
-                            style={{
-                              background: '#ffffff',
-                              border: '1px solid #fecaca',
-                              color: '#dc2626',
-                              cursor: 'pointer',
-                              padding: '5px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              borderRadius: '6px'
-                            }}
-                          >
-                            <Trash2 size={15} />
-                          </button>
+                        <div style={{ fontSize: '12.5px', color: '#334155' }}>
+                          <div style={{ fontWeight: '700', color: '#0f172a' }}>
+                            {item?.enunciado ? `"${item.enunciado.slice(0, 75)}${item.enunciado.length > 75 ? '...' : ''}"` : 'Sin enunciado escrito aún'}
+                          </div>
+                          <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '2px' }}>
+                            {lineasActual} renglones • {cantNiveles} niveles • {puntajeActual} pts {oaActual ? `• ${oaActual}` : ''} •{' '}
+                            <strong style={{ color: tieneDescriptores ? '#16a34a' : '#d97706' }}>
+                              {tieneDescriptores ? 'Rúbrica configurada ✓' : 'Rúbrica pendiente'}
+                            </strong>
+                          </div>
                         </div>
                       </div>
 
-                      {/* Enunciado + Botón Generar Rúbrica con IA */}
-                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-                        <textarea
-                          rows={2}
-                          placeholder={config.pdfPruebaUrl
-                            ? `Escribe el enunciado de la pregunta ${p} o deja en blanco para que la IA la lea desde el PDF adjunto...`
-                            : `Escribe aquí el enunciado o problema de la pregunta ${p} para generar su rúbrica con IA...`}
-                          value={item?.enunciado || ''}
-                          onChange={(e) => actualizarItem(p, 'enunciado', e.target.value)}
-                          style={{
-                            flex: 1,
-                            minWidth: '240px',
-                            padding: '8px 10px',
-                            borderRadius: '8px',
-                            border: '1px solid #c4b5fd',
-                            fontSize: '12.5px',
-                            fontFamily: 'inherit',
-                            background: '#ffffff'
-                          }}
-                        />
-
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <button
                           type="button"
-                          onClick={() => generarRubricaConIA(p)}
-                          disabled={generandoIaPregunta === p}
+                          onClick={() => setModalDesarrolloNum(p)}
                           style={{
-                            background: generandoIaPregunta === p ? '#a78bfa' : '#7c3aed',
+                            background: '#7c3aed',
                             color: '#ffffff',
                             border: 'none',
                             borderRadius: '8px',
-                            padding: '9px 14px',
+                            padding: '8px 13px',
                             fontSize: '12.5px',
                             fontWeight: '700',
-                            cursor: generandoIaPregunta === p ? 'wait' : 'pointer',
+                            cursor: 'pointer',
                             display: 'inline-flex',
                             alignItems: 'center',
-                            gap: '6px',
-                            whiteSpace: 'nowrap'
+                            gap: '6px'
                           }}
                         >
-                          <Sparkles size={15} />
-                          {generandoIaPregunta === p ? 'Generando...' : 'Generar rúbrica con IA'}
+                          <Settings2 size={15} /> Configurar Pregunta y Rúbrica IA
                         </button>
-                      </div>
 
-                      {/* Niveles de la rúbrica editables */}
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '8px' }}>
-                        {rubricaActual.map((niv, idxNiv) => (
-                          <div
-                            key={idxNiv}
-                            style={{
-                              background: '#ffffff',
-                              border: '1px solid #ddd6fe',
-                              borderRadius: '8px',
-                              padding: '8px 10px',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: '6px'
-                            }}
-                          >
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' }}>
-                              <input
-                                type="text"
-                                value={niv.nivel}
-                                onChange={(e) => actualizarNivelRubrica(p, idxNiv, 'nivel', e.target.value)}
-                                style={{
-                                  fontWeight: '800',
-                                  fontSize: '12px',
-                                  color: '#5b21b6',
-                                  border: 'none',
-                                  borderBottom: '1px dashed #c4b5fd',
-                                  width: '100%',
-                                  padding: '2px 0'
-                                }}
-                              />
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '2px', fontSize: '11.5px', fontWeight: '800', color: '#334155' }}>
-                                <input
-                                  type="number"
-                                  step="0.5"
-                                  min="0"
-                                  max={puntajeActual}
-                                  value={niv.puntaje}
-                                  onChange={(e) => actualizarNivelRubrica(p, idxNiv, 'puntaje', e.target.value)}
-                                  style={{
-                                    width: '44px',
-                                    padding: '2px 4px',
-                                    borderRadius: '5px',
-                                    border: '1px solid #cbd5e1',
-                                    textAlign: 'center',
-                                    fontWeight: '800'
-                                  }}
-                                />
-                                <span>pts</span>
-                              </div>
-                            </div>
-
-                            <textarea
-                              rows={2}
-                              placeholder={`Criterio para ${niv.nivel}...`}
-                              value={niv.descriptor || ''}
-                              onChange={(e) => actualizarNivelRubrica(p, idxNiv, 'descriptor', e.target.value)}
-                              style={{
-                                width: '100%',
-                                fontSize: '11.5px',
-                                border: '1px solid #e2e8f0',
-                                borderRadius: '6px',
-                                padding: '5px 7px',
-                                resize: 'vertical',
-                                fontFamily: 'inherit',
-                                color: '#334155'
-                              }}
-                            />
-                          </div>
-                        ))}
+                        <button
+                          type="button"
+                          onClick={() => eliminarPreguntaIndividual(p)}
+                          title={`Eliminar pregunta ${p}`}
+                          style={{
+                            background: '#ffffff',
+                            border: '1px solid #fecaca',
+                            color: '#dc2626',
+                            cursor: 'pointer',
+                            padding: '7px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            borderRadius: '8px'
+                          }}
+                        >
+                          <Trash2 size={15} />
+                        </button>
                       </div>
                     </div>
                   );
@@ -1202,7 +1044,296 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
         </div>
       )}
 
-      {/* VENTANA MODAL EN LA MISMA PÁGINA PARA AGREGAR PREGUNTAS */}
+      {/* MODAL AMPLIO PARA PREGUNTA DE DESARROLLO Y RÚBRICA IA */}
+      {modalDesarrolloNum && itemModalDesarrollo && (
+        <div
+          onClick={() => setModalDesarrolloNum(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.65)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1150,
+            padding: '16px'
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#ffffff',
+              borderRadius: '16px',
+              width: '100%',
+              maxWidth: '920px',
+              maxHeight: '92vh',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)'
+            }}
+          >
+            {/* Cabecera modal desarrollo */}
+            <div style={{ padding: '16px 22px', background: '#f5f3ff', borderBottom: '1px solid #ddd6fe', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+              <div>
+                <div style={{ fontSize: '11.5px', fontWeight: '800', color: '#6d28d9', textTransform: 'uppercase' }}>
+                  Configuración de Pregunta Abierta y Rúbrica IA
+                </div>
+                <h3 style={{ margin: '2px 0 0 0', fontSize: '19px', fontWeight: '800', color: '#0f172a' }}>
+                  Pregunta {modalDesarrolloNum} (Desarrollo)
+                </h3>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setModalDesarrolloNum(null)}
+                style={{ background: '#ffffff', border: '1px solid #c4b5fd', borderRadius: '8px', padding: '7px 10px', cursor: 'pointer' }}
+              >
+                <X size={18} color="#5b21b6" />
+              </button>
+            </div>
+
+            {/* Cuerpo modal desarrollo */}
+            <div style={{ padding: '20px 22px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {/* Fila de parámetros */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', background: '#f8fafc', padding: '12px 14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11.5px', fontWeight: '800', color: '#475569', marginBottom: '4px' }}>
+                    Renglones en la hoja
+                  </label>
+                  <select
+                    value={Number(itemModalDesarrollo?.lineas || 5)}
+                    onChange={(e) => actualizarItem(modalDesarrolloNum, 'lineas', Number(e.target.value))}
+                    style={{ width: '100%', padding: '7px 8px', borderRadius: '7px', border: '1px solid #cbd5e1', fontWeight: '700', background: '#ffffff' }}
+                  >
+                    <option value={3}>3 líneas (Corto)</option>
+                    <option value={5}>5 líneas (Estándar)</option>
+                    <option value={8}>8 líneas (Mediano)</option>
+                    <option value={12}>12 líneas (Extenso)</option>
+                    <option value={16}>16 líneas (Media página)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '11.5px', fontWeight: '800', color: '#475569', marginBottom: '4px' }}>
+                    Niveles de graduación
+                  </label>
+                  <select
+                    value={Number(itemModalDesarrollo?.cantidadNiveles || itemModalDesarrollo?.rubrica?.length || 3)}
+                    onChange={(e) => actualizarItem(modalDesarrolloNum, 'cantidadNiveles', Number(e.target.value))}
+                    style={{ width: '100%', padding: '7px 8px', borderRadius: '7px', border: '1px solid #cbd5e1', fontWeight: '700', background: '#ffffff' }}
+                  >
+                    <option value={2}>2 niveles</option>
+                    <option value={3}>3 niveles</option>
+                    <option value={4}>4 niveles</option>
+                    <option value={5}>5 niveles</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '11.5px', fontWeight: '800', color: '#475569', marginBottom: '4px' }}>
+                    Puntaje máximo
+                  </label>
+                  <select
+                    value={obtenerPuntajeItem(itemModalDesarrollo)}
+                    onChange={(e) => actualizarItem(modalDesarrolloNum, 'puntaje', Number(e.target.value))}
+                    style={{ width: '100%', padding: '7px 8px', borderRadius: '7px', border: '1px solid #cbd5e1', fontWeight: '800', background: '#ffffff' }}
+                  >
+                    {[1, 2, 3, 4, 5, 6, 8, 10].map((pts) => (
+                      <option key={pts} value={pts}>{pts} punto{pts === 1 ? '' : 's'}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '11.5px', fontWeight: '800', color: '#475569', marginBottom: '4px' }}>
+                    Objetivo de Aprendizaje (OA)
+                  </label>
+                  {listaOAsNivel.length > 0 ? (
+                    <select
+                      value={itemModalDesarrollo?.oa || ''}
+                      onChange={(e) => actualizarItem(modalDesarrolloNum, 'oa', e.target.value)}
+                      style={{ width: '100%', padding: '7px 8px', borderRadius: '7px', border: '1px solid #cbd5e1', fontWeight: '700', background: '#ffffff' }}
+                    >
+                      <option value="">-- Elegir OA --</option>
+                      {listaOAsNivel.map((oa) => (
+                        <option key={oa.codigo} value={oa.codigo}>
+                          {oa.codigo} — {oa.descripcion.slice(0, 45)}...
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      placeholder="Ej: OA 4"
+                      value={itemModalDesarrollo?.oa || ''}
+                      onChange={(e) => actualizarItem(modalDesarrolloNum, 'oa', e.target.value)}
+                      style={{ width: '100%', padding: '7px 8px', borderRadius: '7px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* Enunciado de la pregunta + botón IA */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '6px' }}>
+                  <label style={{ fontSize: '13px', fontWeight: '800', color: '#0f172a' }}>
+                    Enunciado o problema de la Pregunta {modalDesarrolloNum}:
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => generarRubricaConIA(modalDesarrolloNum)}
+                    disabled={generandoIaPregunta === modalDesarrolloNum}
+                    style={{
+                      background: generandoIaPregunta === modalDesarrolloNum ? '#a78bfa' : '#7c3aed',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      padding: '8px 14px',
+                      fontSize: '13px',
+                      fontWeight: '700',
+                      cursor: generandoIaPregunta === modalDesarrolloNum ? 'wait' : 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    <Sparkles size={15} />
+                    {generandoIaPregunta === modalDesarrolloNum ? 'Generando rúbrica con IA...' : 'Generar rúbrica con IA'}
+                  </button>
+                </div>
+
+                <textarea
+                  rows={3}
+                  placeholder={config.pdfPruebaUrl
+                    ? `Escribe aquí el enunciado de la pregunta ${modalDesarrolloNum} o déjalo vacío y presiona "Generar rúbrica con IA" para extraerla del PDF adjunto...`
+                    : `Escribe aquí el enunciado completo de la pregunta ${modalDesarrolloNum}...`}
+                  value={itemModalDesarrollo?.enunciado || ''}
+                  onChange={(e) => actualizarItem(modalDesarrolloNum, 'enunciado', e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: '9px',
+                    border: '1px solid #c4b5fd',
+                    fontSize: '13.5px',
+                    fontFamily: 'inherit',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              {/* Niveles de la rúbrica en vista amplia */}
+              <div>
+                <div style={{ fontSize: '13px', fontWeight: '800', color: '#4c1d95', marginBottom: '8px' }}>
+                  Niveles y criterios de evaluación (puedes editar textos y puntajes):
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {(Array.isArray(itemModalDesarrollo?.rubrica) && itemModalDesarrollo.rubrica.length > 0
+                    ? itemModalDesarrollo.rubrica
+                    : generarNivelesRubricaBase(3, obtenerPuntajeItem(itemModalDesarrollo) || 3)
+                  ).map((niv, idxNiv) => (
+                    <div
+                      key={idxNiv}
+                      style={{
+                        background: '#faf5ff',
+                        border: '1px solid #ddd6fe',
+                        borderRadius: '10px',
+                        padding: '12px 14px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+                        <input
+                          type="text"
+                          value={niv.nivel}
+                          onChange={(e) => actualizarNivelRubrica(modalDesarrolloNum, idxNiv, 'nivel', e.target.value)}
+                          style={{
+                            fontWeight: '800',
+                            fontSize: '14px',
+                            color: '#5b21b6',
+                            background: '#ffffff',
+                            border: '1px solid #c4b5fd',
+                            borderRadius: '6px',
+                            padding: '5px 9px',
+                            flex: 1
+                          }}
+                        />
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '13px', fontWeight: '800', color: '#0f172a' }}>
+                          <span>Puntaje:</span>
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            max={obtenerPuntajeItem(itemModalDesarrollo)}
+                            value={niv.puntaje}
+                            onChange={(e) => actualizarNivelRubrica(modalDesarrolloNum, idxNiv, 'puntaje', e.target.value)}
+                            style={{
+                              width: '60px',
+                              padding: '5px 6px',
+                              borderRadius: '6px',
+                              border: '1px solid #cbd5e1',
+                              textAlign: 'center',
+                              fontWeight: '800',
+                              fontSize: '14px'
+                            }}
+                          />
+                          <span>pts</span>
+                        </div>
+                      </div>
+
+                      <textarea
+                        rows={2}
+                        placeholder={`Describe qué debe lograr el estudiante para obtener el nivel "${niv.nivel}"...`}
+                        value={niv.descriptor || ''}
+                        onChange={(e) => actualizarNivelRubrica(modalDesarrolloNum, idxNiv, 'descriptor', e.target.value)}
+                        style={{
+                          width: '100%',
+                          fontSize: '13px',
+                          border: '1px solid #cbd5e1',
+                          borderRadius: '7px',
+                          padding: '8px 10px',
+                          resize: 'vertical',
+                          fontFamily: 'inherit',
+                          color: '#1e293b',
+                          boxSizing: 'border-box',
+                          background: '#ffffff'
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Pie modal desarrollo */}
+            <div style={{ padding: '14px 22px', background: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setModalDesarrolloNum(null)}
+                style={{
+                  background: '#16a34a',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '9px',
+                  padding: '10px 20px',
+                  fontSize: '14px',
+                  fontWeight: '700',
+                  cursor: 'pointer'
+                }}
+              >
+                Listo, Guardar Rúbrica
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VENTANA MODAL PARA AGREGAR PREGUNTAS (CON FLECHAS Y CONTROLES SIN RESETEO) */}
       {modalAgregarAbierto && (
         <div
           onClick={() => setModalAgregarAbierto(false)}
@@ -1213,7 +1344,7 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            zIndex: 60,
+            zIndex: 1100,
             padding: '16px'
           }}
         >
@@ -1284,18 +1415,22 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
                 </div>
 
                 {tipoPreguntaAgregar === 'alternativa' && (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '8px', borderTop: '1px dashed #86efac' }}>
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '8px', borderTop: '1px dashed #86efac' }}
+                  >
                     <label style={{ fontSize: '13px', fontWeight: '700', color: '#166534' }}>
                       Cantidad (máx. {Math.max(0, 50 - countAlternativas)}):
                     </label>
                     <input
                       type="number"
                       min="1"
-                      max={Math.max(1, 50 - countAlternativas)}
+                      max={maxPorTipoModal}
                       value={cantidadAgregar}
+                      onClick={(e) => e.stopPropagation()}
                       onChange={(e) => setCantidadAgregar(e.target.value)}
                       style={{
-                        width: '76px',
+                        width: '82px',
                         padding: '5px 8px',
                         borderRadius: '8px',
                         border: '1px solid #16a34a',
@@ -1345,18 +1480,22 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
                 </div>
 
                 {tipoPreguntaAgregar === 'completacion' && (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '8px', borderTop: '1px dashed #fcd34d' }}>
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '8px', borderTop: '1px dashed #fcd34d' }}
+                  >
                     <label style={{ fontSize: '13px', fontWeight: '700', color: '#92400e' }}>
                       Cantidad (máx. {Math.max(0, 10 - countCompletacion)}):
                     </label>
                     <input
                       type="number"
                       min="1"
-                      max={Math.max(1, 10 - countCompletacion)}
+                      max={maxPorTipoModal}
                       value={cantidadAgregar}
+                      onClick={(e) => e.stopPropagation()}
                       onChange={(e) => setCantidadAgregar(e.target.value)}
                       style={{
-                        width: '76px',
+                        width: '82px',
                         padding: '5px 8px',
                         borderRadius: '8px',
                         border: '1px solid #d97706',
@@ -1406,18 +1545,22 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
                 </div>
 
                 {tipoPreguntaAgregar === 'desarrollo' && (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '8px', borderTop: '1px dashed #c4b5fd' }}>
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '8px', borderTop: '1px dashed #c4b5fd' }}
+                  >
                     <label style={{ fontSize: '13px', fontWeight: '700', color: '#5b21b6' }}>
                       Cantidad (máx. {Math.max(0, 5 - countDesarrollo)}):
                     </label>
                     <input
                       type="number"
                       min="1"
-                      max={Math.max(1, 5 - countDesarrollo)}
+                      max={maxPorTipoModal}
                       value={cantidadAgregar}
+                      onClick={(e) => e.stopPropagation()}
                       onChange={(e) => setCantidadAgregar(e.target.value)}
                       style={{
-                        width: '76px',
+                        width: '82px',
                         padding: '5px 8px',
                         borderRadius: '8px',
                         border: '1px solid #7c3aed',
