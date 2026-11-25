@@ -303,13 +303,25 @@ export default function App() {
 
     for (let i = 1; i <= totalPreg; i++) {
       const item = pautaActual[i];
-      const clavesValidas = obtenerClavesCorrectas(item);
+      const tipo = typeof item === 'object' && item !== null && item.tipo ? item.tipo : 'alternativa';
       const puntajeItem = obtenerPuntajeItem(item);
+      if (puntajeItem <= 0) continue;
 
-      if (puntajeItem > 0 && clavesValidas.length > 0) {
+      if (tipo === 'completacion' || tipo === 'desarrollo') {
         puntosTotales += puntajeItem;
-        if (clavesValidas.includes(respuestasMap[i])) {
-          puntosObtenidos += puntajeItem;
+        const evalIa = respuestasMap?._ia?.[i];
+        if (evalIa && evalIa.puntajeFinal !== undefined && evalIa.puntajeFinal !== null) {
+          puntosObtenidos += Math.max(0, Math.min(puntajeItem, Number(evalIa.puntajeFinal)));
+        } else if (evalIa && evalIa.puntajeSugerido !== undefined && evalIa.puntajeSugerido !== null) {
+          puntosObtenidos += Math.max(0, Math.min(puntajeItem, Number(evalIa.puntajeSugerido)));
+        }
+      } else {
+        const clavesValidas = obtenerClavesCorrectas(item);
+        if (clavesValidas.length > 0) {
+          puntosTotales += puntajeItem;
+          if (clavesValidas.includes(respuestasMap[i])) {
+            puntosObtenidos += puntajeItem;
+          }
         }
       }
     }
@@ -846,7 +858,6 @@ export default function App() {
     }
   };
 
-  // Carga liviana inicial (sin descargar imagen_corregida masivamente)
   const cargarResultadosNube = async (evaluacionId) => {
     if (!supabase || !evaluacionId) return [];
     const { data, error } = await supabase
@@ -1237,6 +1248,78 @@ export default function App() {
     setSeleccionadosImprimir((prev) => prev.filter((r) => r !== rut));
   };
 
+  const obtenerSeccionesPauta = (cfg = config) => {
+    const total = Number(cfg.numPreguntas || 0);
+    const pautaMap = cfg.pauta || {};
+    const alternativas = [];
+    const completacion = [];
+    const desarrollo = [];
+
+    for (let p = 1; p <= total; p++) {
+      const it = pautaMap[p] || { tipo: 'alternativa' };
+      const tipo = typeof it === 'object' && it !== null && it.tipo ? it.tipo : 'alternativa';
+      if (tipo === 'completacion') completacion.push({ p, item: it });
+      else if (tipo === 'desarrollo') desarrollo.push({ p, item: it });
+      else alternativas.push({ p, item: it });
+    }
+    return { alternativas, completacion, desarrollo };
+  };
+
+  const construirMapaPagina2 = (secciones) => {
+    const { alternativas, completacion, desarrollo } = secciones;
+    const tieneSoloAlt = completacion.length === 0 && desarrollo.length === 0;
+    if (tieneSoloAlt) {
+      return {
+        usaPagina2: false,
+        seccionesP1: secciones,
+        seccionesP2: { alternativas: [], completacion: [], desarrollo: [] }
+      };
+    }
+
+    let yCursor = 54;
+    if (alternativas.length > 0) {
+      const filasAlt = Math.ceil(alternativas.length / 2);
+      yCursor += 5 + filasAlt * 7.8 + 4;
+    }
+
+    const compP1 = [];
+    const compP2 = [];
+    if (completacion.length > 0) {
+      yCursor += 6;
+      const filasComp = Math.ceil(completacion.length / 2);
+      const altoComp = filasComp * 13;
+      if (yCursor + altoComp <= 253) {
+        compP1.push(...completacion);
+        yCursor += altoComp + 4;
+      } else {
+        compP2.push(...completacion);
+      }
+    }
+
+    const desP1 = [];
+    const desP2 = [];
+    if (desarrollo.length > 0) {
+      let ySim = yCursor + 6;
+      desarrollo.forEach((d) => {
+        const lineas = Math.max(3, Number(d.item?.lineas || 5));
+        const altoCaja = 6 + lineas * 7.5;
+        if (desP2.length === 0 && ySim + altoCaja <= 253) {
+          desP1.push(d);
+          ySim += altoCaja + 4;
+        } else {
+          desP2.push(d);
+        }
+      });
+    }
+
+    const usaPagina2 = compP2.length > 0 || desP2.length > 0;
+    return {
+      usaPagina2,
+      seccionesP1: { alternativas, completacion: compP1, desarrollo: desP1 },
+      seccionesP2: { alternativas: [], completacion: compP2, desarrollo: desP2 }
+    };
+  };
+
   const dibujarCabeceraHojaOMR = (doc, {
     tituloPrueba,
     asignatura,
@@ -1246,7 +1329,9 @@ export default function App() {
     rutEstudiante,
     cursoEstudiante,
     qrDataUrl = null,
-    esHojaBlanca = false
+    esHojaBlanca = false,
+    paginaActual = 1,
+    totalPaginas = 1
   }) => {
     doc.setFillColor(0, 0, 0);
     doc.rect(12, 12, 8, 8, 'F');
@@ -1287,7 +1372,7 @@ export default function App() {
     doc.setFontSize(7.5);
     const asigLineas = doc.splitTextToSize(`Asignatura: ${asignatura || '-'}`, 50);
     doc.text(asigLineas[0], 54, topY + 20.5);
-    doc.text(`Ítems: ${totalPreg} (${alternativas})`, 54, topY + 26.5);
+    doc.text(`Ítems: ${totalPreg}   |   Pág. ${paginaActual} / ${totalPaginas}`, 54, topY + 26.5);
 
     doc.rect(108, topY, 53, boxH);
     doc.setFillColor(235, 235, 235);
@@ -1336,7 +1421,7 @@ export default function App() {
       doc.line(163, topY + 23.8, 192, topY + 23.8);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(5.1);
-      doc.text('PRECAUCIÓN:', 177.5, topY + 26.6, { align: 'center' });
+      doc.text(`PÁGINA ${paginaActual} DE ${totalPaginas}`, 177.5, topY + 26.6, { align: 'center' });
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(4.9);
       doc.text('No rayes este código QR', 177.5, topY + 29.4, { align: 'center' });
@@ -1344,10 +1429,10 @@ export default function App() {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(6.5);
       doc.setTextColor(90, 90, 90);
-      doc.text('HOJA EN BLANCO', 177.5, topY + 13, { align: 'center' });
+      doc.text('HOJA EN BLANCO', 177.5, topY + 12, { align: 'center' });
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(6);
-      doc.text('(SIN QR)', 177.5, topY + 16.5, { align: 'center' });
+      doc.text(`PÁG. ${paginaActual}/${totalPaginas} (SIN QR)`, 177.5, topY + 16.5, { align: 'center' });
       doc.setTextColor(0, 0, 0);
       doc.setLineWidth(0.25);
       doc.line(163, topY + 23.8, 192, topY + 23.8);
@@ -1362,13 +1447,134 @@ export default function App() {
     doc.setLineWidth(0.25);
     doc.rect(23, 45, 169, 5.2);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.7);
+    doc.setFontSize(6.5);
     doc.text(
-      'INSTRUCCIONES: Rellena completamente el círculo con lápiz grafito o pasta negro/azul. Evita doblar o manchar la hoja.',
+      'INSTRUCCIONES: Rellena completamente el círculo y escribe con letra/números claros dentro de cada recuadro sin salirte de los bordes.',
       107.5,
       48.5,
       { align: 'center' }
     );
+  };
+
+  const dibujarCuerpoSeccionesHoja = (doc, seccionesPagina, opciones) => {
+    const { alternativas, completacion, desarrollo } = seccionesPagina;
+    const soloAlternativas = completacion.length === 0 && desarrollo.length === 0;
+    let yCursor = 54;
+
+    if (alternativas.length > 0) {
+      if (!soloAlternativas) {
+        doc.setFillColor(238, 238, 238);
+        doc.setDrawColor(0, 0, 0);
+        doc.setLineWidth(0.25);
+        doc.rect(23, yCursor, 169, 4.8, 'FD');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7.2);
+        doc.setTextColor(0, 0, 0);
+        doc.text('SECCIÓN I: SELECCIÓN MÚLTIPLE', 25.5, yCursor + 3.4);
+        yCursor += 8.2;
+      } else {
+        yCursor = 56;
+      }
+
+      const mitad = soloAlternativas ? 25 : Math.ceil(alternativas.length / 2);
+      doc.setDrawColor(60, 60, 60);
+      doc.setLineWidth(0.3);
+
+      alternativas.forEach(({ p }, idx) => {
+        const col = idx < mitad ? 0 : 1;
+        const fila = idx < mitad ? idx : idx - mitad;
+        const baseX = col === 0 ? 32 : 122;
+        const baseY = yCursor + fila * 7.8;
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(0, 0, 0);
+        doc.text(`${p}.`, baseX - 8, baseY + 1.5);
+
+        opciones.forEach((letra, idxOpt) => {
+          const cx = baseX + idxOpt * 11;
+          doc.circle(cx, baseY, 2.7, 'S');
+          doc.setFontSize(7.5);
+          doc.setFont('helvetica', 'normal');
+          doc.text(letra, cx - 1.3, baseY + 1);
+        });
+      });
+
+      const filasUsadas = Math.min(mitad, alternativas.length);
+      yCursor += filasUsadas * 7.8 + 3;
+    }
+
+    if (completacion.length > 0) {
+      doc.setFillColor(238, 238, 238);
+      doc.setDrawColor(0, 0, 0);
+      doc.setLineWidth(0.25);
+      doc.rect(23, yCursor, 169, 4.8, 'FD');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.2);
+      doc.setTextColor(0, 0, 0);
+      doc.text('SECCIÓN II: COMPLETACIÓN NUMÉRICA (ESCRIBE EL RESULTADO EXACTO DENTRO DEL RECUADRO)', 25.5, yCursor + 3.4);
+      yCursor += 6.8;
+
+      const mitadComp = Math.ceil(completacion.length / 2);
+      completacion.forEach(({ p }, idx) => {
+        const col = idx < mitadComp ? 0 : 1;
+        const fila = idx < mitadComp ? idx : idx - mitadComp;
+        const xNum = col === 0 ? 25 : 113;
+        const xBox = col === 0 ? 34 : 122;
+        const yRow = yCursor + fila * 13;
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9.5);
+        doc.setTextColor(0, 0, 0);
+        doc.text(`${p}.`, xNum, yRow + 6.5);
+
+        doc.setDrawColor(0, 0, 0);
+        doc.setLineWidth(0.45);
+        doc.rect(xBox, yRow, 66, 10.5);
+      });
+
+      yCursor += mitadComp * 13 + 3;
+    }
+
+    if (desarrollo.length > 0) {
+      doc.setFillColor(238, 238, 238);
+      doc.setDrawColor(0, 0, 0);
+      doc.setLineWidth(0.25);
+      doc.rect(23, yCursor, 169, 4.8, 'FD');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.2);
+      doc.setTextColor(0, 0, 0);
+      doc.text('SECCIÓN III: PREGUNTAS DE DESARROLLO (RESPONDE CON LETRA CLARA DENTRO DEL RECUADRO)', 25.5, yCursor + 3.4);
+      yCursor += 6.5;
+
+      desarrollo.forEach(({ p, item }) => {
+        const numLineas = Math.max(3, Number(item?.lineas || 5));
+        const interlineado = 7.5;
+        const altoCaja = 5.5 + numLineas * interlineado;
+
+        doc.setDrawColor(0, 0, 0);
+        doc.setLineWidth(0.45);
+        doc.rect(23, yCursor, 169, altoCaja);
+
+        doc.setFillColor(245, 245, 245);
+        doc.rect(23, yCursor, 169, 5, 'FD');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(0, 0, 0);
+        doc.text(`Pregunta ${p}:`, 25.5, yCursor + 3.6);
+
+        doc.setDrawColor(190, 190, 190);
+        doc.setLineWidth(0.2);
+        for (let l = 1; l <= numLineas; l++) {
+          const yLinea = yCursor + 5 + l * interlineado;
+          if (yLinea < yCursor + altoCaja - 1) {
+            doc.line(26, yLinea, 189, yLinea);
+          }
+        }
+
+        yCursor += altoCaja + 4;
+      });
+    }
   };
 
   const imprimirHojasPDF = async (listaEstudiantesAImprimir, sufijoArchivo = '') => {
@@ -1393,6 +1599,9 @@ export default function App() {
       const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
       const opciones = config.alternativas.split('');
       const totalPreg = Number(config.numPreguntas);
+      const secciones = obtenerSeccionesPauta(config);
+      const { usaPagina2, seccionesP1, seccionesP2 } = construirMapaPagina2(secciones);
+      const totalPaginasPorAlumno = usaPagina2 ? 2 : 1;
 
       for (let i = 0; i < listaOrdenada.length; i++) {
         if (i > 0) doc.addPage();
@@ -1406,13 +1615,15 @@ export default function App() {
           `Generando hoja ${i + 1} de ${listaOrdenada.length} (${est.nombre})...`
         );
 
-        const qrPayload = JSON.stringify({
+        const qrPayloadP1 = JSON.stringify({
           r: est.rut,
           n: est.nombre,
           c: nombreCursoEst,
-          e: config.id || ''
+          e: config.id || '',
+          p: 1,
+          tp: totalPaginasPorAlumno
         });
-        const qrDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 120 });
+        const qrDataUrlP1 = await QRCode.toDataURL(qrPayloadP1, { margin: 1, width: 120 });
 
         dibujarCabeceraHojaOMR(doc, {
           tituloPrueba: config.tituloPrueba,
@@ -1422,30 +1633,39 @@ export default function App() {
           nombreEstudiante: est.nombre,
           rutEstudiante: est.rut,
           cursoEstudiante: nombreCursoEst,
-          qrDataUrl,
-          esHojaBlanca: false
+          qrDataUrl: qrDataUrlP1,
+          esHojaBlanca: false,
+          paginaActual: 1,
+          totalPaginas: totalPaginasPorAlumno
         });
+        dibujarCuerpoSeccionesHoja(doc, seccionesP1, opciones);
 
-        doc.setDrawColor(60, 60, 60);
-        doc.setLineWidth(0.3);
-
-        for (let p = 1; p <= totalPreg; p++) {
-          const col = p <= 25 ? 0 : 1;
-          const fila = p <= 25 ? p - 1 : p - 26;
-          const baseX = col === 0 ? 32 : 122;
-          const baseY = 56 + fila * 7.8;
-
-          doc.setFontSize(9);
-          doc.setFont('helvetica', 'bold');
-          doc.text(`${p}.`, baseX - 8, baseY + 1.5);
-
-          opciones.forEach((letra, idx) => {
-            const cx = baseX + idx * 11;
-            doc.circle(cx, baseY, 2.7, 'S');
-            doc.setFontSize(7.5);
-            doc.setFont('helvetica', 'normal');
-            doc.text(letra, cx - 1.3, baseY + 1);
+        if (usaPagina2) {
+          doc.addPage();
+          const qrPayloadP2 = JSON.stringify({
+            r: est.rut,
+            n: est.nombre,
+            c: nombreCursoEst,
+            e: config.id || '',
+            p: 2,
+            tp: 2
           });
+          const qrDataUrlP2 = await QRCode.toDataURL(qrPayloadP2, { margin: 1, width: 120 });
+
+          dibujarCabeceraHojaOMR(doc, {
+            tituloPrueba: config.tituloPrueba,
+            asignatura: config.asignatura,
+            totalPreg,
+            alternativas: config.alternativas,
+            nombreEstudiante: est.nombre,
+            rutEstudiante: est.rut,
+            cursoEstudiante: nombreCursoEst,
+            qrDataUrl: qrDataUrlP2,
+            esHojaBlanca: false,
+            paginaActual: 2,
+            totalPaginas: 2
+          });
+          dibujarCuerpoSeccionesHoja(doc, seccionesP2, opciones);
         }
       }
 
@@ -1468,6 +1688,9 @@ export default function App() {
       const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
       const opciones = config.alternativas.split('');
       const totalPreg = Number(config.numPreguntas || 30);
+      const secciones = obtenerSeccionesPauta(config);
+      const { usaPagina2, seccionesP1, seccionesP2 } = construirMapaPagina2(secciones);
+      const totalPaginasPorAlumno = usaPagina2 ? 2 : 1;
 
       for (let i = 0; i < cant; i++) {
         if (i > 0) doc.addPage();
@@ -1488,29 +1711,28 @@ export default function App() {
           rutEstudiante: '',
           cursoEstudiante: nombreCursoRef,
           qrDataUrl: null,
-          esHojaBlanca: true
+          esHojaBlanca: true,
+          paginaActual: 1,
+          totalPaginas: totalPaginasPorAlumno
         });
+        dibujarCuerpoSeccionesHoja(doc, seccionesP1, opciones);
 
-        doc.setDrawColor(60, 60, 60);
-        doc.setLineWidth(0.3);
-
-        for (let p = 1; p <= totalPreg; p++) {
-          const col = p <= 25 ? 0 : 1;
-          const fila = p <= 25 ? p - 1 : p - 26;
-          const baseX = col === 0 ? 32 : 122;
-          const baseY = 56 + fila * 7.8;
-
-          doc.setFontSize(9);
-          doc.setFont('helvetica', 'bold');
-          doc.text(`${p}.`, baseX - 8, baseY + 1.5);
-
-          opciones.forEach((letra, idx) => {
-            const cx = baseX + idx * 11;
-            doc.circle(cx, baseY, 2.7, 'S');
-            doc.setFontSize(7.5);
-            doc.setFont('helvetica', 'normal');
-            doc.text(letra, cx - 1.3, baseY + 1);
+        if (usaPagina2) {
+          doc.addPage();
+          dibujarCabeceraHojaOMR(doc, {
+            tituloPrueba: config.tituloPrueba || 'Evaluación',
+            asignatura: config.asignatura,
+            totalPreg,
+            alternativas: config.alternativas,
+            nombreEstudiante: '',
+            rutEstudiante: '',
+            cursoEstudiante: nombreCursoRef,
+            qrDataUrl: null,
+            esHojaBlanca: true,
+            paginaActual: 2,
+            totalPaginas: 2
           });
+          dibujarCuerpoSeccionesHoja(doc, seccionesP2, opciones);
         }
       }
 
@@ -1522,7 +1744,6 @@ export default function App() {
     }
   };
 
-  // Descarga imágenes corregidas bajo demanda solo al generar el PDF
   const descargarHojasCorregidasPDF = async (listaResultadosAExportar, sufijoArchivo = '', respetarOrden = false) => {
     if (!listaResultadosAExportar || listaResultadosAExportar.length === 0) {
       alert('No hay resultados corregidos para descargar.');
@@ -1942,7 +2163,7 @@ export default function App() {
           const paginasImg = await convertirPdfAImagenes(file, (actual, total) => {
             const msg = `Extrayendo página ${actual} de ${total} del PDF...`;
             setProgresoLote(msg);
-            actualizarBarra(true, 'Completando extracción de PDF...', Math.round((actual / total) * 35), msg);
+            actualizarBarra(true, 'Completando extracción de PDF...', Math.round((actual / total) * 30), msg);
           });
           colaImagenes = colaImagenes.concat(paginasImg);
         } else {
@@ -1950,19 +2171,21 @@ export default function App() {
         }
       }
 
-      const nuevosResultados = [];
       const cursoPorDefecto =
         (contextoAperturaEval === 'curso' && cursoActualObj?.nombre) ||
         cursoFiltroObj?.nombre ||
         '';
 
+      const mapaEstudiantesLote = new Map();
+      const sinQrLista = [];
+
       for (let idx = 0; idx < colaImagenes.length; idx++) {
-        const msgCorr = `Corrigiendo hoja ${idx + 1} de ${colaImagenes.length}...`;
+        const msgCorr = `Leyendo hoja ${idx + 1} de ${colaImagenes.length}...`;
         setProgresoLote(msgCorr);
         actualizarBarra(
           true,
-          'Completando corrección OMR...',
-          35 + Math.round(((idx + 1) / colaImagenes.length) * 40),
+          'Completando lectura OMR...',
+          30 + Math.round(((idx + 1) / colaImagenes.length) * 35),
           msgCorr
         );
         const imgFile = colaImagenes[idx];
@@ -1974,33 +2197,127 @@ export default function App() {
             pauta: config.pauta
           });
 
-          const respuestasAlumno = resultadoOMR.respuestas || {};
-          const calificacion = evaluarRespuestasConPauta(respuestasAlumno, config);
-
           const alumnoInfo = imgFile.qrPreDetectado || resultadoOMR.qrData || {
             r: 'Sin QR',
             n: `Hoja ${idx + 1} (Sin QR)`,
-            c: cursoPorDefecto
+            c: cursoPorDefecto,
+            p: 1
           };
 
-          if (!alumnoInfo.c && cursoPorDefecto) {
-            alumnoInfo.c = cursoPorDefecto;
-          }
+          if (!alumnoInfo.c && cursoPorDefecto) alumnoInfo.c = cursoPorDefecto;
 
-          nuevosResultados.push({
-            rut: alumnoInfo.r || 'Sin QR',
-            nombre: alumnoInfo.n || `Hoja ${idx + 1}`,
-            curso: alumnoInfo.c || cursoPorDefecto,
-            puntaje: calificacion.puntosObtenidos,
-            total: calificacion.puntosTotales,
-            porcentaje: calificacion.porcentaje,
-            nota: calificacion.nota,
-            respuestas: respuestasAlumno,
-            imagenProcesada: resultadoOMR.imagenProcesada
-          });
+          const rutClave = (alumnoInfo.r || '').trim().toLowerCase();
+          const esSinQr = !rutClave || rutClave === 'sin qr' || rutClave === 'sin rut';
+
+          if (esSinQr) {
+            sinQrLista.push({
+              rut: 'Sin QR',
+              nombre: alumnoInfo.n || `Hoja ${idx + 1} (Sin QR)`,
+              curso: alumnoInfo.c || cursoPorDefecto,
+              respuestas: resultadoOMR.respuestas || {},
+              recortesIA: resultadoOMR.recortesIA || {},
+              imagenProcesada: resultadoOMR.imagenProcesada
+            });
+          } else {
+            const existente = mapaEstudiantesLote.get(rutClave) || {
+              rut: alumnoInfo.r,
+              nombre: alumnoInfo.n,
+              curso: alumnoInfo.c || cursoPorDefecto,
+              respuestas: {},
+              recortesIA: {},
+              imagenProcesada: null
+            };
+
+            existente.respuestas = { ...existente.respuestas, ...(resultadoOMR.respuestas || {}) };
+            existente.recortesIA = { ...existente.recortesIA, ...(resultadoOMR.recortesIA || {}) };
+            if (Number(resultadoOMR.paginaHoja || 1) === 1 || !existente.imagenProcesada) {
+              existente.imagenProcesada = resultadoOMR.imagenProcesada;
+            }
+            mapaEstudiantesLote.set(rutClave, existente);
+          }
         } catch (pageErr) {
           console.warn(`Error en hoja ${idx + 1}:`, pageErr);
         }
+      }
+
+      const registrosCrudos = [...Array.from(mapaEstudiantesLote.values()), ...sinQrLista];
+      const nuevosResultados = [];
+
+      for (let i = 0; i < registrosCrudos.length; i++) {
+        const reg = registrosCrudos[i];
+        const numsRecortes = Object.keys(reg.recortesIA || {}).map(Number);
+        const iaMap = {};
+
+        if (numsRecortes.length > 0 && supabase) {
+          actualizarBarra(
+            true,
+            'Analizando respuestas escritas con IA...',
+            65 + Math.round(((i + 1) / registrosCrudos.length) * 15),
+            `Evaluando escritura de ${reg.nombre} (${i + 1}/${registrosCrudos.length})...`
+          );
+
+          const itemsParaIA = numsRecortes.map((numP) => {
+            const itemP = (config.pauta || {})[numP] || {};
+            return {
+              numero: numP,
+              tipo: itemP.tipo || 'desarrollo',
+              imagenBase64: reg.recortesIA[numP].imagen,
+              respuestaExacta: itemP.respuestaExacta || '',
+              puntajeMax: obtenerPuntajeItem(itemP),
+              enunciado: itemP.enunciado || '',
+              rubrica: itemP.rubrica || []
+            };
+          });
+
+          try {
+            const { data: iaData } = await supabase.functions.invoke('ia-evaluacion', {
+              body: {
+                accion: 'evaluar_respuestas_abiertas',
+                items: itemsParaIA
+              }
+            });
+
+            const listaResIa = Array.isArray(iaData?.resultados) ? iaData.resultados : [];
+            numsRecortes.forEach((numP) => {
+              const hallado = listaResIa.find((x) => Number(x.numero) === numP);
+              iaMap[numP] = {
+                imagenRecorte: reg.recortesIA[numP].imagen,
+                transcripcion: hallado?.transcripcion || '',
+                puntajeSugerido: hallado?.puntajeSugerido ?? 0,
+                justificacion: hallado?.justificacion || 'Pendiente de revisión docente.',
+                confirmado: false
+              };
+            });
+          } catch {
+            numsRecortes.forEach((numP) => {
+              iaMap[numP] = {
+                imagenRecorte: reg.recortesIA[numP].imagen,
+                transcripcion: '',
+                puntajeSugerido: 0,
+                justificacion: 'Revisión manual requerida.',
+                confirmado: false
+              };
+            });
+          }
+        }
+
+        const respuestasFinales = { ...reg.respuestas };
+        if (Object.keys(iaMap).length > 0) {
+          respuestasFinales._ia = iaMap;
+        }
+
+        const calificacion = evaluarRespuestasConPauta(respuestasFinales, config);
+        nuevosResultados.push({
+          rut: reg.rut,
+          nombre: reg.nombre,
+          curso: reg.curso,
+          puntaje: calificacion.puntosObtenidos,
+          total: calificacion.puntosTotales,
+          porcentaje: calificacion.porcentaje,
+          nota: calificacion.nota,
+          respuestas: respuestasFinales,
+          imagenProcesada: reg.imagenProcesada
+        });
       }
 
       if (nuevosResultados.length > 0) {
@@ -2026,7 +2343,7 @@ export default function App() {
         if (resultadosAGuardar.length > 0) {
           if (supabase && config.id) {
             setProgresoLote('Guardando resultados en la nube...');
-            actualizarBarra(true, 'Completando guardado en la nube...', 78, 'Preparando registros...');
+            actualizarBarra(true, 'Completando guardado en la nube...', 82, 'Preparando registros...');
             if (sobreescribir && duplicados.length > 0) {
               const rutsABorrar = duplicados.map((d) => d.rut);
               await supabase.from('resultados').delete().eq('evaluacion_id', config.id).in('rut_estudiante', rutsABorrar);
@@ -2055,7 +2372,7 @@ export default function App() {
               actualizarBarra(
                 true,
                 'Completando guardado en la nube...',
-                78 + Math.round((finLote / filasSupabase.length) * 22),
+                82 + Math.round((finLote / filasSupabase.length) * 18),
                 msgSave
               );
               const { error } = await supabase.from('resultados').insert(bloque);

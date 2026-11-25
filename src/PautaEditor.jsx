@@ -1,10 +1,34 @@
 import React, { useState } from 'react';
 import {
   CheckSquare, Wand2, FileText, Upload, ExternalLink,
-  Trash2, PlusCircle, Calculator, X, ListChecks, FileEdit
+  Trash2, PlusCircle, Calculator, X, ListChecks, FileEdit,
+  Hash, Sparkles, AlignLeft
 } from 'lucide-react';
 import { obtenerOAsPorNivel } from './oaMatematica';
 import { supabase } from './supabaseClient';
+
+const ETIQUETAS_NIVELES = {
+  2: ['Logrado', 'Por Lograr'],
+  3: ['Logrado', 'Medianamente Logrado', 'Por Lograr'],
+  4: ['Destacado', 'Logrado', 'Medianamente Logrado', 'Por Lograr'],
+  5: ['Sobresaliente', 'Logrado', 'Medianamente Logrado', 'En Desarrollo', 'Por Lograr']
+};
+
+const generarNivelesRubricaBase = (cantidadNiveles = 3, puntajeMax = 3) => {
+  const cant = Math.max(2, Math.min(5, Number(cantidadNiveles) || 3));
+  const maxPts = Math.max(1, Number(puntajeMax) || 3);
+  const etiquetas = ETIQUETAS_NIVELES[cant] || ETIQUETAS_NIVELES[3];
+
+  return etiquetas.map((nombre, idx) => {
+    const proporcion = (cant - 1 - idx) / (cant - 1);
+    const pts = Math.round(maxPts * proporcion * 10) / 10;
+    return {
+      nivel: nombre,
+      puntaje: pts,
+      descriptor: ''
+    };
+  });
+};
 
 export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
   const numPreguntas = Number(config.numPreguntas || 0);
@@ -29,6 +53,14 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
   const [puntajeMasivo, setPuntajeMasivo] = useState(1);
 
   const [subiendoPdf, setSubiendoPdf] = useState(false);
+  const [generandoIaPregunta, setGenerandoIaPregunta] = useState(null);
+
+  const obtenerTipoItem = (item) => {
+    if (typeof item === 'object' && item !== null && item.tipo) {
+      return item.tipo;
+    }
+    return 'alternativa';
+  };
 
   const obtenerClavesItem = (item) => {
     if (!item) return [];
@@ -44,61 +76,128 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
     return 1;
   };
 
-  const puntajeIdealTotal = Array.from({ length: numPreguntas }, (_, idx) => {
-    const item = pauta[idx + 1];
-    return obtenerPuntajeItem(item);
-  }).reduce((acc, val) => acc + val, 0);
+  // Reordena siempre agrupado por sección: Alternativa -> Completación -> Desarrollo
+  const normalizarYAgruparPauta = (listaItems) => {
+    const alternativas = listaItems.filter((it) => obtenerTipoItem(it) === 'alternativa');
+    const completacion = listaItems.filter((it) => obtenerTipoItem(it) === 'completacion');
+    const desarrollo = listaItems.filter((it) => obtenerTipoItem(it) === 'desarrollo');
+    const ordenados = [...alternativas, ...completacion, ...desarrollo];
 
-  const preguntasAnuladasCount = Array.from({ length: numPreguntas }, (_, idx) => {
-    return obtenerPuntajeItem(pauta[idx + 1]) === 0 ? 1 : 0;
-  }).reduce((acc, val) => acc + val, 0);
+    const nuevaPauta = {};
+    ordenados.forEach((it, idx) => {
+      nuevaPauta[idx + 1] = it;
+    });
+
+    return { nuevaPauta, total: ordenados.length };
+  };
+
+  const itemsActuales = Array.from({ length: numPreguntas }, (_, idx) => {
+    const raw = pauta[idx + 1];
+    if (typeof raw === 'object' && raw !== null) {
+      return { tipo: 'alternativa', ...raw };
+    }
+    return {
+      tipo: 'alternativa',
+      correcta: obtenerClavesItem(raw),
+      oa: '',
+      habilidad: '',
+      puntaje: 1
+    };
+  });
+
+  const countAlternativas = itemsActuales.filter((it) => it.tipo === 'alternativa').length;
+  const countCompletacion = itemsActuales.filter((it) => it.tipo === 'completacion').length;
+  const countDesarrollo = itemsActuales.filter((it) => it.tipo === 'desarrollo').length;
+
+  const puntajeIdealTotal = itemsActuales.reduce((acc, it) => acc + obtenerPuntajeItem(it), 0);
+  const preguntasAnuladasCount = itemsActuales.reduce((acc, it) => acc + (obtenerPuntajeItem(it) === 0 ? 1 : 0), 0);
+
+  const abrirModalAgregar = () => {
+    if (countAlternativas < 50) {
+      setTipoPreguntaAgregar('alternativa');
+      setCantidadAgregar(Math.min(10, 50 - countAlternativas));
+    } else if (countCompletacion < 10) {
+      setTipoPreguntaAgregar('completacion');
+      setCantidadAgregar(Math.min(3, 10 - countCompletacion));
+    } else {
+      setTipoPreguntaAgregar('desarrollo');
+      setCantidadAgregar(Math.min(2, 5 - countDesarrollo));
+    }
+    setModalAgregarAbierto(true);
+  };
+
+  const seleccionarTipoEnModal = (tipo) => {
+    setTipoPreguntaAgregar(tipo);
+    if (tipo === 'alternativa') {
+      setCantidadAgregar(Math.min(10, Math.max(1, 50 - countAlternativas)));
+    } else if (tipo === 'completacion') {
+      setCantidadAgregar(Math.min(3, Math.max(1, 10 - countCompletacion)));
+    } else if (tipo === 'desarrollo') {
+      setCantidadAgregar(Math.min(2, Math.max(1, 5 - countDesarrollo)));
+    }
+  };
 
   const confirmarAgregarPreguntas = () => {
-    if (tipoPreguntaAgregar !== 'alternativa') return;
-    const cant = Math.max(1, Math.min(50 - numPreguntas, Number(cantidadAgregar || 1)));
-    if (cant <= 0) {
-      alert('Ya alcanzaste el máximo de 50 preguntas por hoja OMR.');
+    let maximoPermitido = 0;
+    if (tipoPreguntaAgregar === 'alternativa') maximoPermitido = 50 - countAlternativas;
+    if (tipoPreguntaAgregar === 'completacion') maximoPermitido = 10 - countCompletacion;
+    if (tipoPreguntaAgregar === 'desarrollo') maximoPermitido = 5 - countDesarrollo;
+
+    if (maximoPermitido <= 0) {
+      alert('Ya alcanzaste el máximo permitido para este tipo de pregunta.');
       return;
     }
 
-    const nuevaPauta = { ...pauta };
-    for (let i = 1; i <= cant; i++) {
-      const numP = numPreguntas + i;
-      if (!nuevaPauta[numP]) {
-        nuevaPauta[numP] = {
+    const cant = Math.max(1, Math.min(maximoPermitido, Number(cantidadAgregar || 1)));
+    const nuevos = [];
+
+    for (let i = 0; i < cant; i++) {
+      if (tipoPreguntaAgregar === 'alternativa') {
+        nuevos.push({
           tipo: 'alternativa',
           correcta: [],
           oa: '',
           habilidad: '',
           puntaje: 1
-        };
+        });
+      } else if (tipoPreguntaAgregar === 'completacion') {
+        nuevos.push({
+          tipo: 'completacion',
+          respuestaExacta: '',
+          oa: '',
+          habilidad: '',
+          puntaje: 1
+        });
+      } else if (tipoPreguntaAgregar === 'desarrollo') {
+        nuevos.push({
+          tipo: 'desarrollo',
+          enunciado: '',
+          lineas: 5,
+          puntaje: 3,
+          oa: '',
+          habilidad: '',
+          cantidadNiveles: 3,
+          rubrica: generarNivelesRubricaBase(3, 3)
+        });
       }
     }
 
+    const { nuevaPauta, total } = normalizarYAgruparPauta([...itemsActuales, ...nuevos]);
     setConfig((prev) => ({
       ...prev,
-      numPreguntas: numPreguntas + cant,
+      numPreguntas: total,
       pauta: nuevaPauta
     }));
     setModalAgregarAbierto(false);
   };
 
-  // Elimina una pregunta específica y renumera correlativamente las siguientes (1..N)
   const eliminarPreguntaIndividual = (numAEliminar) => {
-    const nuevaPauta = {};
-    let nuevoIndice = 1;
-
-    for (let p = 1; p <= numPreguntas; p++) {
-      if (p === numAEliminar) continue;
-      if (pauta[p] !== undefined) {
-        nuevaPauta[nuevoIndice] = pauta[p];
-      }
-      nuevoIndice++;
-    }
+    const filtrados = itemsActuales.filter((_, idx) => idx + 1 !== numAEliminar);
+    const { nuevaPauta, total } = normalizarYAgruparPauta(filtrados);
 
     setConfig((prev) => ({
       ...prev,
-      numPreguntas: Math.max(0, numPreguntas - 1),
+      numPreguntas: total,
       pauta: nuevaPauta
     }));
   };
@@ -139,7 +238,19 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
         objBase.habilidad = oaEncontrado.descripcion;
       }
     } else if (campo === 'puntaje') {
-      objBase.puntaje = Number(valor);
+      const nuevoPuntaje = Number(valor);
+      objBase.puntaje = nuevoPuntaje;
+      if (objBase.tipo === 'desarrollo' && Array.isArray(objBase.rubrica)) {
+        const cantNiv = objBase.rubrica.length || 3;
+        objBase.rubrica = objBase.rubrica.map((niv, idx) => {
+          const prop = cantNiv > 1 ? (cantNiv - 1 - idx) / (cantNiv - 1) : 1;
+          return { ...niv, puntaje: Math.round(nuevoPuntaje * prop * 10) / 10 };
+        });
+      }
+    } else if (campo === 'cantidadNiveles') {
+      const cantNiv = Number(valor);
+      objBase.cantidadNiveles = cantNiv;
+      objBase.rubrica = generarNivelesRubricaBase(cantNiv, objBase.puntaje || 3);
     } else {
       objBase[campo] = valor;
     }
@@ -151,6 +262,74 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
         [numP]: objBase
       }
     }));
+  };
+
+  const actualizarNivelRubrica = (numP, idxNivel, campo, valor) => {
+    const actual = pauta[numP];
+    if (!actual || !Array.isArray(actual.rubrica)) return;
+    const nuevaRubrica = actual.rubrica.map((niv, idx) =>
+      idx === idxNivel ? { ...niv, [campo]: campo === 'puntaje' ? Number(valor) : valor } : niv
+    );
+    actualizarItem(numP, 'rubrica', nuevaRubrica);
+  };
+
+  const generarRubricaConIA = async (numP) => {
+    const item = pauta[numP];
+    if (!item) return;
+
+    const enunciado = (item.enunciado || '').trim();
+    if (!enunciado && !config.pdfPruebaUrl) {
+      alert('Escribe el enunciado de la pregunta (o sube el PDF de la prueba arriba) para que la IA pueda generar la rúbrica.');
+      return;
+    }
+
+    const cantNiveles = Number(item.cantidadNiveles || item.rubrica?.length || 3);
+    const puntajeMax = Math.max(1, Number(item.puntaje || 3));
+    const etiquetas = ETIQUETAS_NIVELES[cantNiveles] || ETIQUETAS_NIVELES[3];
+
+    setGenerandoIaPregunta(numP);
+    try {
+      if (!supabase) throw new Error('Supabase no configurado');
+
+      const { data, error } = await supabase.functions.invoke('ia-evaluacion', {
+        body: {
+          accion: 'generar_rubrica',
+          numeroPregunta: numP,
+          enunciado,
+          pdfUrl: config.pdfPruebaUrl || null,
+          nivelNombre,
+          oa: item.oa || '',
+          habilidad: item.habilidad || '',
+          puntajeMax,
+          etiquetasNiveles: etiquetas
+        }
+      });
+
+      if (error) throw error;
+
+      if (data?.rubrica && Array.isArray(data.rubrica)) {
+        actualizarItem(numP, 'rubrica', data.rubrica);
+        if (data.enunciadoDetectado && !enunciado) {
+          actualizarItem(numP, 'enunciado', data.enunciadoDetectado);
+        }
+      } else {
+        throw new Error('Respuesta sin formato de rúbrica');
+      }
+    } catch (err) {
+      // Respaldo inteligente local mientras se activa la Edge Function en el Paso 3
+      const base = generarNivelesRubricaBase(cantNiveles, puntajeMax).map((niv, idx) => {
+        const tema = enunciado ? `"${enunciado.slice(0, 70)}${enunciado.length > 70 ? '...' : ''}"` : `la pregunta ${numP}`;
+        let desc = '';
+        if (idx === 0) desc = `Responde completamente y con precisión lo solicitado en ${tema}, justificando correctamente todos los pasos.`;
+        else if (idx === cantNiveles - 1) desc = `No responde, responde de forma incorrecta o no evidencia comprensión de lo solicitado en ${tema}.`;
+        else desc = `Responde parcialmente lo solicitado en ${tema}, presentando desarrollo incompleto o imprecisiones menores.`;
+        return { ...niv, descriptor: desc };
+      });
+      actualizarItem(numP, 'rubrica', base);
+      alert('Se generó la estructura base de la rúbrica (cuando conectemos la función IA en el Paso 3, la redactará automáticamente desde tu PDF/enunciado).');
+    } finally {
+      setGenerandoIaPregunta(null);
+    }
   };
 
   const aplicarOAMasivo = () => {
@@ -258,6 +437,19 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
     }
   };
 
+  // Separar preguntas con su número correlativo 1..N
+  const listaAlternativas = [];
+  const listaCompletacion = [];
+  const listaDesarrollo = [];
+
+  for (let p = 1; p <= numPreguntas; p++) {
+    const item = pauta[p] || { tipo: 'alternativa', correcta: [], oa: '', habilidad: '', puntaje: 1 };
+    const tipo = obtenerTipoItem(item);
+    if (tipo === 'completacion') listaCompletacion.push({ p, item });
+    else if (tipo === 'desarrollo') listaDesarrollo.push({ p, item });
+    else listaAlternativas.push({ p, item });
+  }
+
   return (
     <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
       {/* Cabecera */}
@@ -265,10 +457,10 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
         <div>
           <h3 style={{ margin: 0, fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <CheckSquare size={20} color="#16a34a" />
-            Pauta, Puntajes y Objetivos (OA)
+            Pauta, Rúbricas y Objetivos (OA)
           </h3>
           <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#64748b' }}>
-            Puedes marcar <strong>1 o más alternativas correctas</strong> por ítem y asignar <strong>0 pts</strong> para anular una pregunta.
+            Configura alternativas, completación numérica exacta y preguntas de desarrollo con rúbrica IA.
           </p>
         </div>
 
@@ -361,15 +553,11 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
         </div>
       </div>
 
-      {/* Único botón superior para agregar preguntas */}
+      {/* Único botón superior para agregar preguntas + resumen de secciones */}
       <div style={{ marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
         <button
           type="button"
-          onClick={() => {
-            setTipoPreguntaAgregar('alternativa');
-            setCantidadAgregar(Math.min(10, Math.max(1, 50 - numPreguntas)));
-            setModalAgregarAbierto(true);
-          }}
+          onClick={abrirModalAgregar}
           style={{
             background: '#16a34a',
             color: '#ffffff',
@@ -388,9 +576,26 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
           <PlusCircle size={17} /> Agregar Preguntas
         </button>
 
-        <span style={{ fontSize: '13px', fontWeight: '700', color: '#475569' }}>
-          Total actual: {numPreguntas} pregunta{numPreguntas === 1 ? '' : 's'}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', fontSize: '12.5px' }}>
+          <span style={{ fontWeight: '800', color: '#334155' }}>
+            Total: {numPreguntas}
+          </span>
+          {countAlternativas > 0 && (
+            <span style={{ background: '#dcfce7', color: '#166534', padding: '3px 9px', borderRadius: '999px', fontWeight: '700' }}>
+              {countAlternativas} Alternativa{countAlternativas === 1 ? '' : 's'}
+            </span>
+          )}
+          {countCompletacion > 0 && (
+            <span style={{ background: '#fef3c7', color: '#92400e', padding: '3px 9px', borderRadius: '999px', fontWeight: '700' }}>
+              {countCompletacion} Completación Numérica
+            </span>
+          )}
+          {countDesarrollo > 0 && (
+            <span style={{ background: '#ede9fe', color: '#5b21b6', padding: '3px 9px', borderRadius: '999px', fontWeight: '700' }}>
+              {countDesarrollo} Desarrollo
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Herramientas rápidas por rango (OA + Puntaje) */}
@@ -446,153 +651,554 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
         </div>
       )}
 
-      {/* Grilla de preguntas con basurero individual al lado de cada pregunta */}
       {numPreguntas === 0 ? (
         <div style={{ padding: '28px 20px', textAlign: 'center', background: '#f8fafc', borderRadius: '10px', border: '1px dashed #cbd5e1', color: '#64748b', fontSize: '14px' }}>
           Aún no has agregado preguntas. Haz clic en <strong>+ Agregar Preguntas</strong> arriba para comenzar.
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(365px, 1fr))', gap: '10px' }}>
-          {Array.from({ length: numPreguntas }, (_, idx) => {
-            const p = idx + 1;
-            const item = pauta[p];
-            const clavesCorrectas = obtenerClavesItem(item);
-            const oaActual = typeof item === 'object' ? (item?.oa || '') : '';
-            const descActual = typeof item === 'object' ? (item?.habilidad || '') : '';
-            const puntajeActual = obtenerPuntajeItem(item);
-            const anulada = puntajeActual === 0;
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {/* SECCIÓN I: ALTERNATIVAS */}
+          {listaAlternativas.length > 0 && (
+            <div>
+              <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', fontWeight: '800', color: '#166534', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <ListChecks size={17} /> Sección I: Preguntas de Alternativa ({listaAlternativas.length})
+              </h4>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(365px, 1fr))', gap: '10px' }}>
+                {listaAlternativas.map(({ p, item }) => {
+                  const clavesCorrectas = obtenerClavesItem(item);
+                  const oaActual = typeof item === 'object' ? (item?.oa || '') : '';
+                  const descActual = typeof item === 'object' ? (item?.habilidad || '') : '';
+                  const puntajeActual = obtenerPuntajeItem(item);
+                  const anulada = puntajeActual === 0;
 
-            return (
-              <div
-                key={p}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '8px 10px',
-                  borderRadius: '10px',
-                  border: anulada ? '1px solid #fca5a5' : clavesCorrectas.length > 0 ? '1px solid #86efac' : '1px solid #e2e8f0',
-                  background: anulada ? '#fef2f2' : clavesCorrectas.length > 0 ? '#f0fdf4' : '#ffffff',
-                  opacity: anulada ? 0.78 : 1,
-                  gap: '6px'
-                }}
-              >
-                <span style={{ fontWeight: '800', fontSize: '13.5px', minWidth: '26px', color: anulada ? '#dc2626' : '#0f172a' }}>
-                  {p}.
-                </span>
-
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  {opciones.map((letra) => {
-                    const activa = clavesCorrectas.includes(letra);
-                    return (
-                      <button
-                        key={letra}
-                        type="button"
-                        onClick={() => toggleAlternativaCorrecta(p, letra)}
-                        style={{
-                          width: '26px',
-                          height: '26px',
-                          borderRadius: '999px',
-                          border: activa ? '2px solid #16a34a' : '1px solid #cbd5e1',
-                          background: activa ? '#16a34a' : '#ffffff',
-                          color: activa ? '#ffffff' : '#334155',
-                          fontWeight: '800',
-                          fontSize: '11.5px',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center'
-                        }}
-                      >
-                        {letra}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  {listaOAsNivel.length > 0 ? (
-                    <select
-                      value={oaActual}
-                      onChange={(e) => actualizarItem(p, 'oa', e.target.value)}
-                      title={descActual || 'Selecciona un OA del nivel'}
+                  return (
+                    <div
+                      key={p}
                       style={{
-                        width: '72px',
-                        padding: '5px 3px',
-                        borderRadius: '6px',
-                        border: '1px solid #cbd5e1',
-                        fontSize: '11.5px',
-                        fontWeight: '700',
-                        color: oaActual ? '#1e3a8a' : '#64748b',
-                        background: '#ffffff'
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '8px 10px',
+                        borderRadius: '10px',
+                        border: anulada ? '1px solid #fca5a5' : clavesCorrectas.length > 0 ? '1px solid #86efac' : '1px solid #e2e8f0',
+                        background: anulada ? '#fef2f2' : clavesCorrectas.length > 0 ? '#f0fdf4' : '#ffffff',
+                        opacity: anulada ? 0.78 : 1,
+                        gap: '6px'
                       }}
                     >
-                      <option value="">OA...</option>
-                      {listaOAsNivel.map((oa) => (
-                        <option key={oa.codigo} value={oa.codigo}>
-                          {oa.codigo} — {oa.descripcion}
-                        </option>
-                      ))}
-                      {oaActual && !listaOAsNivel.some((o) => o.codigo === oaActual) && (
-                        <option value={oaActual}>{oaActual}</option>
-                      )}
-                    </select>
-                  ) : (
-                    <input
-                      type="text"
-                      placeholder="OA"
-                      value={oaActual}
-                      onChange={(e) => actualizarItem(p, 'oa', e.target.value)}
-                      style={{ width: '62px', padding: '5px 5px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '11.5px' }}
-                    />
-                  )}
+                      <span style={{ fontWeight: '800', fontSize: '13.5px', minWidth: '26px', color: anulada ? '#dc2626' : '#0f172a' }}>
+                        {p}.
+                      </span>
 
-                  <select
-                    value={puntajeActual}
-                    onChange={(e) => actualizarItem(p, 'puntaje', Number(e.target.value))}
-                    title="Puntaje de la pregunta (0 pts = Anulada)"
-                    style={{
-                      width: '64px',
-                      padding: '5px 3px',
-                      borderRadius: '6px',
-                      border: anulada ? '1px solid #ef4444' : '1px solid #cbd5e1',
-                      fontSize: '11.5px',
-                      fontWeight: '800',
-                      color: anulada ? '#dc2626' : '#0f172a',
-                      background: anulada ? '#fee2e2' : '#ffffff'
-                    }}
-                  >
-                    <option value={0}>0 pts (Anul.)</option>
-                    <option value={1}>1 pt</option>
-                    <option value={2}>2 pts</option>
-                    <option value={3}>3 pts</option>
-                    <option value={4}>4 pts</option>
-                    <option value={5}>5 pts</option>
-                  </select>
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        {opciones.map((letra) => {
+                          const activa = clavesCorrectas.includes(letra);
+                          return (
+                            <button
+                              key={letra}
+                              type="button"
+                              onClick={() => toggleAlternativaCorrecta(p, letra)}
+                              style={{
+                                width: '26px',
+                                height: '26px',
+                                borderRadius: '999px',
+                                border: activa ? '2px solid #16a34a' : '1px solid #cbd5e1',
+                                background: activa ? '#16a34a' : '#ffffff',
+                                color: activa ? '#ffffff' : '#334155',
+                                fontWeight: '800',
+                                fontSize: '11.5px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }}
+                            >
+                              {letra}
+                            </button>
+                          );
+                        })}
+                      </div>
 
-                  <button
-                    type="button"
-                    onClick={() => eliminarPreguntaIndividual(p)}
-                    title={`Eliminar pregunta ${p}`}
-                    style={{
-                      background: 'transparent',
-                      border: 'none',
-                      color: '#94a3b8',
-                      cursor: 'pointer',
-                      padding: '4px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      borderRadius: '6px'
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = '#dc2626'; e.currentTarget.style.background = '#fee2e2'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = '#94a3b8'; e.currentTarget.style.background = 'transparent'; }}
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        {listaOAsNivel.length > 0 ? (
+                          <select
+                            value={oaActual}
+                            onChange={(e) => actualizarItem(p, 'oa', e.target.value)}
+                            title={descActual || 'Selecciona un OA del nivel'}
+                            style={{
+                              width: '72px',
+                              padding: '5px 3px',
+                              borderRadius: '6px',
+                              border: '1px solid #cbd5e1',
+                              fontSize: '11.5px',
+                              fontWeight: '700',
+                              color: oaActual ? '#1e3a8a' : '#64748b',
+                              background: '#ffffff'
+                            }}
+                          >
+                            <option value="">OA...</option>
+                            {listaOAsNivel.map((oa) => (
+                              <option key={oa.codigo} value={oa.codigo}>
+                                {oa.codigo} — {oa.descripcion}
+                              </option>
+                            ))}
+                            {oaActual && !listaOAsNivel.some((o) => o.codigo === oaActual) && (
+                              <option value={oaActual}>{oaActual}</option>
+                            )}
+                          </select>
+                        ) : (
+                          <input
+                            type="text"
+                            placeholder="OA"
+                            value={oaActual}
+                            onChange={(e) => actualizarItem(p, 'oa', e.target.value)}
+                            style={{ width: '62px', padding: '5px 5px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '11.5px' }}
+                          />
+                        )}
+
+                        <select
+                          value={puntajeActual}
+                          onChange={(e) => actualizarItem(p, 'puntaje', Number(e.target.value))}
+                          title="Puntaje de la pregunta (0 pts = Anulada)"
+                          style={{
+                            width: '64px',
+                            padding: '5px 3px',
+                            borderRadius: '6px',
+                            border: anulada ? '1px solid #ef4444' : '1px solid #cbd5e1',
+                            fontSize: '11.5px',
+                            fontWeight: '800',
+                            color: anulada ? '#dc2626' : '#0f172a',
+                            background: anulada ? '#fee2e2' : '#ffffff'
+                          }}
+                        >
+                          <option value={0}>0 pts (Anul.)</option>
+                          <option value={1}>1 pt</option>
+                          <option value={2}>2 pts</option>
+                          <option value={3}>3 pts</option>
+                          <option value={4}>4 pts</option>
+                          <option value={5}>5 pts</option>
+                        </select>
+
+                        <button
+                          type="button"
+                          onClick={() => eliminarPreguntaIndividual(p)}
+                          title={`Eliminar pregunta ${p}`}
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: '#94a3b8',
+                            cursor: 'pointer',
+                            padding: '4px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            borderRadius: '6px'
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.color = '#dc2626'; e.currentTarget.style.background = '#fee2e2'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.color = '#94a3b8'; e.currentTarget.style.background = 'transparent'; }}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
+            </div>
+          )}
+
+          {/* SECCIÓN II: COMPLETACIÓN NUMÉRICA */}
+          {listaCompletacion.length > 0 && (
+            <div>
+              <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', fontWeight: '800', color: '#92400e', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Hash size={17} /> Sección II: Completación Numérica Exacta ({listaCompletacion.length})
+              </h4>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(410px, 1fr))', gap: '10px' }}>
+                {listaCompletacion.map(({ p, item }) => {
+                  const respExacta = item?.respuestaExacta ?? '';
+                  const oaActual = item?.oa || '';
+                  const descActual = item?.habilidad || '';
+                  const puntajeActual = obtenerPuntajeItem(item);
+                  const anulada = puntajeActual === 0;
+
+                  return (
+                    <div
+                      key={p}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '9px 12px',
+                        borderRadius: '10px',
+                        border: anulada ? '1px solid #fca5a5' : String(respExacta).trim() !== '' ? '1px solid #fcd34d' : '1px solid #e2e8f0',
+                        background: anulada ? '#fef2f2' : '#fffbeb',
+                        gap: '8px'
+                      }}
+                    >
+                      <span style={{ fontWeight: '800', fontSize: '13.5px', minWidth: '26px', color: '#78350f' }}>
+                        {p}.
+                      </span>
+
+                      <input
+                        type="text"
+                        placeholder="Valor exacto (ej: 42 o -3,5)"
+                        value={respExacta}
+                        onChange={(e) => actualizarItem(p, 'respuestaExacta', e.target.value)}
+                        style={{
+                          flex: 1,
+                          minWidth: '125px',
+                          padding: '6px 9px',
+                          borderRadius: '7px',
+                          border: '1px solid #f59e0b',
+                          fontSize: '13px',
+                          fontWeight: '800',
+                          color: '#0f172a',
+                          background: '#ffffff'
+                        }}
+                      />
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        {listaOAsNivel.length > 0 ? (
+                          <select
+                            value={oaActual}
+                            onChange={(e) => actualizarItem(p, 'oa', e.target.value)}
+                            title={descActual || 'Selecciona un OA'}
+                            style={{
+                              width: '72px',
+                              padding: '5px 3px',
+                              borderRadius: '6px',
+                              border: '1px solid #cbd5e1',
+                              fontSize: '11.5px',
+                              fontWeight: '700',
+                              color: oaActual ? '#1e3a8a' : '#64748b',
+                              background: '#ffffff'
+                            }}
+                          >
+                            <option value="">OA...</option>
+                            {listaOAsNivel.map((oa) => (
+                              <option key={oa.codigo} value={oa.codigo}>
+                                {oa.codigo} — {oa.descripcion}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type="text"
+                            placeholder="OA"
+                            value={oaActual}
+                            onChange={(e) => actualizarItem(p, 'oa', e.target.value)}
+                            style={{ width: '62px', padding: '5px 5px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '11.5px' }}
+                          />
+                        )}
+
+                        <select
+                          value={puntajeActual}
+                          onChange={(e) => actualizarItem(p, 'puntaje', Number(e.target.value))}
+                          style={{
+                            width: '64px',
+                            padding: '5px 3px',
+                            borderRadius: '6px',
+                            border: '1px solid #cbd5e1',
+                            fontSize: '11.5px',
+                            fontWeight: '800',
+                            background: '#ffffff'
+                          }}
+                        >
+                          <option value={0}>0 pts (Anul.)</option>
+                          <option value={1}>1 pt</option>
+                          <option value={2}>2 pts</option>
+                          <option value={3}>3 pts</option>
+                          <option value={4}>4 pts</option>
+                          <option value={5}>5 pts</option>
+                        </select>
+
+                        <button
+                          type="button"
+                          onClick={() => eliminarPreguntaIndividual(p)}
+                          title={`Eliminar pregunta ${p}`}
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: '#94a3b8',
+                            cursor: 'pointer',
+                            padding: '4px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            borderRadius: '6px'
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.color = '#dc2626'; e.currentTarget.style.background = '#fee2e2'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.color = '#94a3b8'; e.currentTarget.style.background = 'transparent'; }}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* SECCIÓN III: PREGUNTAS DE DESARROLLO + RÚBRICA IA */}
+          {listaDesarrollo.length > 0 && (
+            <div>
+              <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', fontWeight: '800', color: '#5b21b6', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <FileEdit size={17} /> Sección III: Preguntas de Desarrollo y Rúbrica IA ({listaDesarrollo.length})
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {listaDesarrollo.map(({ p, item }) => {
+                  const oaActual = item?.oa || '';
+                  const descActual = item?.habilidad || '';
+                  const puntajeActual = obtenerPuntajeItem(item);
+                  const lineasActual = Number(item?.lineas || 5);
+                  const cantNiveles = Number(item?.cantidadNiveles || item?.rubrica?.length || 3);
+                  const rubricaActual = Array.isArray(item?.rubrica) && item.rubrica.length > 0
+                    ? item.rubrica
+                    : generarNivelesRubricaBase(cantNiveles, puntajeActual || 3);
+
+                  return (
+                    <div
+                      key={p}
+                      style={{
+                        padding: '14px 16px',
+                        borderRadius: '12px',
+                        border: '1px solid #c4b5fd',
+                        background: '#faf5ff',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '10px'
+                      }}
+                    >
+                      {/* Barra superior de la tarjeta de desarrollo */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                          <span style={{ background: '#7c3aed', color: '#ffffff', fontWeight: '800', fontSize: '13px', padding: '3px 9px', borderRadius: '7px' }}>
+                            Pregunta {p} (Desarrollo)
+                          </span>
+
+                          {/* Cantidad de renglones en la hoja */}
+                          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: '700', color: '#4c1d95', background: '#ffffff', padding: '4px 8px', borderRadius: '6px', border: '1px solid #ddd6fe' }}>
+                            <AlignLeft size={13} /> Renglones:
+                            <select
+                              value={lineasActual}
+                              onChange={(e) => actualizarItem(p, 'lineas', Number(e.target.value))}
+                              style={{ border: 'none', fontWeight: '800', color: '#4c1d95', background: 'transparent' }}
+                            >
+                              <option value={3}>3 líneas</option>
+                              <option value={5}>5 líneas</option>
+                              <option value={8}>8 líneas</option>
+                              <option value={12}>12 líneas</option>
+                              <option value={16}>16 líneas</option>
+                            </select>
+                          </label>
+
+                          {/* Cantidad de niveles de graduación */}
+                          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: '700', color: '#4c1d95', background: '#ffffff', padding: '4px 8px', borderRadius: '6px', border: '1px solid #ddd6fe' }}>
+                            Graduación:
+                            <select
+                              value={cantNiveles}
+                              onChange={(e) => actualizarItem(p, 'cantidadNiveles', Number(e.target.value))}
+                              style={{ border: 'none', fontWeight: '800', color: '#4c1d95', background: 'transparent' }}
+                            >
+                              <option value={2}>2 niveles</option>
+                              <option value={3}>3 niveles</option>
+                              <option value={4}>4 niveles</option>
+                              <option value={5}>5 niveles</option>
+                            </select>
+                          </label>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          {listaOAsNivel.length > 0 ? (
+                            <select
+                              value={oaActual}
+                              onChange={(e) => actualizarItem(p, 'oa', e.target.value)}
+                              title={descActual || 'Selecciona un OA'}
+                              style={{
+                                width: '82px',
+                                padding: '5px 4px',
+                                borderRadius: '6px',
+                                border: '1px solid #cbd5e1',
+                                fontSize: '11.5px',
+                                fontWeight: '700',
+                                background: '#ffffff'
+                              }}
+                            >
+                              <option value="">OA...</option>
+                              {listaOAsNivel.map((oa) => (
+                                <option key={oa.codigo} value={oa.codigo}>
+                                  {oa.codigo} — {oa.descripcion}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              placeholder="OA"
+                              value={oaActual}
+                              onChange={(e) => actualizarItem(p, 'oa', e.target.value)}
+                              style={{ width: '66px', padding: '5px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '11.5px' }}
+                            />
+                          )}
+
+                          <select
+                            value={puntajeActual}
+                            onChange={(e) => actualizarItem(p, 'puntaje', Number(e.target.value))}
+                            style={{
+                              width: '74px',
+                              padding: '5px 4px',
+                              borderRadius: '6px',
+                              border: '1px solid #cbd5e1',
+                              fontSize: '11.5px',
+                              fontWeight: '800',
+                              background: '#ffffff'
+                            }}
+                          >
+                            {[1, 2, 3, 4, 5, 6, 8, 10].map((pts) => (
+                              <option key={pts} value={pts}>{pts} pt{pts === 1 ? '' : 's'}</option>
+                            ))}
+                          </select>
+
+                          <button
+                            type="button"
+                            onClick={() => eliminarPreguntaIndividual(p)}
+                            title={`Eliminar pregunta ${p}`}
+                            style={{
+                              background: '#ffffff',
+                              border: '1px solid #fecaca',
+                              color: '#dc2626',
+                              cursor: 'pointer',
+                              padding: '5px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              borderRadius: '6px'
+                            }}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Enunciado + Botón Generar Rúbrica con IA */}
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                        <textarea
+                          rows={2}
+                          placeholder={config.pdfPruebaUrl
+                            ? `Escribe el enunciado de la pregunta ${p} o deja en blanco para que la IA la lea desde el PDF adjunto...`
+                            : `Escribe aquí el enunciado o problema de la pregunta ${p} para generar su rúbrica con IA...`}
+                          value={item?.enunciado || ''}
+                          onChange={(e) => actualizarItem(p, 'enunciado', e.target.value)}
+                          style={{
+                            flex: 1,
+                            minWidth: '240px',
+                            padding: '8px 10px',
+                            borderRadius: '8px',
+                            border: '1px solid #c4b5fd',
+                            fontSize: '12.5px',
+                            fontFamily: 'inherit',
+                            background: '#ffffff'
+                          }}
+                        />
+
+                        <button
+                          type="button"
+                          onClick={() => generarRubricaConIA(p)}
+                          disabled={generandoIaPregunta === p}
+                          style={{
+                            background: generandoIaPregunta === p ? '#a78bfa' : '#7c3aed',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: '8px',
+                            padding: '9px 14px',
+                            fontSize: '12.5px',
+                            fontWeight: '700',
+                            cursor: generandoIaPregunta === p ? 'wait' : 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            whiteSpace: 'nowrap'
+                          }}
+                        >
+                          <Sparkles size={15} />
+                          {generandoIaPregunta === p ? 'Generando...' : 'Generar rúbrica con IA'}
+                        </button>
+                      </div>
+
+                      {/* Niveles de la rúbrica editables */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '8px' }}>
+                        {rubricaActual.map((niv, idxNiv) => (
+                          <div
+                            key={idxNiv}
+                            style={{
+                              background: '#ffffff',
+                              border: '1px solid #ddd6fe',
+                              borderRadius: '8px',
+                              padding: '8px 10px',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '6px'
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' }}>
+                              <input
+                                type="text"
+                                value={niv.nivel}
+                                onChange={(e) => actualizarNivelRubrica(p, idxNiv, 'nivel', e.target.value)}
+                                style={{
+                                  fontWeight: '800',
+                                  fontSize: '12px',
+                                  color: '#5b21b6',
+                                  border: 'none',
+                                  borderBottom: '1px dashed #c4b5fd',
+                                  width: '100%',
+                                  padding: '2px 0'
+                                }}
+                              />
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '2px', fontSize: '11.5px', fontWeight: '800', color: '#334155' }}>
+                                <input
+                                  type="number"
+                                  step="0.5"
+                                  min="0"
+                                  max={puntajeActual}
+                                  value={niv.puntaje}
+                                  onChange={(e) => actualizarNivelRubrica(p, idxNiv, 'puntaje', e.target.value)}
+                                  style={{
+                                    width: '44px',
+                                    padding: '2px 4px',
+                                    borderRadius: '5px',
+                                    border: '1px solid #cbd5e1',
+                                    textAlign: 'center',
+                                    fontWeight: '800'
+                                  }}
+                                />
+                                <span>pts</span>
+                              </div>
+                            </div>
+
+                            <textarea
+                              rows={2}
+                              placeholder={`Criterio para ${niv.nivel}...`}
+                              value={niv.descriptor || ''}
+                              onChange={(e) => actualizarNivelRubrica(p, idxNiv, 'descriptor', e.target.value)}
+                              style={{
+                                width: '100%',
+                                fontSize: '11.5px',
+                                border: '1px solid #e2e8f0',
+                                borderRadius: '6px',
+                                padding: '5px 7px',
+                                resize: 'vertical',
+                                fontFamily: 'inherit',
+                                color: '#334155'
+                              }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -617,7 +1223,7 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
               background: '#ffffff',
               borderRadius: '16px',
               width: '100%',
-              maxWidth: '460px',
+              maxWidth: '470px',
               boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
               overflow: 'hidden'
             }}
@@ -628,7 +1234,7 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
                   Agregar Preguntas
                 </h3>
                 <p style={{ margin: '2px 0 0 0', fontSize: '12.5px', color: '#64748b' }}>
-                  Selecciona el tipo de pregunta y la cantidad
+                  Se agrupan automáticamente en la hoja de respuestas
                 </p>
               </div>
               <button
@@ -640,12 +1246,12 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
               </button>
             </div>
 
-            <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {/* Opción 1: Preguntas de Alternativa */}
+            <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: '11px' }}>
+              {/* Opción 1: Alternativas (1 a 50) */}
               <div
-                onClick={() => setTipoPreguntaAgregar('alternativa')}
+                onClick={() => seleccionarTipoEnModal('alternativa')}
                 style={{
-                  padding: '14px 16px',
+                  padding: '13px 15px',
                   borderRadius: '12px',
                   border: tipoPreguntaAgregar === 'alternativa' ? '2px solid #16a34a' : '1px solid #cbd5e1',
                   background: tipoPreguntaAgregar === 'alternativa' ? '#f0fdf4' : '#ffffff',
@@ -661,18 +1267,18 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
                       <ListChecks size={20} color="#16a34a" />
                     </div>
                     <div>
-                      <div style={{ fontWeight: '800', fontSize: '15px', color: '#0f172a' }}>
+                      <div style={{ fontWeight: '800', fontSize: '14.5px', color: '#0f172a' }}>
                         Preguntas de Alternativa
                       </div>
                       <div style={{ fontSize: '12px', color: '#64748b' }}>
-                        Lectura automática mediante hoja OMR
+                        Burbujas OMR ({countAlternativas}/50 usadas)
                       </div>
                     </div>
                   </div>
                   <input
                     type="radio"
                     checked={tipoPreguntaAgregar === 'alternativa'}
-                    onChange={() => setTipoPreguntaAgregar('alternativa')}
+                    onChange={() => seleccionarTipoEnModal('alternativa')}
                     style={{ width: '17px', height: '17px', accentColor: '#16a34a' }}
                   />
                 </div>
@@ -680,59 +1286,148 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
                 {tipoPreguntaAgregar === 'alternativa' && (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '8px', borderTop: '1px dashed #86efac' }}>
                     <label style={{ fontSize: '13px', fontWeight: '700', color: '#166534' }}>
-                      Cantidad de preguntas:
+                      Cantidad (máx. {Math.max(0, 50 - countAlternativas)}):
                     </label>
                     <input
                       type="number"
                       min="1"
-                      max={Math.max(1, 50 - numPreguntas)}
+                      max={Math.max(1, 50 - countAlternativas)}
                       value={cantidadAgregar}
                       onChange={(e) => setCantidadAgregar(e.target.value)}
                       style={{
                         width: '76px',
-                        padding: '6px 10px',
+                        padding: '5px 8px',
                         borderRadius: '8px',
                         border: '1px solid #16a34a',
                         fontSize: '15px',
                         fontWeight: '800',
-                        textAlign: 'center',
-                        color: '#0f172a'
+                        textAlign: 'center'
                       }}
                     />
                   </div>
                 )}
               </div>
 
-              {/* Opción 2: Preguntas de Desarrollo (Próximamente) */}
+              {/* Opción 2: Completación Numérica (1 a 10) */}
               <div
+                onClick={() => seleccionarTipoEnModal('completacion')}
                 style={{
-                  padding: '14px 16px',
+                  padding: '13px 15px',
                   borderRadius: '12px',
-                  border: '1px dashed #cbd5e1',
-                  background: '#f8fafc',
-                  opacity: 0.72,
-                  cursor: 'not-allowed',
+                  border: tipoPreguntaAgregar === 'completacion' ? '2px solid #d97706' : '1px solid #cbd5e1',
+                  background: tipoPreguntaAgregar === 'completacion' ? '#fffbeb' : '#ffffff',
+                  cursor: 'pointer',
                   display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between'
+                  flexDirection: 'column',
+                  gap: '10px'
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <div style={{ width: '36px', height: '36px', borderRadius: '9px', background: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <FileEdit size={19} color="#64748b" />
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: '700', fontSize: '14.5px', color: '#475569', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      Preguntas de Desarrollo
-                      <span style={{ background: '#e2e8f0', color: '#475569', fontSize: '10.5px', fontWeight: '800', padding: '2px 7px', borderRadius: '999px' }}>
-                        Próximamente
-                      </span>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ width: '36px', height: '36px', borderRadius: '9px', background: '#fef3c7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Hash size={20} color="#d97706" />
                     </div>
-                    <div style={{ fontSize: '12px', color: '#94a3b8' }}>
-                      Evaluación por rúbrica o puntaje abierto
+                    <div>
+                      <div style={{ fontWeight: '800', fontSize: '14.5px', color: '#0f172a' }}>
+                        Completación Numérica
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#64748b' }}>
+                        Recuadro libre para cifra exacta ({countCompletacion}/10 usadas)
+                      </div>
                     </div>
                   </div>
+                  <input
+                    type="radio"
+                    checked={tipoPreguntaAgregar === 'completacion'}
+                    onChange={() => seleccionarTipoEnModal('completacion')}
+                    style={{ width: '17px', height: '17px', accentColor: '#d97706' }}
+                  />
                 </div>
+
+                {tipoPreguntaAgregar === 'completacion' && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '8px', borderTop: '1px dashed #fcd34d' }}>
+                    <label style={{ fontSize: '13px', fontWeight: '700', color: '#92400e' }}>
+                      Cantidad (máx. {Math.max(0, 10 - countCompletacion)}):
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max={Math.max(1, 10 - countCompletacion)}
+                      value={cantidadAgregar}
+                      onChange={(e) => setCantidadAgregar(e.target.value)}
+                      style={{
+                        width: '76px',
+                        padding: '5px 8px',
+                        borderRadius: '8px',
+                        border: '1px solid #d97706',
+                        fontSize: '15px',
+                        fontWeight: '800',
+                        textAlign: 'center'
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Opción 3: Preguntas de Desarrollo (1 a 5) */}
+              <div
+                onClick={() => seleccionarTipoEnModal('desarrollo')}
+                style={{
+                  padding: '13px 15px',
+                  borderRadius: '12px',
+                  border: tipoPreguntaAgregar === 'desarrollo' ? '2px solid #7c3aed' : '1px solid #cbd5e1',
+                  background: tipoPreguntaAgregar === 'desarrollo' ? '#faf5ff' : '#ffffff',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ width: '36px', height: '36px', borderRadius: '9px', background: '#ede9fe', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <FileEdit size={20} color="#7c3aed" />
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: '800', fontSize: '14.5px', color: '#0f172a' }}>
+                        Preguntas de Desarrollo
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#64748b' }}>
+                        Recuadro con renglones y rúbrica IA ({countDesarrollo}/5 usadas)
+                      </div>
+                    </div>
+                  </div>
+                  <input
+                    type="radio"
+                    checked={tipoPreguntaAgregar === 'desarrollo'}
+                    onChange={() => seleccionarTipoEnModal('desarrollo')}
+                    style={{ width: '17px', height: '17px', accentColor: '#7c3aed' }}
+                  />
+                </div>
+
+                {tipoPreguntaAgregar === 'desarrollo' && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '8px', borderTop: '1px dashed #c4b5fd' }}>
+                    <label style={{ fontSize: '13px', fontWeight: '700', color: '#5b21b6' }}>
+                      Cantidad (máx. {Math.max(0, 5 - countDesarrollo)}):
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max={Math.max(1, 5 - countDesarrollo)}
+                      value={cantidadAgregar}
+                      onChange={(e) => setCantidadAgregar(e.target.value)}
+                      style={{
+                        width: '76px',
+                        padding: '5px 8px',
+                        borderRadius: '8px',
+                        border: '1px solid #7c3aed',
+                        fontSize: '15px',
+                        fontWeight: '800',
+                        textAlign: 'center'
+                      }}
+                    />
+                  </div>
+                )}
               </div>
             </div>
 
@@ -758,7 +1453,7 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
                 type="button"
                 onClick={confirmarAgregarPreguntas}
                 style={{
-                  background: '#16a34a',
+                  background: tipoPreguntaAgregar === 'desarrollo' ? '#7c3aed' : tipoPreguntaAgregar === 'completacion' ? '#d97706' : '#16a34a',
                   color: '#ffffff',
                   border: 'none',
                   borderRadius: '8px',

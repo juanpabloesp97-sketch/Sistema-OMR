@@ -3,7 +3,8 @@ import * as XLSX from 'xlsx';
 import {
   BarChart3, Download, ArrowUpDown, ArrowUp, ArrowDown, X, FileText,
   CheckCircle2, XCircle, MinusCircle, SlidersHorizontal, ExternalLink,
-  Search, Eye, Save, ZoomIn, Table, AlertTriangle, ArrowRight, Check
+  Search, Eye, Save, ZoomIn, Table, AlertTriangle, ArrowRight, Check,
+  Sparkles
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
@@ -39,6 +40,12 @@ export default function AnalisisPanel({
   const [guardandoDuda, setGuardandoDuda] = useState(false);
   const [zoomDudaImagen, setZoomDudaImagen] = useState(false);
 
+  // Modal "Revisar desarrollo y completación (IA)"
+  const [modalIaAbierto, setModalIaAbierto] = useState(false);
+  const [puntajeIaSeleccionado, setPuntajeIaSeleccionado] = useState(0);
+  const [guardandoIa, setGuardandoIa] = useState(false);
+  const [zoomIaImagen, setZoomIaImagen] = useState(false);
+
   // Edición individual y zoom en modal alumno
   const [editandoRespuestas, setEditandoRespuestas] = useState(false);
   const [respuestasEditadas, setRespuestasEditadas] = useState({});
@@ -65,6 +72,13 @@ export default function AnalisisPanel({
     [resultados, modalAlumnoId]
   );
 
+  const obtenerTipoItem = (item) => {
+    if (typeof item === 'object' && item !== null && item.tipo) {
+      return item.tipo;
+    }
+    return 'alternativa';
+  };
+
   const obtenerClavesCorrectasItem = (item) => {
     if (!item) return [];
     if (typeof item === 'string') return item ? [item] : [];
@@ -77,6 +91,27 @@ export default function AnalisisPanel({
       return Number(item.puntaje);
     }
     return 1;
+  };
+
+  const obtenerPuntosObtenidosEnPregunta = (numP, respMap) => {
+    const item = pauta[numP];
+    const tipo = obtenerTipoItem(item);
+    const ptsMax = obtenerPuntajeItem(item);
+    if (ptsMax <= 0) return 0;
+
+    if (tipo === 'completacion' || tipo === 'desarrollo') {
+      const evalIa = respMap?._ia?.[numP];
+      if (evalIa && evalIa.puntajeFinal !== undefined && evalIa.puntajeFinal !== null) {
+        return Math.max(0, Math.min(ptsMax, Number(evalIa.puntajeFinal)));
+      }
+      if (evalIa && evalIa.puntajeSugerido !== undefined && evalIa.puntajeSugerido !== null) {
+        return Math.max(0, Math.min(ptsMax, Number(evalIa.puntajeSugerido)));
+      }
+      return 0;
+    }
+
+    const claves = obtenerClavesCorrectasItem(item);
+    return claves.includes(respMap?.[numP]) ? ptsMax : 0;
   };
 
   const obtenerImagenHoja = (obj) => {
@@ -132,6 +167,7 @@ export default function AnalisisPanel({
       const revisadasSet = new Set(revisadasArr.map(Number));
 
       for (let p = 1; p <= numPreguntas; p++) {
+        if (obtenerTipoItem(pauta[p]) !== 'alternativa') continue;
         if (revisadasSet.has(p)) continue;
         const val = respMap[p];
         const esBlanco = val === '' || val === undefined || val === null || val === '-';
@@ -148,15 +184,54 @@ export default function AnalisisPanel({
       }
     });
     return lista;
-  }, [resultados, numPreguntas]);
+  }, [resultados, numPreguntas, pauta]);
+
+  // Cola de preguntas abiertas (completación y desarrollo) pendientes de confirmación docente
+  const pendientesRevisionIA = useMemo(() => {
+    const lista = [];
+    resultados.forEach((alumno) => {
+      const respMap = alumno.respuestas || {};
+      const iaMap = respMap._ia || {};
+
+      for (let p = 1; p <= numPreguntas; p++) {
+        const item = pauta[p];
+        const tipo = obtenerTipoItem(item);
+        if (tipo !== 'completacion' && tipo !== 'desarrollo') continue;
+        if (obtenerPuntajeItem(item) <= 0) continue;
+
+        const infoIa = iaMap[p] || {};
+        if (infoIa.confirmado) continue;
+
+        lista.push({
+          alumno,
+          numeroPregunta: p,
+          tipo,
+          itemPauta: item,
+          infoIa
+        });
+      }
+    });
+    return lista;
+  }, [resultados, numPreguntas, pauta]);
 
   const dudaActiva = pendientesDoblesYBlancas[0] || null;
+  const revisionIaActiva = pendientesRevisionIA[0] || null;
 
   useEffect(() => {
     if (modalDudasAbierto && dudaActiva?.alumno?.id) {
       asegurarImagenResultado(dudaActiva.alumno);
     }
   }, [modalDudasAbierto, dudaActiva?.alumno?.id]);
+
+  useEffect(() => {
+    if (modalIaAbierto && revisionIaActiva) {
+      const sug = revisionIaActiva.infoIa?.puntajeSugerido;
+      setPuntajeIaSeleccionado(sug !== undefined && sug !== null ? Number(sug) : 0);
+      if (!revisionIaActiva.infoIa?.imagenRecorte && revisionIaActiva.alumno?.id) {
+        asegurarImagenResultado(revisionIaActiva.alumno);
+      }
+    }
+  }, [modalIaAbierto, revisionIaActiva?.alumno?.id, revisionIaActiva?.numeroPregunta]);
 
   const abrirModalDudas = async () => {
     if (pendientesDoblesYBlancas.length === 0) return;
@@ -165,6 +240,44 @@ export default function AnalisisPanel({
     setZoomDudaImagen(false);
     setModalDudasAbierto(true);
     await asegurarImagenResultado(primera.alumno);
+  };
+
+  const abrirModalRevisionIA = async () => {
+    if (pendientesRevisionIA.length === 0) return;
+    const primera = pendientesRevisionIA[0];
+    const sug = primera.infoIa?.puntajeSugerido;
+    setPuntajeIaSeleccionado(sug !== undefined && sug !== null ? Number(sug) : 0);
+    setZoomIaImagen(false);
+    setModalIaAbierto(true);
+    if (!primera.infoIa?.imagenRecorte) {
+      await asegurarImagenResultado(primera.alumno);
+    }
+  };
+
+  const confirmarYAvanzarIA = async () => {
+    if (!revisionIaActiva || !onActualizarRespuesta) return;
+    const { alumno, numeroPregunta, infoIa } = revisionIaActiva;
+    const respActuales = { ...(alumno.respuestas || {}) };
+    const iaActual = { ...(respActuales._ia || {}) };
+
+    iaActual[numeroPregunta] = {
+      ...infoIa,
+      puntajeFinal: Number(puntajeIaSeleccionado),
+      confirmado: true
+    };
+
+    const nuevasRespuestas = {
+      ...respActuales,
+      [numeroPregunta]: infoIa?.transcripcion || `${puntajeIaSeleccionado} pts`,
+      _ia: iaActual
+    };
+
+    setGuardandoIa(true);
+    try {
+      await onActualizarRespuesta(alumno.id, nuevasRespuestas);
+    } finally {
+      setGuardandoIa(false);
+    }
   };
 
   const confirmarYAvanzarDuda = async (forzarOmitida = false) => {
@@ -299,6 +412,7 @@ export default function AnalisisPanel({
 
     for (let p = 1; p <= numPreguntas; p++) {
       const itemPauta = pauta[p];
+      const tipoItem = obtenerTipoItem(itemPauta);
       const clavesCorrectas = obtenerClavesCorrectasItem(itemPauta);
       const puntajeItem = obtenerPuntajeItem(itemPauta);
       const esAnulada = puntajeItem === 0;
@@ -306,6 +420,7 @@ export default function AnalisisPanel({
       const oaDesc = (typeof itemPauta === 'object' && itemPauta?.habilidad) ? itemPauta.habilidad.trim() : '';
 
       let aciertos = 0;
+      let sumaPtsObtenidosItem = 0;
       const porOpcion = {};
       opciones.forEach((op) => { porOpcion[op] = []; });
       const omitidasList = [];
@@ -313,25 +428,43 @@ export default function AnalisisPanel({
 
       resultados.forEach((r) => {
         const resp = (r.respuestas && r.respuestas[p]) || '';
-        if (!resp) {
-          omitidasList.push(r);
-        } else if (resp === 'DOBLE') {
-          doblesList.push(r);
+        if (tipoItem === 'completacion' || tipoItem === 'desarrollo') {
+          const ptsAl = obtenerPuntosObtenidosEnPregunta(p, r.respuestas || {});
+          sumaPtsObtenidosItem += ptsAl;
+          if (ptsAl >= puntajeItem && puntajeItem > 0) aciertos++;
         } else {
-          if (porOpcion[resp]) porOpcion[resp].push(r);
-          if (!esAnulada && clavesCorrectas.includes(resp)) aciertos++;
+          if (!resp) {
+            omitidasList.push(r);
+          } else if (resp === 'DOBLE') {
+            doblesList.push(r);
+          } else {
+            if (porOpcion[resp]) porOpcion[resp].push(r);
+            if (!esAnulada && clavesCorrectas.includes(resp)) {
+              aciertos++;
+              sumaPtsObtenidosItem += puntajeItem;
+            }
+          }
         }
       });
 
-      const pctLogro = !esAnulada && totalAlumnos > 0 ? Math.round((aciertos / totalAlumnos) * 100) : 0;
+      const pctLogro = !esAnulada && totalAlumnos > 0 && puntajeItem > 0
+        ? Math.round((sumaPtsObtenidosItem / (totalAlumnos * puntajeItem)) * 100)
+        : 0;
       const colorInfo = esAnulada
         ? { id: 'anulada', label: 'Anulada', rango: '0 pts', color: '#94a3b8', bg: '#f1f5f9', text: '#475569' }
         : clasificarDesempeno(pctLogro);
 
+      const claveTexto = tipoItem === 'completacion'
+        ? (itemPauta?.respuestaExacta || '-')
+        : tipoItem === 'desarrollo'
+        ? `Rúbrica (${puntajeItem} pts)`
+        : (clavesCorrectas.length > 0 ? clavesCorrectas.join(' / ') : '-');
+
       preguntasArr.push({
         numero: p,
+        tipo: tipoItem,
         clavesCorrectas,
-        claveTexto: clavesCorrectas.length > 0 ? clavesCorrectas.join(' / ') : '-',
+        claveTexto,
         anulada: esAnulada,
         oa: oaNombre,
         descripcion: oaDesc,
@@ -401,13 +534,10 @@ export default function AnalisisPanel({
     let ptsTotales = 0;
     oaObj.preguntas.forEach((numP) => {
       const itemPauta = pauta[numP];
-      const claves = obtenerClavesCorrectasItem(itemPauta);
       const pts = obtenerPuntajeItem(itemPauta);
-      if (pts > 0 && claves.length > 0) {
+      if (pts > 0) {
         ptsTotales += pts;
-        if (claves.includes(mapa[numP])) {
-          ptsObtenidos += pts;
-        }
+        ptsObtenidos += obtenerPuntosObtenidosEnPregunta(numP, mapa);
       }
     });
     return ptsTotales > 0 ? Math.round((ptsObtenidos / ptsTotales) * 100) : 0;
@@ -493,7 +623,12 @@ export default function AnalisisPanel({
         fila[`% ${oa.oa}`] = calcularLogroAlumnoEnOA(r, oa);
       });
       for (let p = 1; p <= numPreguntas; p++) {
-        fila[`P${p}`] = (r.respuestas && r.respuestas[p]) || '-';
+        const tipo = obtenerTipoItem(pauta[p]);
+        if (tipo === 'completacion' || tipo === 'desarrollo') {
+          fila[`P${p}`] = `${obtenerPuntosObtenidosEnPregunta(p, r.respuestas || {})} pts`;
+        } else {
+          fila[`P${p}`] = (r.respuestas && r.respuestas[p]) || '-';
+        }
       }
       return fila;
     });
@@ -501,16 +636,17 @@ export default function AnalisisPanel({
     const hojaItems = analisisPreguntas.map((it) => {
       const fila = {
         Pregunta: `P${it.numero}`,
-        'Clave Correcta': it.anulada ? 'ANULADA' : it.claveTexto,
+        Tipo: it.tipo,
+        'Clave / Pauta': it.anulada ? 'ANULADA' : it.claveTexto,
         OA: it.oa,
         '% Logro': it.anulada ? 'ANULADA' : it.pctLogro,
         Aciertos: it.aciertos
       };
       opciones.forEach((op) => {
-        fila[`Alt ${op}`] = it.porOpcion[op]?.length || 0;
+        fila[`Alt ${op}`] = it.tipo === 'alternativa' ? (it.porOpcion[op]?.length || 0) : '-';
       });
-      fila['Omitidas'] = it.omitidasList.length;
-      fila['Dobles'] = it.doblesList.length;
+      fila['Omitidas'] = it.tipo === 'alternativa' ? it.omitidasList.length : '-';
+      fila['Dobles'] = it.tipo === 'alternativa' ? it.doblesList.length : '-';
       return fila;
     });
 
@@ -535,6 +671,9 @@ export default function AnalisisPanel({
   const itemActivoModal = modalItemNum ? analisisPreguntas.find((it) => it.numero === modalItemNum) : null;
   const imagenAlumnoModal = obtenerImagenHoja(modalAlumno);
   const imagenDudaModal = dudaActiva ? obtenerImagenHoja(dudaActiva.alumno) : null;
+  const imagenIaModal = revisionIaActiva
+    ? (revisionIaActiva.infoIa?.imagenRecorte || obtenerImagenHoja(revisionIaActiva.alumno))
+    : null;
 
   const IconoOrden = ({ col }) => {
     if (ordenTabla.col !== col) return <ArrowUpDown size={12} color="#94a3b8" />;
@@ -555,6 +694,29 @@ export default function AnalisisPanel({
           </div>
 
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {puedeEditar && pendientesRevisionIA.length > 0 && (
+              <button
+                type="button"
+                onClick={abrirModalRevisionIA}
+                style={{
+                  background: '#ede9fe',
+                  color: '#5b21b6',
+                  border: '1px solid #8b5cf6',
+                  borderRadius: '8px',
+                  padding: '8px 12px',
+                  fontSize: '12.5px',
+                  fontWeight: '800',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <Sparkles size={15} />
+                Revisar desarrollo y completación IA ({pendientesRevisionIA.length})
+              </button>
+            )}
+
             {puedeEditar && (
               <button
                 type="button"
@@ -912,7 +1074,7 @@ export default function AnalisisPanel({
               Porcentaje de Logro por Pregunta
             </h3>
             <p style={{ margin: '4px 0 0 0', fontSize: '12.5px', color: '#64748b' }}>
-              Coloreado por nivel de logro. <strong>Haz clic en cualquier barra</strong> para ver el detalle de distractores y alternativas.
+              Coloreado por nivel de logro. <strong>Haz clic en cualquier barra</strong> para ver el detalle.
             </p>
           </div>
 
@@ -985,7 +1147,7 @@ export default function AnalisisPanel({
                     cursor: 'pointer',
                     minWidth: '24px'
                   }}
-                  title={`P${it.numero}: ${it.anulada ? 'ANULADA' : `${it.pctLogro}% logro`} (Clave: ${it.claveTexto})`}
+                  title={`P${it.numero}: ${it.anulada ? 'ANULADA' : `${it.pctLogro}% logro`} (${it.claveTexto})`}
                 >
                   <span style={{ fontSize: '10px', fontWeight: '800', color: '#334155', marginBottom: '4px' }}>
                     {it.anulada ? 'ANUL' : `${it.pctLogro}%`}
@@ -1132,6 +1294,230 @@ export default function AnalisisPanel({
           </table>
         </div>
       </div>
+
+      {/* MODAL DE CONFIRMACIÓN DOCENTE PARA DESARROLLO Y COMPLETACIÓN IA */}
+      {modalIaAbierto && revisionIaActiva && (
+        <div
+          onClick={() => setModalIaAbierto(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.72)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1120, padding: '16px'
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#ffffff', borderRadius: '16px', width: '100%',
+              maxWidth: '1140px', maxHeight: '92vh', display: 'flex', flexDirection: 'column',
+              overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.35)'
+            }}
+          >
+            <div style={{ padding: '16px 22px', background: '#f5f3ff', borderBottom: '1px solid #ddd6fe', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+              <div>
+                <div style={{ fontSize: '11.5px', fontWeight: '800', color: '#5b21b6', textTransform: 'uppercase' }}>
+                  Revisión Asistida por IA • {pendientesRevisionIA.length} pendiente(s) por confirmar
+                </div>
+                <h3 style={{ margin: '3px 0 0 0', fontSize: '18px', fontWeight: '800', color: '#0f172a' }}>
+                  {revisionIaActiva.alumno.nombre} — Pregunta {revisionIaActiva.numeroPregunta}{' '}
+                  <span style={{
+                    fontSize: '12px', padding: '2px 8px', borderRadius: '999px', marginLeft: '6px',
+                    background: revisionIaActiva.tipo === 'completacion' ? '#fef3c7' : '#ede9fe',
+                    color: revisionIaActiva.tipo === 'completacion' ? '#92400e' : '#5b21b6'
+                  }}>
+                    {revisionIaActiva.tipo === 'completacion' ? 'COMPLETACIÓN NUMÉRICA' : 'DESARROLLO'}
+                  </span>
+                </h3>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setModalIaAbierto(false)}
+                style={{ background: '#ffffff', border: '1px solid #c4b5fd', borderRadius: '8px', padding: '7px 10px', cursor: 'pointer' }}
+              >
+                <X size={18} color="#5b21b6" />
+              </button>
+            </div>
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '0.95fr 1.05fr',
+                gap: '20px',
+                padding: '20px 22px',
+                overflowY: 'auto',
+                flex: 1
+              }}
+            >
+              {/* Columna izquierda: Transcripción IA, Justificación y botones de puntaje */}
+              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '14px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '12px 14px', fontSize: '13px' }}>
+                    <div><strong>RUT:</strong> {revisionIaActiva.alumno.rut} • <strong>Curso:</strong> {revisionIaActiva.alumno.curso || '-'}</div>
+                    {revisionIaActiva.tipo === 'completacion' ? (
+                      <div style={{ marginTop: '6px' }}>
+                        <strong>Respuesta exacta esperada:</strong>{' '}
+                        <span style={{ color: '#16a34a', fontWeight: '800', fontSize: '14px' }}>
+                          {revisionIaActiva.itemPauta?.respuestaExacta || '-'}
+                        </span>
+                      </div>
+                    ) : (
+                      revisionIaActiva.itemPauta?.enunciado && (
+                        <div style={{ marginTop: '6px', color: '#334155' }}>
+                          <strong>Enunciado:</strong> {revisionIaActiva.itemPauta.enunciado}
+                        </div>
+                      )
+                    )}
+                  </div>
+
+                  {/* Transcripción + Justificación IA */}
+                  <div style={{ background: '#faf5ff', border: '1px solid #c4b5fd', borderRadius: '10px', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '800', color: '#5b21b6', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <Sparkles size={14} /> Lectura y análisis de la IA:
+                    </div>
+                    <div style={{ fontSize: '13.5px', color: '#0f172a', background: '#ffffff', padding: '8px 10px', borderRadius: '7px', border: '1px solid #e9d5ff' }}>
+                      <strong>Transcripción:</strong> {revisionIaActiva.infoIa?.transcripcion || '(Sin lectura automática)'}
+                    </div>
+                    <div style={{ fontSize: '12.5px', color: '#4c1d95', lineHeight: '1.45' }}>
+                      <strong>Justificación IA:</strong> {revisionIaActiva.infoIa?.justificacion || 'Revisa el recorte manuscrito y selecciona el puntaje.'}
+                    </div>
+                  </div>
+
+                  {/* Selector rápido de puntaje */}
+                  <div>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '800', color: '#0f172a', marginBottom: '8px' }}>
+                      Confirma o ajusta el puntaje (Sugerido IA: <span style={{ color: '#7c3aed' }}>{revisionIaActiva.infoIa?.puntajeSugerido ?? 0} pts</span>):
+                    </label>
+
+                    {revisionIaActiva.tipo === 'desarrollo' && Array.isArray(revisionIaActiva.itemPauta?.rubrica) && revisionIaActiva.itemPauta.rubrica.length > 0 ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {revisionIaActiva.itemPauta.rubrica.map((niv, idxNiv) => {
+                          const activo = Number(puntajeIaSeleccionado) === Number(niv.puntaje);
+                          return (
+                            <button
+                              key={idxNiv}
+                              type="button"
+                              onClick={() => setPuntajeIaSeleccionado(Number(niv.puntaje))}
+                              style={{
+                                textAlign: 'left',
+                                padding: '9px 12px',
+                                borderRadius: '9px',
+                                border: activo ? '2px solid #7c3aed' : '1px solid #cbd5e1',
+                                background: activo ? '#f3e8ff' : '#ffffff',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                gap: '10px'
+                              }}
+                            >
+                              <div>
+                                <div style={{ fontWeight: '800', fontSize: '13px', color: '#4c1d95' }}>{niv.nivel}</div>
+                                {niv.descriptor && (
+                                  <div style={{ fontSize: '11.5px', color: '#475569', marginTop: '2px' }}>{niv.descriptor}</div>
+                                )}
+                              </div>
+                              <span style={{ background: activo ? '#7c3aed' : '#e2e8f0', color: activo ? '#ffffff' : '#0f172a', fontWeight: '800', fontSize: '12.5px', padding: '4px 9px', borderRadius: '7px', whiteSpace: 'nowrap' }}>
+                                {niv.puntaje} pts
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        {Array.from({ length: Math.max(1, obtenerPuntajeItem(revisionIaActiva.itemPauta)) + 1 }, (_, pts) => {
+                          const activo = Number(puntajeIaSeleccionado) === pts;
+                          return (
+                            <button
+                              key={pts}
+                              type="button"
+                              onClick={() => setPuntajeIaSeleccionado(pts)}
+                              style={{
+                                flex: 1,
+                                minWidth: '56px',
+                                padding: '11px 0',
+                                borderRadius: '10px',
+                                border: activo ? '2px solid #7c3aed' : '1px solid #cbd5e1',
+                                background: activo ? '#7c3aed' : '#ffffff',
+                                color: activo ? '#ffffff' : '#0f172a',
+                                fontWeight: '800',
+                                fontSize: '15px',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              {pts} pt{pts === 1 ? '' : 's'}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '12px' }}>
+                  <button
+                    type="button"
+                    disabled={guardandoIa}
+                    onClick={confirmarYAvanzarIA}
+                    style={{
+                      width: '100%',
+                      background: '#16a34a',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '10px',
+                      padding: '12px 16px',
+                      fontSize: '14px',
+                      fontWeight: '800',
+                      cursor: guardandoIa ? 'wait' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px'
+                    }}
+                  >
+                    <Check size={17} />
+                    {guardandoIa ? 'Guardando...' : `Confirmar ${puntajeIaSeleccionado} pts y Siguiente`}
+                    <ArrowRight size={17} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Columna derecha: Recorte ampliado de la letra del alumno */}
+              <div style={{ background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '260px' }}>
+                {cargandoImagenModal ? (
+                  <div style={{ fontSize: '13px', color: '#475569', fontWeight: '600' }}>Cargando recorte manuscrito...</div>
+                ) : imagenIaModal ? (
+                  <>
+                    <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569' }}>
+                        Respuesta escrita por el estudiante (P{revisionIaActiva.numeroPregunta})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setZoomIaImagen(!zoomIaImagen)}
+                        style={{ background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '4px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                      >
+                        <ZoomIn size={13} /> {zoomIaImagen ? 'Ajustar' : 'Ampliar'}
+                      </button>
+                    </div>
+                    <div style={{ width: '100%', maxHeight: '62vh', overflow: 'auto', textAlign: 'center' }}>
+                      <img
+                        src={imagenIaModal}
+                        alt={`Respuesta P${revisionIaActiva.numeroPregunta}`}
+                        style={{ width: zoomIaImagen ? '160%' : '100%', maxWidth: zoomIaImagen ? 'none' : '100%', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: '12.5px', color: '#64748b', textAlign: 'center' }}>
+                    No hay recorte disponible para esta pregunta.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {modalDudasAbierto && dudaActiva && (
         <div
@@ -1408,6 +1794,28 @@ export default function AnalisisPanel({
                         {Number(al.nota).toFixed(1)}
                       </td>
                       {preguntasTableroOrdenadas.map((it) => {
+                        if (it.tipo === 'completacion' || it.tipo === 'desarrollo') {
+                          const ptsMax = obtenerPuntajeItem(pauta[it.numero]);
+                          const ptsAl = obtenerPuntosObtenidosEnPregunta(it.numero, al.respuestas || {});
+                          const pleno = !it.anulada && ptsAl >= ptsMax && ptsMax > 0;
+                          const parcial = !it.anulada && ptsAl > 0 && ptsAl < ptsMax;
+                          return (
+                            <td
+                              key={it.numero}
+                              style={{
+                                padding: '6px 3px',
+                                textAlign: 'center',
+                                borderLeft: '1px solid #f1f5f9',
+                                fontWeight: '800',
+                                background: it.anulada ? '#f1f5f9' : pleno ? '#dcfce7' : parcial ? '#fef9c3' : '#fee2e2',
+                                color: it.anulada ? '#64748b' : pleno ? '#166534' : parcial ? '#854d0e' : '#991b1b'
+                              }}
+                            >
+                              {it.anulada ? 'ANUL' : `${ptsAl}/${ptsMax}`}
+                            </td>
+                          );
+                        }
+
                         const resp = al.respuestas?.[it.numero] || '';
                         const ok = !it.anulada && it.clavesCorrectas.includes(resp);
                         const vacia = !resp;
@@ -1569,7 +1977,7 @@ export default function AnalisisPanel({
                   <div>
                     <div style={{ fontSize: '11.5px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>% Logro General</div>
                     <div style={{ fontSize: '13px', color: '#334155', marginTop: '2px' }}>
-                      Aciertos: <strong>{itemActivoModal.aciertos} de {totalAlumnos}</strong> estudiantes
+                      Logro completo: <strong>{itemActivoModal.aciertos} de {totalAlumnos}</strong> estudiantes
                     </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
@@ -1577,83 +1985,85 @@ export default function AnalisisPanel({
                       {itemActivoModal.anulada ? 'ANUL' : `${itemActivoModal.pctLogro}%`}
                     </div>
                     <div style={{ fontSize: '12px', color: '#64748b' }}>
-                      Clave correcta: <strong style={{ color: '#16a34a' }}>{itemActivoModal.claveTexto}</strong>
+                      Pauta: <strong style={{ color: '#16a34a' }}>{itemActivoModal.claveTexto}</strong>
                     </div>
                   </div>
                 </div>
 
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                    <span style={{ fontSize: '12px', fontWeight: '800', color: '#475569', textTransform: 'uppercase' }}>
-                      Elección por Alternativa
-                    </span>
-                    <span style={{ fontSize: '11.5px', color: '#2563eb' }}>Haz clic en una opción para ver quién la marcó</span>
-                  </div>
+                {itemActivoModal.tipo === 'alternativa' && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: '800', color: '#475569', textTransform: 'uppercase' }}>
+                        Elección por Alternativa
+                      </span>
+                      <span style={{ fontSize: '11.5px', color: '#2563eb' }}>Haz clic en una opción para ver quién la marcó</span>
+                    </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {opciones.map((op) => {
-                      const alumnosOp = itemActivoModal.porOpcion[op] || [];
-                      const pctOp = totalAlumnos > 0 ? Math.round((alumnosOp.length / totalAlumnos) * 100) : 0;
-                      const esCorrecta = !itemActivoModal.anulada && itemActivoModal.clavesCorrectas.includes(op);
-                      const activa = opcionSeleccionadaItem === op;
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {opciones.map((op) => {
+                        const alumnosOp = itemActivoModal.porOpcion[op] || [];
+                        const pctOp = totalAlumnos > 0 ? Math.round((alumnosOp.length / totalAlumnos) * 100) : 0;
+                        const esCorrecta = !itemActivoModal.anulada && itemActivoModal.clavesCorrectas.includes(op);
+                        const activa = opcionSeleccionadaItem === op;
 
-                      return (
-                        <div
-                          key={op}
-                          onClick={() => setOpcionSeleccionadaItem(activa ? null : op)}
-                          style={{
-                            padding: '10px 12px',
-                            borderRadius: '10px',
-                            border: activa ? '2px solid #2563eb' : esCorrecta ? '1px solid #86efac' : '1px solid #e2e8f0',
-                            background: esCorrecta ? '#f0fdf4' : '#ffffff',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', marginBottom: '6px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <span style={{ width: '22px', height: '22px', borderRadius: '6px', background: esCorrecta ? '#16a34a' : '#f1f5f9', color: esCorrecta ? '#fff' : '#334155', fontWeight: '800', fontSize: '12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                                {op}
-                              </span>
-                              <span style={{ fontWeight: '700', color: '#0f172a' }}>Alternativa {op}</span>
-                              {esCorrecta && (
-                                <span style={{ background: '#dcfce7', color: '#166534', fontSize: '10.5px', fontWeight: '800', padding: '2px 7px', borderRadius: '4px' }}>
-                                  CORRECTA
+                        return (
+                          <div
+                            key={op}
+                            onClick={() => setOpcionSeleccionadaItem(activa ? null : op)}
+                            style={{
+                              padding: '10px 12px',
+                              borderRadius: '10px',
+                              border: activa ? '2px solid #2563eb' : esCorrecta ? '1px solid #86efac' : '1px solid #e2e8f0',
+                              background: esCorrecta ? '#f0fdf4' : '#ffffff',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', marginBottom: '6px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ width: '22px', height: '22px', borderRadius: '6px', background: esCorrecta ? '#16a34a' : '#f1f5f9', color: esCorrecta ? '#fff' : '#334155', fontWeight: '800', fontSize: '12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                                  {op}
                                 </span>
-                              )}
+                                <span style={{ fontWeight: '700', color: '#0f172a' }}>Alternativa {op}</span>
+                                {esCorrecta && (
+                                  <span style={{ background: '#dcfce7', color: '#166534', fontSize: '10.5px', fontWeight: '800', padding: '2px 7px', borderRadius: '4px' }}>
+                                    CORRECTA
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ fontWeight: '700', color: '#334155' }}>
+                                <span style={{ fontSize: '12px', color: '#64748b', marginRight: '8px' }}>{alumnosOp.length} alumnos</span>
+                                {pctOp}%
+                              </div>
                             </div>
-                            <div style={{ fontWeight: '700', color: '#334155' }}>
-                              <span style={{ fontSize: '12px', color: '#64748b', marginRight: '8px' }}>{alumnosOp.length} alumnos</span>
-                              {pctOp}%
+                            <div style={{ width: '100%', height: '7px', background: '#e2e8f0', borderRadius: '999px', overflow: 'hidden' }}>
+                              <div style={{ width: `${pctOp}%`, height: '100%', background: esCorrecta ? '#16a34a' : '#94a3b8' }} />
                             </div>
                           </div>
-                          <div style={{ width: '100%', height: '7px', background: '#e2e8f0', borderRadius: '999px', overflow: 'hidden' }}>
-                            <div style={{ width: `${pctOp}%`, height: '100%', background: esCorrecta ? '#16a34a' : '#94a3b8' }} />
-                          </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
 
-                    <div
-                      onClick={() => setOpcionSeleccionadaItem(opcionSeleccionadaItem === 'OMITIDA' ? null : 'OMITIDA')}
-                      style={{
-                        padding: '10px 12px',
-                        borderRadius: '10px',
-                        border: opcionSeleccionadaItem === 'OMITIDA' ? '2px solid #2563eb' : '1px solid #e2e8f0',
-                        background: '#f8fafc',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
-                        <span style={{ fontWeight: '600', color: '#475569' }}>Omitida / Blanco / Doble</span>
-                        <span style={{ fontWeight: '700', color: '#475569' }}>
-                          {itemActivoModal.omitidasList.length + itemActivoModal.doblesList.length} alumno(s)
-                        </span>
+                      <div
+                        onClick={() => setOpcionSeleccionadaItem(opcionSeleccionadaItem === 'OMITIDA' ? null : 'OMITIDA')}
+                        style={{
+                          padding: '10px 12px',
+                          borderRadius: '10px',
+                          border: opcionSeleccionadaItem === 'OMITIDA' ? '2px solid #2563eb' : '1px solid #e2e8f0',
+                          background: '#f8fafc',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
+                          <span style={{ fontWeight: '600', color: '#475569' }}>Omitida / Blanco / Doble</span>
+                          <span style={{ fontWeight: '700', color: '#475569' }}>
+                            {itemActivoModal.omitidasList.length + itemActivoModal.doblesList.length} alumno(s)
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
+                )}
 
-                {opcionSeleccionadaItem && (
+                {opcionSeleccionadaItem && itemActivoModal.tipo === 'alternativa' && (
                   <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px', padding: '12px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '800', color: '#1e40af', marginBottom: '6px' }}>
                       {opcionSeleccionadaItem === 'OMITIDA'
@@ -1666,7 +2076,7 @@ export default function AnalisisPanel({
                         : itemActivoModal.porOpcion[opcionSeleccionadaItem] || []
                       ).map((st, idx) => (
                         <div key={idx} style={{ padding: '3px 0', borderBottom: '1px solid #dbeafe' }}>
-                          • {st.nombre} ({st.curso || '-'})
+- {st.nombre} ({st.curso || '-'})
                         </div>
                       ))}
                     </div>
@@ -1782,16 +2192,81 @@ export default function AnalisisPanel({
 
                 {puedeEditar && (
                   <div style={{ fontSize: '12.5px', fontWeight: '700', color: '#334155', marginBottom: '10px' }}>
-                    Haz clic en una alternativa para corregir lo que leyó el escáner (clic de nuevo para dejar omitida):
+                    Haz clic en una alternativa o puntaje para ajustar manualmente:
                   </div>
                 )}
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: '8px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(175px, 1fr))', gap: '8px' }}>
                   {Array.from({ length: numPreguntas }, (_, i) => i + 1).map((numP) => {
-                    const actual = (editandoRespuestas ? respuestasEditadas[numP] : modalAlumno.respuestas?.[numP]) || '';
                     const itemPauta = pauta[numP];
+                    const tipo = obtenerTipoItem(itemPauta);
+                    const ptsMax = obtenerPuntajeItem(itemPauta);
+                    const esAnulada = ptsMax === 0;
+
+                    if (tipo === 'completacion' || tipo === 'desarrollo') {
+                      const mapaRef = editandoRespuestas ? respuestasEditadas : (modalAlumno.respuestas || {});
+                      const infoIa = mapaRef?._ia?.[numP] || {};
+                      const ptsActual = obtenerPuntosObtenidosEnPregunta(numP, mapaRef);
+                      const pleno = !esAnulada && ptsActual >= ptsMax && ptsMax > 0;
+                      const parcial = !esAnulada && ptsActual > 0 && ptsActual < ptsMax;
+
+                      return (
+                        <div
+                          key={numP}
+                          style={{
+                            padding: '8px 10px',
+                            borderRadius: '10px',
+                            border: `1px solid ${pleno ? '#86efac' : parcial ? '#fde047' : '#c4b5fd'}`,
+                            background: pleno ? '#f0fdf4' : parcial ? '#fefce8' : '#faf5ff',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '6px'
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', fontWeight: '800' }}>
+                            <span>P{numP} ({tipo === 'completacion' ? 'Num.' : 'Des.'})</span>
+                            <span style={{ color: '#5b21b6' }}>{ptsActual} / {ptsMax} pts</span>
+                          </div>
+                          {infoIa.transcripcion && (
+                            <div style={{ fontSize: '11px', color: '#475569', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              IA: {infoIa.transcripcion}
+                            </div>
+                          )}
+                          <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
+                            {Array.from({ length: ptsMax + 1 }, (_, pVal) => (
+                              <button
+                                key={pVal}
+                                type="button"
+                                disabled={!puedeEditar}
+                                onClick={() => {
+                                  const base = editandoRespuestas ? respuestasEditadas : { ...(modalAlumno.respuestas || {}) };
+                                  const iaPrev = { ...(base._ia || {}) };
+                                  iaPrev[numP] = { ...(iaPrev[numP] || {}), puntajeFinal: pVal, confirmado: true };
+                                  setRespuestasEditadas({ ...base, _ia: iaPrev });
+                                  setEditandoRespuestas(true);
+                                }}
+                                style={{
+                                  flex: 1,
+                                  padding: '3px 0',
+                                  fontSize: '11px',
+                                  fontWeight: '800',
+                                  borderRadius: '5px',
+                                  cursor: puedeEditar ? 'pointer' : 'not-allowed',
+                                  border: ptsActual === pVal ? '1px solid #6d28d9' : '1px solid #cbd5e1',
+                                  background: ptsActual === pVal ? '#7c3aed' : '#ffffff',
+                                  color: ptsActual === pVal ? '#ffffff' : '#334155'
+                                }}
+                              >
+                                {pVal}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    const actual = (editandoRespuestas ? respuestasEditadas[numP] : modalAlumno.respuestas?.[numP]) || '';
                     const claves = obtenerClavesCorrectasItem(itemPauta);
-                    const esAnulada = obtenerPuntajeItem(itemPauta) === 0;
                     const esOk = !esAnulada && claves.includes(actual);
 
                     return (

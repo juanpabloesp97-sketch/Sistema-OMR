@@ -12,10 +12,13 @@ function decodificarDesdeImageData(imgData, w, h) {
       return {
         r: parsed.r || parsed.rut || 'Sin RUT',
         n: parsed.n || parsed.nombre || 'Estudiante',
-        c: parsed.c || parsed.curso || ''
+        c: parsed.c || parsed.curso || '',
+        e: parsed.e || '',
+        p: Number(parsed.p || 1),
+        tp: Number(parsed.tp || 1)
       };
     } catch {
-      return { r: code.data, n: 'Estudiante QR', c: '' };
+      return { r: code.data, n: 'Estudiante QR', c: '', p: 1, tp: 1 };
     }
   }
   return null;
@@ -78,15 +81,18 @@ export async function convertirPdfAImagenes(pdfFile, onProgreso = null) {
     if (!qrDetectado) {
       const textContent = await page.getTextContent();
       const textoPagina = textContent.items.map((item) => item.str).join(' ');
-      const matchEst = textoPagina.match(/Estudiante:\s*(.+?)\s*RUT:/i);
+      const matchEst = textoPagina.match(/Nombre:\s*(.+?)\s*RUT:/i) || textoPagina.match(/Estudiante:\s*(.+?)\s*RUT:/i);
       const matchRut = textoPagina.match(/RUT:\s*([0-9kK.\-]+)/i);
-      const matchCurso = textoPagina.match(/Curso:\s*([^\s].*?)(?:\s+1\.|$)/i);
+      const matchCurso = textoPagina.match(/Curso:\s*([^\s].*?)(?:\s+PÁGINA|\s+INSTRUCCIONES|\s+1\.|$)/i);
+      const matchPag = textoPagina.match(/Pág\.\s*(\d+)\s*\/\s*(\d+)/i);
 
       if (matchRut || matchEst) {
         qrDetectado = {
           r: matchRut ? matchRut[1].trim() : 'Sin RUT',
           n: matchEst ? matchEst[1].trim() : `Estudiante Pág. ${numPag}`,
-          c: matchCurso ? matchCurso[1].trim() : ''
+          c: matchCurso ? matchCurso[1].trim() : '',
+          p: matchPag ? Number(matchPag[1]) : 1,
+          tp: matchPag ? Number(matchPag[2]) : 1
         };
       }
     }

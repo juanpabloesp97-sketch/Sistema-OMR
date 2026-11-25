@@ -9,6 +9,13 @@ async function obtenerOpenCV() {
   });
 }
 
+function obtenerTipoItem(item) {
+  if (typeof item === 'object' && item !== null && item.tipo) {
+    return item.tipo;
+  }
+  return 'alternativa';
+}
+
 function obtenerClavesItem(item) {
   if (!item) return [];
   if (typeof item === 'string') return item ? [item] : [];
@@ -21,6 +28,74 @@ function obtenerPuntajeItem(item) {
     return Number(item.puntaje);
   }
   return 1;
+}
+
+function construirMapaPaginasDesdeConfig(configEvaluacion) {
+  const total = Number(configEvaluacion?.numPreguntas || 30);
+  const pautaMap = configEvaluacion?.pauta || {};
+  const alternativas = [];
+  const completacion = [];
+  const desarrollo = [];
+
+  for (let p = 1; p <= total; p++) {
+    const it = pautaMap[p] || { tipo: 'alternativa' };
+    const tipo = obtenerTipoItem(it);
+    if (tipo === 'completacion') completacion.push({ p, item: it });
+    else if (tipo === 'desarrollo') desarrollo.push({ p, item: it });
+    else alternativas.push({ p, item: it });
+  }
+
+  const tieneSoloAlt = completacion.length === 0 && desarrollo.length === 0;
+  if (tieneSoloAlt) {
+    return {
+      usaPagina2: false,
+      seccionesP1: { alternativas, completacion: [], desarrollo: [] },
+      seccionesP2: { alternativas: [], completacion: [], desarrollo: [] }
+    };
+  }
+
+  let yCursor = 54;
+  if (alternativas.length > 0) {
+    const filasAlt = Math.ceil(alternativas.length / 2);
+    yCursor += 5 + filasAlt * 7.8 + 4;
+  }
+
+  const compP1 = [];
+  const compP2 = [];
+  if (completacion.length > 0) {
+    yCursor += 6;
+    const filasComp = Math.ceil(completacion.length / 2);
+    const altoComp = filasComp * 13;
+    if (yCursor + altoComp <= 253) {
+      compP1.push(...completacion);
+      yCursor += altoComp + 4;
+    } else {
+      compP2.push(...completacion);
+    }
+  }
+
+  const desP1 = [];
+  const desP2 = [];
+  if (desarrollo.length > 0) {
+    let ySim = yCursor + 6;
+    desarrollo.forEach((d) => {
+      const lineas = Math.max(3, Number(d.item?.lineas || 5));
+      const altoCaja = 6 + lineas * 7.5;
+      if (desP2.length === 0 && ySim + altoCaja <= 253) {
+        desP1.push(d);
+        ySim += altoCaja + 4;
+      } else {
+        desP2.push(d);
+      }
+    });
+  }
+
+  const usaPagina2 = compP2.length > 0 || desP2.length > 0;
+  return {
+    usaPagina2,
+    seccionesP1: { alternativas, completacion: compP1, desarrollo: desP1 },
+    seccionesP2: { alternativas: [], completacion: compP2, desarrollo: desP2 }
+  };
 }
 
 function leerCodigoQR(canvas) {
@@ -47,10 +122,12 @@ function leerCodigoQR(canvas) {
         r: parsed.r || parsed.rut || 'Sin RUT',
         n: parsed.n || parsed.nombre || 'Estudiante',
         c: parsed.c || parsed.curso || '',
-        e: parsed.e || ''
+        e: parsed.e || '',
+        p: Number(parsed.p || 1),
+        tp: Number(parsed.tp || 1)
       };
     } catch {
-      return { r: code.data, n: 'Estudiante QR', c: '' };
+      return { r: code.data, n: 'Estudiante QR', c: '', p: 1, tp: 1 };
     }
   }
   return null;
@@ -128,18 +205,23 @@ function dibujarEtiquetaEstado(ctx, x, y, texto, colorFondo) {
   ctx.restore();
 }
 
-function pintarAnotacionesSobreCanvas(outCtx, respuestas, configEvaluacion) {
-  const totalPreguntas = Number(configEvaluacion.numPreguntas || 30);
-  const alternativasStr = configEvaluacion.alternativas || 'ABCD';
+function pintarAnotacionesSobreCanvas(outCtx, respuestas, configEvaluacion, paginaHoja = 1) {
+  const alternativasStr = configEvaluacion?.alternativas || 'ABCD';
   const opciones = alternativasStr.split('');
-  const pauta = configEvaluacion.pauta || {};
+  const pauta = configEvaluacion?.pauta || {};
   const respMap = respuestas || {};
 
-  for (let p = 1; p <= totalPreguntas; p++) {
-    const col = p <= 25 ? 0 : 1;
-    const fila = p <= 25 ? p - 1 : p - 26;
+  const { seccionesP1, seccionesP2 } = construirMapaPaginasDesdeConfig(configEvaluacion);
+  const sec = paginaHoja === 2 ? seccionesP2 : seccionesP1;
+  const soloAlternativas = sec.completacion.length === 0 && sec.desarrollo.length === 0;
+  const inicioYAlt = soloAlternativas ? 56 : 62.2;
+  const mitad = soloAlternativas ? 25 : Math.ceil(sec.alternativas.length / 2);
+
+  sec.alternativas.forEach(({ p }, idxItem) => {
+    const col = idxItem < mitad ? 0 : 1;
+    const fila = idxItem < mitad ? idxItem : idxItem - mitad;
     const baseX = col === 0 ? 32 : 122;
-    const baseY = 56 + fila * 7.8;
+    const baseY = inicioYAlt + fila * 7.8;
 
     const burbujas = opciones.map((letra, idx) => {
       const cx = baseX + idx * 11;
@@ -193,7 +275,7 @@ function pintarAnotacionesSobreCanvas(outCtx, respuestas, configEvaluacion) {
     } else if (clavesValidas.length > 0) {
       dibujarCruzRoja(outCtx, posXIcono, posYIcono);
     }
-  }
+  });
 }
 
 export async function actualizarAnotacionesImagenOMR(imagenBase64, respuestasMap, configEvaluacion) {
@@ -212,19 +294,23 @@ export async function actualizarAnotacionesImagenOMR(imagenBase64, respuestasMap
   const ctx = canvas.getContext('2d');
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-  const totalPreguntas = Number(configEvaluacion?.numPreguntas || 30);
   const alternativasStr = configEvaluacion?.alternativas || 'ABCD';
   const opciones = alternativasStr.split('');
   const escalaX = canvas.width / 1830;
   const escalaY = canvas.height / 2460;
 
+  const { seccionesP1 } = construirMapaPaginasDesdeConfig(configEvaluacion);
+  const soloAlternativas = seccionesP1.completacion.length === 0 && seccionesP1.desarrollo.length === 0;
+  const inicioYAlt = soloAlternativas ? 56 : 62.2;
+  const mitad = soloAlternativas ? 25 : Math.ceil(seccionesP1.alternativas.length / 2);
+
   ctx.save();
   ctx.scale(escalaX, escalaY);
-  for (let p = 1; p <= totalPreguntas; p++) {
-    const col = p <= 25 ? 0 : 1;
-    const fila = p <= 25 ? p - 1 : p - 26;
+  seccionesP1.alternativas.forEach((_, idxItem) => {
+    const col = idxItem < mitad ? 0 : 1;
+    const fila = idxItem < mitad ? idxItem : idxItem - mitad;
     const baseX = col === 0 ? 32 : 122;
-    const baseY = 56 + fila * 7.8;
+    const baseY = inicioYAlt + fila * 7.8;
 
     const primX = Math.round((baseX - 16) * 10);
     const ultX = Math.round((baseX + (opciones.length - 1) * 11 - 16) * 10);
@@ -232,7 +318,7 @@ export async function actualizarAnotacionesImagenOMR(imagenBase64, respuestasMap
 
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(primX - 34, py - 34, (ultX - primX) + 250, 68);
-  }
+  });
   ctx.restore();
 
   const canvasRestaurado = document.createElement('canvas');
@@ -243,11 +329,11 @@ export async function actualizarAnotacionesImagenOMR(imagenBase64, respuestasMap
 
   ctx.save();
   ctx.scale(escalaX, escalaY);
-  for (let p = 1; p <= totalPreguntas; p++) {
-    const col = p <= 25 ? 0 : 1;
-    const fila = p <= 25 ? p - 1 : p - 26;
+  seccionesP1.alternativas.forEach((_, idxItem) => {
+    const col = idxItem < mitad ? 0 : 1;
+    const fila = idxItem < mitad ? idxItem : idxItem - mitad;
     const baseX = col === 0 ? 32 : 122;
-    const baseY = 56 + fila * 7.8;
+    const baseY = inicioYAlt + fila * 7.8;
     const py = Math.round((baseY - 16) * 10);
 
     opciones.forEach((_, idx) => {
@@ -269,12 +355,27 @@ export async function actualizarAnotacionesImagenOMR(imagenBase64, respuestasMap
         44
       );
     });
-  }
+  });
 
-  pintarAnotacionesSobreCanvas(ctx, respuestasMap, configEvaluacion);
+  pintarAnotacionesSobreCanvas(ctx, respuestasMap, configEvaluacion, 1);
   ctx.restore();
 
   return canvas.toDataURL('image/jpeg', 0.72);
+}
+
+function recortarRegionWarped(canvasFuente, xMm, yMm, wMm, hMm) {
+  const px = Math.max(0, Math.round((xMm - 16) * 10));
+  const py = Math.max(0, Math.round((yMm - 16) * 10));
+  const pw = Math.min(canvasFuente.width - px, Math.round(wMm * 10));
+  const ph = Math.min(canvasFuente.height - py, Math.round(hMm * 10));
+  if (pw <= 10 || ph <= 10) return null;
+
+  const tmp = document.createElement('canvas');
+  tmp.width = pw;
+  tmp.height = ph;
+  const tCtx = tmp.getContext('2d');
+  tCtx.drawImage(canvasFuente, px, py, pw, ph, 0, 0, pw, ph);
+  return tmp.toDataURL('image/jpeg', 0.85);
 }
 
 export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
@@ -301,11 +402,12 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
   const qrData = archivoImagen.qrPreDetectado || leerCodigoQR(canvas);
+  const paginaHoja = Number(qrData?.p || 1);
 
-  const totalPreguntas = Number(configEvaluacion.numPreguntas || 30);
   const alternativasStr = configEvaluacion.alternativas || 'ABCD';
   const opciones = alternativasStr.split('');
-  const pauta = configEvaluacion.pauta || {};
+  const { seccionesP1, seccionesP2 } = construirMapaPaginasDesdeConfig(configEvaluacion);
+  const secActual = paginaHoja === 2 ? seccionesP2 : seccionesP1;
 
   const src = cv.imread(canvas);
   const gray = new cv.Mat();
@@ -395,93 +497,175 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
   const warpedGray = new cv.Mat();
   const warpedBin = new cv.Mat();
   cv.cvtColor(warped, warpedGray, cv.COLOR_RGBA2GRAY);
-  cv.GaussianBlur(warpedGray, warpedGray, new cv.Size(3, 3), 0);
-  cv.adaptiveThreshold(warpedGray, warpedBin, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 31, 10);
+  cv.threshold(warpedGray, warpedBin, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+
+  const cleanCanvas = document.createElement('canvas');
+  cv.imshow(cleanCanvas, warped);
 
   const outCanvas = document.createElement('canvas');
   cv.imshow(outCanvas, warped);
   const outCtx = outCanvas.getContext('2d');
 
   const radioPx = 22;
-  const radioNucleoPx = 13;
+  const radioNucleoPx = 12;
   const respuestas = {};
 
-  for (let p = 1; p <= totalPreguntas; p++) {
-    const col = p <= 25 ? 0 : 1;
-    const fila = p <= 25 ? p - 1 : p - 26;
-    const baseX = col === 0 ? 32 : 122;
-    const baseY = 56 + fila * 7.8;
+  const soloAlternativas = secActual.completacion.length === 0 && secActual.desarrollo.length === 0;
+  let yCursor = 54;
 
-    const densidades = opciones.map((letra, idx) => {
-      const cx = baseX + idx * 11;
-      const px = Math.round((cx - 16) * 10);
-      const py = Math.round((baseY - 16) * 10);
+  if (secActual.alternativas.length > 0) {
+    const inicioYAlt = soloAlternativas ? 56 : 62.2;
+    const mitad = soloAlternativas ? 25 : Math.ceil(secActual.alternativas.length / 2);
 
-      let oscurosBin = 0;
-      let totalBin = 0;
-      let sumaGrisNucleo = 0;
-      let totalNucleo = 0;
+    secActual.alternativas.forEach(({ p }, idxItem) => {
+      const col = idxItem < mitad ? 0 : 1;
+      const fila = idxItem < mitad ? idxItem : idxItem - mitad;
+      const baseX = col === 0 ? 32 : 122;
+      const baseY = inicioYAlt + fila * 7.8;
 
-      for (let dy = -radioPx; dy <= radioPx; dy++) {
-        for (let dx = -radioPx; dx <= radioPx; dx++) {
-          const d2 = dx * dx + dy * dy;
-          if (d2 <= radioPx * radioPx) {
-            if (py + dy >= 0 && py + dy < H && px + dx >= 0 && px + dx < W) {
-              const valBin = warpedBin.ucharPtr(py + dy, px + dx)[0];
-              if (valBin > 0) oscurosBin++;
-              totalBin++;
+      const densidades = opciones.map((letra, idx) => {
+        const cx = baseX + idx * 11;
+        const pxBase = Math.round((cx - 16) * 10);
+        const pyBase = Math.round((baseY - 16) * 10);
 
-              if (d2 <= radioNucleoPx * radioNucleoPx) {
-                const valGris = warpedGray.ucharPtr(py + dy, px + dx)[0];
-                sumaGrisNucleo += valGris;
-                totalNucleo++;
+        let mejorMuestra = { letra, ratio: 0, brilloNucleo: 255, px: pxBase, py: pyBase };
+        const offsets = [
+          [0, 0],
+          [-4, 0],
+          [4, 0],
+          [0, -4],
+          [0, 4]
+        ];
+
+        for (const [ox, oy] of offsets) {
+          const px = pxBase + ox;
+          const py = pyBase + oy;
+          let oscurosBin = 0;
+          let totalBin = 0;
+          let sumaGrisNucleo = 0;
+          let totalNucleo = 0;
+
+          for (let dy = -radioPx; dy <= radioPx; dy++) {
+            for (let dx = -radioPx; dx <= radioPx; dx++) {
+              const d2 = dx * dx + dy * dy;
+              if (d2 <= radioPx * radioPx) {
+                if (py + dy >= 0 && py + dy < H && px + dx >= 0 && px + dx < W) {
+                  const valBin = warpedBin.ucharPtr(py + dy, px + dx)[0];
+                  if (valBin > 0) oscurosBin++;
+                  totalBin++;
+
+                  if (d2 <= radioNucleoPx * radioNucleoPx) {
+                    const valGris = warpedGray.ucharPtr(py + dy, px + dx)[0];
+                    sumaGrisNucleo += valGris;
+                    totalNucleo++;
+                  }
+                }
               }
             }
           }
+
+          const ratio = totalBin > 0 ? oscurosBin / totalBin : 0;
+          const brilloNucleo = totalNucleo > 0 ? sumaGrisNucleo / totalNucleo : 255;
+
+          if (ratio > mejorMuestra.ratio || (ratio === mejorMuestra.ratio && brilloNucleo < mejorMuestra.brilloNucleo)) {
+            mejorMuestra = { letra, ratio, brilloNucleo, px: pxBase, py: pyBase };
+          }
+        }
+
+        return mejorMuestra;
+      });
+
+      const ordenadosBrillo = [...densidades].sort((a, b) => b.brilloNucleo - a.brilloNucleo);
+      const fondoFilaBrillo = (ordenadosBrillo[0].brilloNucleo + ordenadosBrillo[1].brilloNucleo) / 2;
+
+      const ordenadosOscuridad = [...densidades].sort((a, b) => a.brilloNucleo - b.brilloNucleo);
+      const segundaMasOscuraBrillo = ordenadosOscuridad[1]?.brilloNucleo ?? 255;
+
+      const candidatosMarcados = densidades.filter((d) => {
+        const oscuridadRelativa = fondoFilaBrillo - d.brilloNucleo;
+        const marcaNormal = d.brilloNucleo < 192 && oscuridadRelativa > 24;
+        const marcaGrafitoClaro =
+          d.brilloNucleo < 208 &&
+          oscuridadRelativa > 22 &&
+          segundaMasOscuraBrillo - d.brilloNucleo >= 15;
+        return marcaNormal || marcaGrafitoClaro || d.ratio > 0.34;
+      });
+
+      let marcadas = [];
+      if (candidatosMarcados.length === 1) {
+        marcadas = candidatosMarcados;
+      } else if (candidatosMarcados.length > 1) {
+        const ordOsc = [...candidatosMarcados].sort((a, b) => a.brilloNucleo - b.brilloNucleo);
+        const masOscura = ordOsc[0];
+        const segundaOsc = ordOsc[1];
+        const diferenciaBrillo = segundaOsc.brilloNucleo - masOscura.brilloNucleo;
+
+        if (diferenciaBrillo > 32 && segundaOsc.brilloNucleo > 155) {
+          marcadas = [masOscura];
+        } else {
+          marcadas = candidatosMarcados;
         }
       }
 
-      const ratio = totalBin > 0 ? oscurosBin / totalBin : 0;
-      const brilloNucleo = totalNucleo > 0 ? sumaGrisNucleo / totalNucleo : 255;
-
-      return { letra, ratio, brilloNucleo, px, py };
-    });
-
-    const ordenadosBrillo = [...densidades].sort((a, b) => b.brilloNucleo - a.brilloNucleo);
-    const fondoFilaBrillo = (ordenadosBrillo[0].brilloNucleo + ordenadosBrillo[1].brilloNucleo) / 2;
-
-    const candidatosMarcados = densidades.filter((d) => {
-      const oscuridadRelativa = fondoFilaBrillo - d.brilloNucleo;
-      return (d.brilloNucleo < 185 && oscuridadRelativa > 26) || d.ratio > 0.36;
-    });
-
-    let marcadas = [];
-    if (candidatosMarcados.length === 1) {
-      marcadas = candidatosMarcados;
-    } else if (candidatosMarcados.length > 1) {
-      const ordenadosOscuridad = [...candidatosMarcados].sort((a, b) => a.brilloNucleo - b.brilloNucleo);
-      const masOscura = ordenadosOscuridad[0];
-      const segundaMasOscura = ordenadosOscuridad[1];
-      const diferenciaBrillo = segundaMasOscura.brilloNucleo - masOscura.brilloNucleo;
-
-      if (diferenciaBrillo > 35 && segundaMasOscura.brilloNucleo > 155) {
-        marcadas = [masOscura];
-      } else {
-        marcadas = candidatosMarcados;
+      let respuestaFinal = '';
+      if (marcadas.length === 1) {
+        respuestaFinal = marcadas[0].letra;
+      } else if (marcadas.length > 1) {
+        respuestaFinal = 'DOBLE';
       }
-    }
 
-    let respuestaFinal = '';
-    if (marcadas.length === 1) {
-      respuestaFinal = marcadas[0].letra;
-    } else if (marcadas.length > 1) {
-      respuestaFinal = 'DOBLE';
-    }
+      respuestas[p] = respuestaFinal;
+    });
 
-    respuestas[p] = respuestaFinal;
+    const filasUsadas = Math.min(mitad, secActual.alternativas.length);
+    yCursor = (soloAlternativas ? 56 : 62.2) + filasUsadas * 7.8 + 3;
   }
 
-  pintarAnotacionesSobreCanvas(outCtx, respuestas, configEvaluacion);
+  const recortesIA = {};
+
+  if (secActual.completacion.length > 0) {
+    yCursor += 6.8;
+    const mitadComp = Math.ceil(secActual.completacion.length / 2);
+
+    secActual.completacion.forEach(({ p }, idx) => {
+      const col = idx < mitadComp ? 0 : 1;
+      const fila = idx < mitadComp ? idx : idx - mitadComp;
+      const xBox = col === 0 ? 34 : 122;
+      const yRow = yCursor + fila * 13;
+
+      const imgRecorte = recortarRegionWarped(cleanCanvas, xBox - 1, yRow - 1, 68, 12.5);
+      if (imgRecorte) {
+        recortesIA[p] = {
+          tipo: 'completacion',
+          imagen: imgRecorte
+        };
+      }
+    });
+
+    yCursor += mitadComp * 13 + 3;
+  }
+
+  if (secActual.desarrollo.length > 0) {
+    yCursor += 6.5;
+
+    secActual.desarrollo.forEach(({ p, item }) => {
+      const numLineas = Math.max(3, Number(item?.lineas || 5));
+      const interlineado = 7.5;
+      const altoCaja = 5.5 + numLineas * interlineado;
+
+      const imgRecorte = recortarRegionWarped(cleanCanvas, 22, yCursor - 1, 171, altoCaja + 2);
+      if (imgRecorte) {
+        recortesIA[p] = {
+          tipo: 'desarrollo',
+          imagen: imgRecorte
+        };
+      }
+
+      yCursor += altoCaja + 4;
+    });
+  }
+
+  pintarAnotacionesSobreCanvas(outCtx, respuestas, configEvaluacion, paginaHoja);
 
   src.delete();
   gray.delete();
@@ -495,7 +679,9 @@ export async function procesarHojaOMR(archivoImagen, configEvaluacion) {
 
   return {
     qrData,
+    paginaHoja,
     respuestas,
+    recortesIA,
     imagenProcesada: outCanvas.toDataURL('image/jpeg', 0.65)
   };
 }
