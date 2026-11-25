@@ -846,11 +846,12 @@ export default function App() {
     }
   };
 
+  // Carga liviana inicial (sin descargar imagen_corregida masivamente)
   const cargarResultadosNube = async (evaluacionId) => {
     if (!supabase || !evaluacionId) return [];
     const { data, error } = await supabase
       .from('resultados')
-      .select('*')
+      .select('id, rut_estudiante, nombre_estudiante, curso, puntaje_obtenido, puntaje_total, porcentaje, nota, respuestas_alumno')
       .eq('evaluacion_id', evaluacionId)
       .order('created_at', { ascending: false });
 
@@ -865,7 +866,7 @@ export default function App() {
         porcentaje: Number(r.porcentaje ?? 0),
         nota: Number(r.nota ?? 1.0),
         respuestas: r.respuestas_alumno || {},
-        imagenProcesada: r.imagen_corregida || null
+        imagenProcesada: null
       }));
       setResultadosCurso(formateados);
       return formateados;
@@ -1259,7 +1260,6 @@ export default function App() {
     doc.setTextColor(0, 0, 0);
     doc.setLineWidth(0.35);
 
-    // 1. RECUADRO LOGO DE LA ESCUELA (X: 23 a 50 mm -> ancho 27 mm)
     doc.rect(23, topY, 27, boxH);
     if (logoEscuela) {
       doc.addImage(logoEscuela, 'PNG', 25, topY + 3.5, 23, 24, undefined, 'FAST');
@@ -1272,7 +1272,6 @@ export default function App() {
       doc.setTextColor(0, 0, 0);
     }
 
-    // 2. RECUADRO DATOS DE LA PRUEBA (X: 52 a 106 mm -> ancho 54 mm)
     doc.rect(52, topY, 54, boxH);
     doc.setFillColor(235, 235, 235);
     doc.rect(52, topY, 54, 5.2, 'FD');
@@ -1290,7 +1289,6 @@ export default function App() {
     doc.text(asigLineas[0], 54, topY + 20.5);
     doc.text(`Ítems: ${totalPreg} (${alternativas})`, 54, topY + 26.5);
 
-    // 3. RECUADRO DATOS DEL ESTUDIANTE (X: 108 a 161 mm -> ancho 53 mm)
     doc.rect(108, topY, 53, boxH);
     doc.setFillColor(235, 235, 235);
     doc.rect(108, topY, 53, 5.2, 'FD');
@@ -1331,7 +1329,6 @@ export default function App() {
       doc.text(`Curso: ${cursoEstudiante || '-'}`, 110, topY + 27.8);
     }
 
-    // 4. RECUADRO CÓDIGO QR + PRECAUCIÓN (X: 163 a 192 mm -> ancho 29 mm)
     doc.rect(163, topY, 29, boxH);
     if (qrDataUrl) {
       doc.addImage(qrDataUrl, 'PNG', 166.5, topY + 1, 22, 22);
@@ -1362,7 +1359,6 @@ export default function App() {
       doc.text('No rayes este recuadro', 177.5, topY + 29.4, { align: 'center' });
     }
 
-    // BARRA INFERIOR DE INSTRUCCIONES (X: 23 a 192 mm)
     doc.setLineWidth(0.25);
     doc.rect(23, 45, 169, 5.2);
     doc.setFont('helvetica', 'bold');
@@ -1526,7 +1522,8 @@ export default function App() {
     }
   };
 
-  const descargarHojasCorregidasPDF = (listaResultadosAExportar, sufijoArchivo = '', respetarOrden = false) => {
+  // Descarga imágenes corregidas bajo demanda solo al generar el PDF
+  const descargarHojasCorregidasPDF = async (listaResultadosAExportar, sufijoArchivo = '', respetarOrden = false) => {
     if (!listaResultadosAExportar || listaResultadosAExportar.length === 0) {
       alert('No hay resultados corregidos para descargar.');
       return;
@@ -1545,6 +1542,40 @@ export default function App() {
     actualizarBarra(true, 'Completando descarga de PDF...', 10, `Armando ${listaOrdenada.length} hoja(s) corregida(s)...`);
 
     try {
+      const mapaImagenes = new Map();
+      listaOrdenada.forEach((r) => {
+        if (r.id && r.imagenProcesada) {
+          mapaImagenes.set(r.id, r.imagenProcesada);
+        }
+      });
+
+      const idsFaltantes = listaOrdenada
+        .map((r) => r.id)
+        .filter((id) => id && !mapaImagenes.has(id));
+
+      if (supabase && idsFaltantes.length > 0) {
+        const tamLoteImg = 15;
+        for (let k = 0; k < idsFaltantes.length; k += tamLoteImg) {
+          const bloqueIds = idsFaltantes.slice(k, k + tamLoteImg);
+          actualizarBarra(
+            true,
+            'Completando descarga de PDF...',
+            10 + Math.round(((k + bloqueIds.length) / idsFaltantes.length) * 35),
+            `Recuperando hojas corregidas (${Math.min(k + tamLoteImg, idsFaltantes.length)}/${idsFaltantes.length})...`
+          );
+          const { data: imgsDB } = await supabase
+            .from('resultados')
+            .select('id, imagen_corregida')
+            .in('id', bloqueIds);
+
+          (imgsDB || []).forEach((fila) => {
+            if (fila.id && fila.imagen_corregida) {
+              mapaImagenes.set(fila.id, fila.imagen_corregida);
+            }
+          });
+        }
+      }
+
       const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
       const opciones = config.alternativas.split('');
       const totalPreg = Number(config.numPreguntas);
@@ -1553,11 +1584,12 @@ export default function App() {
         if (i > 0) doc.addPage();
         const res = listaOrdenada[i];
         const respuestasAl = res.respuestas || {};
+        const imgHojaRes = (res.id && mapaImagenes.get(res.id)) || res.imagenProcesada || null;
 
         actualizarBarra(
           true,
           'Completando descarga de PDF...',
-          10 + Math.round(((i + 1) / listaOrdenada.length) * 85),
+          45 + Math.round(((i + 1) / listaOrdenada.length) * 50),
           `Procesando hoja ${i + 1} de ${listaOrdenada.length} (${res.nombre})...`
         );
 
@@ -1586,8 +1618,8 @@ export default function App() {
         doc.setFontSize(15);
         doc.text(Number(res.nota).toFixed(1), 182.5, 30, { align: 'center' });
 
-        if (res.imagenProcesada) {
-          doc.addImage(res.imagenProcesada, 'JPEG', 18, 41, 180, 228);
+        if (imgHojaRes) {
+          doc.addImage(imgHojaRes, 'JPEG', 18, 41, 180, 228);
         } else {
           doc.setTextColor(71, 85, 105);
           doc.setFontSize(8);
@@ -1672,20 +1704,36 @@ export default function App() {
     }
   };
 
-  const abrirAsistenteHojasSinQr = (listaResultadosActualizados) => {
+  const abrirAsistenteHojasSinQr = async (listaResultadosActualizados) => {
     const sinQr = (listaResultadosActualizados || []).filter((r) => {
       const rutNorm = (r.rut || '').trim().toLowerCase();
       return !rutNorm || rutNorm === 'sin qr' || rutNorm === 'sin rut';
     });
 
     if (sinQr.length > 0) {
+      let enriquecidas = sinQr;
+      if (supabase) {
+        const idsSinImg = sinQr.filter((x) => x.id && !x.imagenProcesada).map((x) => x.id);
+        if (idsSinImg.length > 0) {
+          const { data: imgs } = await supabase
+            .from('resultados')
+            .select('id, imagen_corregida')
+            .in('id', idsSinImg);
+          const mapImg = new Map((imgs || []).map((f) => [f.id, f.imagen_corregida]));
+          enriquecidas = sinQr.map((item) => ({
+            ...item,
+            imagenProcesada: item.imagenProcesada || mapImg.get(item.id) || null
+          }));
+        }
+      }
+
       const cursoDefault =
         (contextoAperturaEval === 'curso' && cursoActivoId) ||
         cursoFiltroObj?.id ||
         config.cursoId ||
         (cursosDelNivelActivo[0]?.id || '');
 
-      setHojasSinQrPendientes(sinQr);
+      setHojasSinQrPendientes(enriquecidas);
       setIndiceHojaSinQr(0);
       setBusquedaAlumnoModal('');
       setRutSeleccionadoModal('');
@@ -1757,11 +1805,7 @@ export default function App() {
         setMostrarFormNuevoAlumnoModal(false);
         alert('Todas las hojas han sido asignadas a sus estudiantes.');
       } else {
-        setHojasSinQrPendientes(restantes);
-        setIndiceHojaSinQr(0);
-        setRutSeleccionadoModal('');
-        setBusquedaAlumnoModal('');
-        setMostrarFormNuevoAlumnoModal(false);
+        await abrirAsistenteHojasSinQr(restantes);
       }
     } finally {
       setAsignandoHoja(false);
@@ -1860,10 +1904,7 @@ export default function App() {
         setBusquedaAlumnoModal('');
         alert(`Estudiante "${nombreLimpio}" agregado a la nómina y calificado (Nota ${calificacion.nota.toFixed(1)}).`);
       } else {
-        setHojasSinQrPendientes(restantes);
-        setIndiceHojaSinQr(0);
-        setRutSeleccionadoModal('');
-        setBusquedaAlumnoModal('');
+        await abrirAsistenteHojasSinQr(restantes);
       }
     } finally {
       setCreandoAlumnoYAsignando(false);
@@ -2038,7 +2079,7 @@ export default function App() {
               }).length;
 
               if (sinQrCount > 0) {
-                abrirAsistenteHojasSinQr(listaActualizada);
+                await abrirAsistenteHojasSinQr(listaActualizada);
               } else {
                 alert(`${resultadosAGuardar.length} resultado(s) guardado(s) correctamente.`);
               }
@@ -3722,10 +3763,20 @@ export default function App() {
                   esVistaNivelCompleto={!cursoFiltroEfectivo}
                   onActualizarRespuesta={async (resultadoId, nuevasRespuestas) => {
                     const calificacion = evaluarRespuestasConPauta(nuevasRespuestas, config);
-                    const resultadoActual = resultadosCurso.find((r) => r.id === resultadoId);
-                    const nuevaImagenProcesada = resultadoActual?.imagenProcesada
+                    let imagenBaseActual = resultadosCurso.find((r) => r.id === resultadoId)?.imagenProcesada || null;
+
+                    if (!imagenBaseActual && supabase && resultadoId) {
+                      const { data: filaImg } = await supabase
+                        .from('resultados')
+                        .select('imagen_corregida')
+                        .eq('id', resultadoId)
+                        .maybeSingle();
+                      imagenBaseActual = filaImg?.imagen_corregida || null;
+                    }
+
+                    const nuevaImagenProcesada = imagenBaseActual
                       ? await actualizarAnotacionesImagenOMR(
-                          resultadoActual.imagenProcesada,
+                          imagenBaseActual,
                           nuevasRespuestas,
                           config
                         )

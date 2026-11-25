@@ -1,10 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import {
   BarChart3, Download, ArrowUpDown, ArrowUp, ArrowDown, X, FileText,
   CheckCircle2, XCircle, MinusCircle, SlidersHorizontal, ExternalLink,
   Search, Eye, Save, ZoomIn, Table, AlertTriangle, ArrowRight, Check
 } from 'lucide-react';
+import { supabase } from './supabaseClient';
 
 export default function AnalisisPanel({
   resultados = [],
@@ -20,6 +21,10 @@ export default function AnalisisPanel({
     insuficiente: 30
   });
   const [mostrarConfigCortes, setMostrarConfigCortes] = useState(false);
+
+  // Caché local de imágenes corregidas solicitadas bajo demanda
+  const [imagenesBajoDemanda, setImagenesBajoDemanda] = useState({});
+  const [cargandoImagenModal, setCargandoImagenModal] = useState(false);
 
   // Modales interactivos
   const [modalGrupo, setModalGrupo] = useState(null);
@@ -74,8 +79,50 @@ export default function AnalisisPanel({
     return 1;
   };
 
-  const obtenerImagenHoja = (obj) =>
-    obj?.imagenProcesada || obj?.imagenUrl || obj?.imagen_corregida || null;
+  const obtenerImagenHoja = (obj) => {
+    if (!obj) return null;
+    if (obj.imagenProcesada || obj.imagenUrl || obj.imagen_corregida) {
+      return obj.imagenProcesada || obj.imagenUrl || obj.imagen_corregida;
+    }
+    if (obj.id && imagenesBajoDemanda[obj.id]) {
+      return imagenesBajoDemanda[obj.id];
+    }
+    return null;
+  };
+
+  const asegurarImagenResultado = async (resultadoObj) => {
+    if (!resultadoObj?.id) return null;
+    const yaEnMemoria =
+      resultadoObj.imagenProcesada ||
+      resultadoObj.imagenUrl ||
+      resultadoObj.imagen_corregida ||
+      imagenesBajoDemanda[resultadoObj.id];
+
+    if (yaEnMemoria) return yaEnMemoria;
+    if (!supabase) return null;
+
+    setCargandoImagenModal(true);
+    try {
+      const { data, error } = await supabase
+        .from('resultados')
+        .select('imagen_corregida')
+        .eq('id', resultadoObj.id)
+        .maybeSingle();
+
+      if (!error && data?.imagen_corregida) {
+        setImagenesBajoDemanda((prev) => ({
+          ...prev,
+          [resultadoObj.id]: data.imagen_corregida
+        }));
+        return data.imagen_corregida;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      setCargandoImagenModal(false);
+    }
+  };
 
   const pendientesDoblesYBlancas = useMemo(() => {
     const lista = [];
@@ -105,12 +152,19 @@ export default function AnalisisPanel({
 
   const dudaActiva = pendientesDoblesYBlancas[0] || null;
 
-  const abrirModalDudas = () => {
+  useEffect(() => {
+    if (modalDudasAbierto && dudaActiva?.alumno?.id) {
+      asegurarImagenResultado(dudaActiva.alumno);
+    }
+  }, [modalDudasAbierto, dudaActiva?.alumno?.id]);
+
+  const abrirModalDudas = async () => {
     if (pendientesDoblesYBlancas.length === 0) return;
     const primera = pendientesDoblesYBlancas[0];
     setClaveDudaSeleccionada(primera.estadoActual === 'DOBLE' ? '' : primera.respuestaActual);
     setZoomDudaImagen(false);
     setModalDudasAbierto(true);
+    await asegurarImagenResultado(primera.alumno);
   };
 
   const confirmarYAvanzarDuda = async (forzarOmitida = false) => {
@@ -400,11 +454,12 @@ export default function AnalisisPanel({
     setPdfPruebaNombre(file.name);
   };
 
-  const abrirModalAlumno = (al) => {
+  const abrirModalAlumno = async (al) => {
     setModalAlumnoId(al.id);
     setRespuestasEditadas({ ...(al.respuestas || {}) });
     setEditandoRespuestas(false);
     setZoomImagen(false);
+    await asegurarImagenResultado(al);
   };
 
   const guardarCambiosAlumno = async () => {
@@ -1027,7 +1082,6 @@ export default function AnalisisPanel({
               {alumnosFiltradosYOrdenados.map((al, idx) => {
                 const des = clasificarDesempeno(al.porcentaje);
                 const notaNum = Number(al.nota || 1.0);
-                const imgHoja = obtenerImagenHoja(al);
                 return (
                   <tr key={al.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
                     <td style={{ padding: '10px', fontWeight: '700' }}>
@@ -1049,7 +1103,7 @@ export default function AnalisisPanel({
                         }}
                       >
                         {al.nombre}
-                        {imgHoja && <Eye size={14} color="#64748b" />}
+                        <Eye size={14} color="#64748b" />
                       </button>
                     </td>
                     <td style={{ padding: '10px', textAlign: 'center', color: '#475569' }}>{al.curso || '-'}</td>
@@ -1091,7 +1145,7 @@ export default function AnalisisPanel({
             onClick={(e) => e.stopPropagation()}
             style={{
               background: '#ffffff', borderRadius: '16px', width: '100%',
-              maxWidth: imagenDudaModal ? '1140px' : '640px',
+              maxWidth: '1140px',
               maxHeight: '92vh', display: 'flex', flexDirection: 'column',
               overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.35)'
             }}
@@ -1125,7 +1179,7 @@ export default function AnalisisPanel({
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: imagenDudaModal ? '0.95fr 1.05fr' : '1fr',
+                gridTemplateColumns: '0.95fr 1.05fr',
                 gap: '20px',
                 padding: '20px 22px',
                 overflowY: 'auto',
@@ -1231,29 +1285,37 @@ export default function AnalisisPanel({
                 </div>
               </div>
 
-              {imagenDudaModal && (
-                <div style={{ background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                  <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569' }}>
-                      Hoja del estudiante (Pregunta {dudaActiva.numeroPregunta})
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setZoomDudaImagen(!zoomDudaImagen)}
-                      style={{ background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '4px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                    >
-                      <ZoomIn size={13} /> {zoomDudaImagen ? 'Ajustar' : 'Ampliar'}
-                    </button>
+              <div style={{ background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '260px' }}>
+                {cargandoImagenModal ? (
+                  <div style={{ fontSize: '13px', color: '#475569', fontWeight: '600' }}>Cargando hoja del estudiante...</div>
+                ) : imagenDudaModal ? (
+                  <>
+                    <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569' }}>
+                        Hoja del estudiante (Pregunta {dudaActiva.numeroPregunta})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setZoomDudaImagen(!zoomDudaImagen)}
+                        style={{ background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '4px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                      >
+                        <ZoomIn size={13} /> {zoomDudaImagen ? 'Ajustar' : 'Ampliar'}
+                      </button>
+                    </div>
+                    <div style={{ width: '100%', maxHeight: '62vh', overflow: 'auto', textAlign: 'center' }}>
+                      <img
+                        src={imagenDudaModal}
+                        alt={`Hoja de ${dudaActiva.alumno.nombre}`}
+                        style={{ width: zoomDudaImagen ? '160%' : '100%', maxWidth: zoomDudaImagen ? 'none' : '100%', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: '12.5px', color: '#64748b', textAlign: 'center' }}>
+                    No hay imagen guardada para este registro.
                   </div>
-                  <div style={{ width: '100%', maxHeight: '62vh', overflow: 'auto', textAlign: 'center' }}>
-                    <img
-                      src={imagenDudaModal}
-                      alt={`Hoja de ${dudaActiva.alumno.nombre}`}
-                      style={{ width: zoomDudaImagen ? '160%' : '100%', maxWidth: zoomDudaImagen ? 'none' : '100%', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                    />
-                  </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1604,7 +1666,7 @@ export default function AnalisisPanel({
                         : itemActivoModal.porOpcion[opcionSeleccionadaItem] || []
                       ).map((st, idx) => (
                         <div key={idx} style={{ padding: '3px 0', borderBottom: '1px solid #dbeafe' }}>
-- {st.nombre} ({st.curso || '-'})
+                          • {st.nombre} ({st.curso || '-'})
                         </div>
                       ))}
                     </div>
@@ -1652,7 +1714,7 @@ export default function AnalisisPanel({
             onClick={(e) => e.stopPropagation()}
             style={{
               background: '#ffffff', borderRadius: '16px', width: '100%',
-              maxWidth: imagenAlumnoModal ? '1180px' : '820px',
+              maxWidth: '1180px',
               maxHeight: '92vh', display: 'flex', flexDirection: 'column',
               boxShadow: '0 25px 50px -12px rgba(0,0,0,0.3)', overflow: 'hidden'
             }}
@@ -1695,7 +1757,7 @@ export default function AnalisisPanel({
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: imagenAlumnoModal ? '1.15fr 0.85fr' : '1fr',
+                gridTemplateColumns: '1.15fr 0.85fr',
                 gap: '20px',
                 padding: '20px 24px',
                 overflowY: 'auto',
@@ -1797,39 +1859,47 @@ export default function AnalisisPanel({
                 </div>
               </div>
 
-              {imagenAlumnoModal && (
-                <div style={{ background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                  <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569' }}>
-                      Hoja leída (Verde = Buena | Rojo = Mala | Azul = Clave)
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setZoomImagen(!zoomImagen)}
-                      style={{
-                        background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px',
-                        padding: '4px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer',
-                        display: 'inline-flex', alignItems: 'center', gap: '4px'
-                      }}
-                    >
-                      <ZoomIn size={13} /> {zoomImagen ? 'Ajustar' : 'Ampliar'}
-                    </button>
-                  </div>
+              <div style={{ background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '280px' }}>
+                {cargandoImagenModal ? (
+                  <div style={{ fontSize: '13px', color: '#475569', fontWeight: '600' }}>Cargando hoja escaneada...</div>
+                ) : imagenAlumnoModal ? (
+                  <>
+                    <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569' }}>
+                        Hoja leída (Verde = Buena | Rojo = Mala | Azul = Clave)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setZoomImagen(!zoomImagen)}
+                        style={{
+                          background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px',
+                          padding: '4px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer',
+                          display: 'inline-flex', alignItems: 'center', gap: '4px'
+                        }}
+                      >
+                        <ZoomIn size={13} /> {zoomImagen ? 'Ajustar' : 'Ampliar'}
+                      </button>
+                    </div>
 
-                  <div style={{ width: '100%', maxHeight: '68vh', overflow: 'auto', textAlign: 'center' }}>
-                    <img
-                      src={imagenAlumnoModal}
-                      alt={`Hoja de ${modalAlumno.nombre}`}
-                      style={{
-                        width: zoomImagen ? '160%' : '100%',
-                        maxWidth: zoomImagen ? 'none' : '100%',
-                        borderRadius: '8px',
-                        border: '1px solid #cbd5e1'
-                      }}
-                    />
+                    <div style={{ width: '100%', maxHeight: '68vh', overflow: 'auto', textAlign: 'center' }}>
+                      <img
+                        src={imagenAlumnoModal}
+                        alt={`Hoja de ${modalAlumno.nombre}`}
+                        style={{
+                          width: zoomImagen ? '160%' : '100%',
+                          maxWidth: zoomImagen ? 'none' : '100%',
+                          borderRadius: '8px',
+                          border: '1px solid #cbd5e1'
+                        }}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: '12.5px', color: '#64748b', textAlign: 'center' }}>
+                    No hay imagen corregida almacenada para este alumno.
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
         </div>
