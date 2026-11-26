@@ -301,6 +301,7 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '', asign
           numeroPregunta: numP,
           enunciado,
           pdfUrl: config.pdfPruebaUrl || null,
+          asignatura: config.asignatura || '',
           nivelNombre,
           asignatura: asignaturaEfectiva,
           oa: item.oa || '',
