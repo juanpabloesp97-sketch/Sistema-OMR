@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import {
   CheckSquare, Wand2, FileText, Upload, ExternalLink,
   Trash2, PlusCircle, Calculator, X, ListChecks, FileEdit,
-  Hash, Sparkles, AlignLeft, Settings2
+  Hash, Sparkles, Settings2
 } from 'lucide-react';
-import { obtenerOAsPorNivel } from './oaMatematica';
+import { obtenerOAsPorAsignaturaYNivel } from './catalogoCurricularMineduc';
 import { supabase } from './supabaseClient';
 
 const ETIQUETAS_NIVELES = {
@@ -30,27 +30,24 @@ const generarNivelesRubricaBase = (cantidadNiveles = 3, puntajeMax = 3) => {
   });
 };
 
-export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
+export default function PautaEditor({ config, setConfig, nivelNombre = '', asignaturaNombre = '' }) {
   const numPreguntas = Number(config.numPreguntas || 0);
   const opciones = (config.alternativas || 'ABCD').split('');
   const pauta = config.pauta || {};
 
-  const listaOAsNivel = obtenerOAsPorNivel(nivelNombre);
+  const asignaturaEfectiva = asignaturaNombre || config.asignatura || 'Matemática';
+  const listaOAsNivel = obtenerOAsPorAsignaturaYNivel(asignaturaEfectiva, nivelNombre);
 
-  // Modal de agregar preguntas
   const [modalAgregarAbierto, setModalAgregarAbierto] = useState(false);
   const [cantidadAgregar, setCantidadAgregar] = useState(10);
   const [tipoPreguntaAgregar, setTipoPreguntaAgregar] = useState('alternativa');
 
-  // Modal amplio para configurar pregunta de desarrollo y rúbrica IA
   const [modalDesarrolloNum, setModalDesarrolloNum] = useState(null);
 
-  // Asignación masiva de OA
   const [rangoInicio, setRangoInicio] = useState(1);
   const [rangoFin, setRangoFin] = useState(10);
   const [oaMasivo, setOaMasivo] = useState('');
 
-  // Asignación masiva de Puntaje
   const [rangoPtsInicio, setRangoPtsInicio] = useState(1);
   const [rangoPtsFin, setRangoPtsFin] = useState(10);
   const [puntajeMasivo, setPuntajeMasivo] = useState(1);
@@ -305,6 +302,7 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
           enunciado,
           pdfUrl: config.pdfPruebaUrl || null,
           nivelNombre,
+          asignatura: asignaturaEfectiva,
           oa: item.oa || '',
           habilidad: item.habilidad || '',
           puntajeMax,
@@ -465,7 +463,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
 
   return (
     <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-      {/* Cabecera */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
         <div>
           <h3 style={{ margin: 0, fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -473,7 +470,7 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
             Pauta, Rúbricas y Objetivos (OA)
           </h3>
           <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#64748b' }}>
-            Configura alternativas, completación numérica exacta y preguntas de desarrollo con rúbrica IA.
+            Currículo MINEDUC activo: <strong>{asignaturaEfectiva}</strong> {nivelNombre ? `• ${nivelNombre}` : ''}
           </p>
         </div>
 
@@ -564,7 +561,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
         </div>
       </div>
 
-      {/* Botón superior + resumen */}
       <div style={{ marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
         <button
           type="button"
@@ -609,12 +605,11 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
         </div>
       </div>
 
-      {/* Herramientas rápidas por rango */}
       {numPreguntas > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
           <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', padding: '9px 14px', borderRadius: '10px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px', fontSize: '13px' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '700', color: '#1e40af' }}>
-              <Wand2 size={15} /> Asignar OA:
+              <Wand2 size={15} /> Asignar OA ({asignaturaEfectiva}):
             </span>
             <span>Desde P.</span>
             <input type="number" min="1" max={numPreguntas} value={rangoInicio} onChange={(e) => setRangoInicio(e.target.value)} style={{ width: '50px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #93c5fd' }} />
@@ -622,16 +617,16 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
             <input type="number" min="1" max={numPreguntas} value={rangoFin} onChange={(e) => setRangoFin(e.target.value)} style={{ width: '50px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #93c5fd' }} />
 
             {listaOAsNivel.length > 0 ? (
-              <select value={oaMasivo} onChange={(e) => setOaMasivo(e.target.value)} style={{ padding: '5px 8px', borderRadius: '6px', border: '1px solid #93c5fd', maxWidth: '300px', fontWeight: '600' }}>
-                <option value="">-- Elegir OA de {nivelNombre} --</option>
+              <select value={oaMasivo} onChange={(e) => setOaMasivo(e.target.value)} style={{ padding: '5px 8px', borderRadius: '6px', border: '1px solid #93c5fd', maxWidth: '340px', fontWeight: '600' }}>
+                <option value="">-- Elegir OA de {asignaturaEfectiva} ({nivelNombre || 'Nivel'}) --</option>
                 {listaOAsNivel.map((oa) => (
                   <option key={oa.codigo} value={oa.codigo}>
-                    {oa.codigo} — {oa.descripcion.slice(0, 60)}...
+                    {oa.codigo} — {oa.descripcion.slice(0, 65)}...
                   </option>
                 ))}
               </select>
             ) : (
-              <input type="text" placeholder="Ej: OA 1" value={oaMasivo} onChange={(e) => setOaMasivo(e.target.value)} style={{ width: '100px', padding: '5px 8px', borderRadius: '6px', border: '1px solid #93c5fd' }} />
+              <input type="text" placeholder="Ej: OA 1" value={oaMasivo} onChange={(e) => setOaMasivo(e.target.value)} style={{ width: '110px', padding: '5px 8px', borderRadius: '6px', border: '1px solid #93c5fd' }} />
             )}
 
             <button type="button" onClick={aplicarOAMasivo} style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: '6px', padding: '6px 12px', fontWeight: '700', cursor: 'pointer' }}>
@@ -668,7 +663,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          {/* SECCIÓN I: ALTERNATIVAS */}
           {listaAlternativas.length > 0 && (
             <div>
               <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', fontWeight: '800', color: '#166534', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -735,7 +729,7 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
                           <select
                             value={oaActual}
                             onChange={(e) => actualizarItem(p, 'oa', e.target.value)}
-                            title={descActual || 'Selecciona un OA del nivel'}
+                            title={descActual || `Selecciona un OA de ${asignaturaEfectiva}`}
                             style={{
                               width: '72px',
                               padding: '5px 3px',
@@ -817,7 +811,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
             </div>
           )}
 
-          {/* SECCIÓN II: COMPLETACIÓN NUMÉRICA */}
           {listaCompletacion.length > 0 && (
             <div>
               <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', fontWeight: '800', color: '#92400e', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -872,7 +865,7 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
                           <select
                             value={oaActual}
                             onChange={(e) => actualizarItem(p, 'oa', e.target.value)}
-                            title={descActual || 'Selecciona un OA'}
+                            title={descActual || `Selecciona un OA de ${asignaturaEfectiva}`}
                             style={{
                               width: '72px',
                               padding: '5px 3px',
@@ -949,7 +942,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
             </div>
           )}
 
-          {/* SECCIÓN III: PREGUNTAS DE DESARROLLO (TARJETA COMPACTA + BOTÓN MODAL RÚBRICA) */}
           {listaDesarrollo.length > 0 && (
             <div>
               <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', fontWeight: '800', color: '#5b21b6', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -1044,7 +1036,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
         </div>
       )}
 
-      {/* MODAL AMPLIO PARA PREGUNTA DE DESARROLLO Y RÚBRICA IA */}
       {modalDesarrolloNum && itemModalDesarrollo && (
         <div
           onClick={() => setModalDesarrolloNum(null)}
@@ -1073,11 +1064,10 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
               boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)'
             }}
           >
-            {/* Cabecera modal desarrollo */}
             <div style={{ padding: '16px 22px', background: '#f5f3ff', borderBottom: '1px solid #ddd6fe', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
               <div>
                 <div style={{ fontSize: '11.5px', fontWeight: '800', color: '#6d28d9', textTransform: 'uppercase' }}>
-                  Configuración de Pregunta Abierta y Rúbrica IA
+                  Configuración de Pregunta Abierta y Rúbrica IA ({asignaturaEfectiva})
                 </div>
                 <h3 style={{ margin: '2px 0 0 0', fontSize: '19px', fontWeight: '800', color: '#0f172a' }}>
                   Pregunta {modalDesarrolloNum} (Desarrollo)
@@ -1093,9 +1083,7 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
               </button>
             </div>
 
-            {/* Cuerpo modal desarrollo */}
             <div style={{ padding: '20px 22px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {/* Fila de parámetros */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', background: '#f8fafc', padding: '12px 14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '11.5px', fontWeight: '800', color: '#475569', marginBottom: '4px' }}>
@@ -1174,7 +1162,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
                 </div>
               </div>
 
-              {/* Enunciado de la pregunta + botón IA */}
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '6px' }}>
                   <label style={{ fontSize: '13px', fontWeight: '800', color: '#0f172a' }}>
@@ -1223,7 +1210,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
                 />
               </div>
 
-              {/* Niveles de la rúbrica en vista amplia */}
               <div>
                 <div style={{ fontSize: '13px', fontWeight: '800', color: '#4c1d95', marginBottom: '8px' }}>
                   Niveles y criterios de evaluación (puedes editar textos y puntajes):
@@ -1310,7 +1296,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
               </div>
             </div>
 
-            {/* Pie modal desarrollo */}
             <div style={{ padding: '14px 22px', background: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end' }}>
               <button
                 type="button"
@@ -1333,7 +1318,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
         </div>
       )}
 
-      {/* VENTANA MODAL PARA AGREGAR PREGUNTAS (CON FLECHAS Y CONTROLES SIN RESETEO) */}
       {modalAgregarAbierto && (
         <div
           onClick={() => setModalAgregarAbierto(false)}
@@ -1378,7 +1362,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
             </div>
 
             <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: '11px' }}>
-              {/* Opción 1: Alternativas (1 a 50) */}
               <div
                 onClick={() => seleccionarTipoEnModal('alternativa')}
                 style={{
@@ -1443,7 +1426,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
                 )}
               </div>
 
-              {/* Opción 2: Completación Numérica (1 a 10) */}
               <div
                 onClick={() => seleccionarTipoEnModal('completacion')}
                 style={{
@@ -1508,7 +1490,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '' }) {
                 )}
               </div>
 
-              {/* Opción 3: Preguntas de Desarrollo (1 a 5) */}
               <div
                 onClick={() => seleccionarTipoEnModal('desarrollo')}
                 style={{

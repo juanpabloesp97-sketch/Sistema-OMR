@@ -24,6 +24,22 @@ import {
   normalizarMatrizPermisos,
   obtenerPermisosRol
 } from './permisosConfig';
+import { obtenerAsignaturasPorNivel } from './catalogoCurricularMineduc';
+
+function parsearListaAsignaturas(raw = '') {
+  if (!raw) return [];
+  return String(raw)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function coincideAsignaturaUsuario(asignaturasRaw = '', asignaturaEval = '') {
+  const evNorm = String(asignaturaEval || '').trim().toLowerCase();
+  if (!evNorm) return false;
+  const lista = parsearListaAsignaturas(asignaturasRaw).map((a) => a.toLowerCase());
+  return lista.includes(evNorm);
+}
 
 function obtenerClavesCorrectas(item) {
   if (!item) return [];
@@ -519,6 +535,7 @@ export default function App() {
       }
 
       const rolFinal = esAdminPrincipal ? 'admin' : (perfilDB?.rol || 'docente');
+      const asignaturasUsuario = parsearListaAsignaturas(perfilDB?.asignatura || 'Matemática');
 
       const perfilFinal = {
         id: user.id,
@@ -547,7 +564,7 @@ export default function App() {
         ...prev,
         docenteId: perfilFinal.id,
         docenteNombre: perfilFinal.nombre,
-        asignatura: perfilFinal.asignatura || 'Matemática'
+        asignatura: asignaturasUsuario[0] || 'Matemática'
       }));
       setCargandoSesion(false);
 
@@ -702,17 +719,33 @@ export default function App() {
       setConfig((prev) => ({ ...prev, cursoId: '', nivelId: '' }));
       return;
     }
+    let nuevoNivelId = '';
+    let nuevoCursoId = '';
     if (valorSelect.startsWith('nivel:')) {
-      const nId = valorSelect.replace('nivel:', '');
-      setConfig((prev) => ({ ...prev, cursoId: '', nivelId: nId }));
+      nuevoNivelId = valorSelect.replace('nivel:', '');
     } else {
+      nuevoCursoId = valorSelect;
       const cObj = cursos.find((c) => c.id === valorSelect);
-      setConfig((prev) => ({
-        ...prev,
-        cursoId: valorSelect,
-        nivelId: cObj ? cObj.nivel_id : ''
-      }));
+      nuevoNivelId = cObj ? cObj.nivel_id : '';
     }
+
+    const nivObj = niveles.find((n) => n.id === nuevoNivelId);
+    const asigsNivel = obtenerAsignaturasPorNivel(nivObj?.nombre || '');
+    const asigsDocente = parsearListaAsignaturas(profesor.asignatura);
+    const coincidencias = asigsNivel.filter((a) => asigsDocente.includes(a));
+
+    setConfig((prev) => {
+      const asigActualValida = asigsNivel.includes(prev.asignatura);
+      const asigSugerida = asigActualValida
+        ? prev.asignatura
+        : coincidencias[0] || asigsDocente[0] || asigsNivel[0] || 'Matemática';
+      return {
+        ...prev,
+        cursoId: nuevoCursoId,
+        nivelId: nuevoNivelId,
+        asignatura: asigSugerida
+      };
+    });
   };
 
   const valorSelectDestino = config.cursoId
@@ -787,14 +820,11 @@ export default function App() {
         .order('created_at', { ascending: false })
     ]);
 
-    const asigUsuario = (perfilUsuario.asignatura || '').trim().toLowerCase();
-
     const filtradas = (todasEvals || []).filter((ev) => {
       if (esEvaluacionDeSuAula(ev, perfilUsuario, idsCursosProfe, listaCursos)) return true;
       if (perfilUsuario.rol === 'admin' || permsUsuario?.ver_evals_colegio) return true;
-      if (permsUsuario?.ver_evals_depto && asigUsuario) {
-        const asigEval = (ev.asignatura || '').trim().toLowerCase();
-        return asigEval === asigUsuario;
+      if (permsUsuario?.ver_evals_depto) {
+        return coincideAsignaturaUsuario(perfilUsuario.asignatura, ev.asignatura);
       }
       return false;
     });
@@ -902,7 +932,7 @@ export default function App() {
       cursoId: ev.curso_id || '',
       nivelId: ev.nivel_id || '',
       tituloPrueba: ev.titulo,
-      asignatura: ev.asignatura || '',
+      asignatura: ev.asignatura || 'Matemática',
       numPreguntas: ev.num_preguntas || 30,
       alternativas: ev.alternativas || 'ABCD',
       notaMin: ev.nota_min ?? 1.0,
@@ -930,9 +960,7 @@ export default function App() {
       (ev.nivel_id && listaCursos.some((c) => c.nivel_id === ev.nivel_id && idsCursosProfe.has(c.id)));
 
     const deSuAula = esEvaluacionDeSuAula(ev, perfilUsuario, idsCursosProfe, listaCursos) || tieneCursoEnVista;
-    const asigUsr = (perfilUsuario?.asignatura || '').trim().toLowerCase();
-    const asigEv = (ev?.asignatura || '').trim().toLowerCase();
-    const mismaAsig = Boolean(asigUsr && asigEv && asigUsr === asigEv);
+    const mismaAsig = coincideAsignaturaUsuario(perfilUsuario?.asignatura, ev?.asignatura);
 
     const puedeEditar =
       perfilUsuario?.rol === 'admin' ||
@@ -952,15 +980,22 @@ export default function App() {
 
   const iniciarNuevaEvaluacion = (cursoPreseleccionado = '', nivelPreseleccionado = '') => {
     const cObj = cursos.find((c) => c.id === cursoPreseleccionado);
+    const nivelDestId = cObj ? cObj.nivel_id : (nivelPreseleccionado || '');
+    const nivObj = niveles.find((n) => n.id === nivelDestId);
+    const asigsNivel = obtenerAsignaturasPorNivel(nivObj?.nombre || '');
+    const asigsDocente = parsearListaAsignaturas(profesor.asignatura);
+    const coincidencias = asigsNivel.filter((a) => asigsDocente.includes(a));
+    const asigInicial = coincidencias[0] || asigsDocente[0] || asigsNivel[0] || 'Matemática';
+
     setConfig({
       id: null,
       docenteId: profesor.id,
       docenteNombre: profesor.nombre,
       compartida: false,
       cursoId: cursoPreseleccionado || '',
-      nivelId: cObj ? cObj.nivel_id : (nivelPreseleccionado || ''),
+      nivelId: nivelDestId,
       tituloPrueba: '',
-      asignatura: profesor.asignatura || 'Matemática',
+      asignatura: asigInicial,
       numPreguntas: 0,
       alternativas: 'ABCD',
       notaMin: 1.0,
@@ -1105,6 +1140,7 @@ export default function App() {
   };
 
   const importarPautaCompartida = (evCompartida) => {
+    const asigsDocente = parsearListaAsignaturas(profesor.asignatura);
     setConfig({
       id: null,
       docenteId: profesor.id,
@@ -1113,7 +1149,7 @@ export default function App() {
       cursoId: '',
       nivelId: evCompartida.nivel_id || '',
       tituloPrueba: `${evCompartida.titulo} (Copia)`,
-      asignatura: evCompartida.asignatura || profesor.asignatura,
+      asignatura: evCompartida.asignatura || asigsDocente[0] || 'Matemática',
       numPreguntas: evCompartida.num_preguntas || 30,
       alternativas: evCompartida.alternativas || 'ABCD',
       notaMin: evCompartida.nota_min ?? 1.0,
@@ -2589,9 +2625,7 @@ export default function App() {
     tieneCursoAsignadoEnVista;
 
   const esSuperAdmin = profesor.rol === 'admin';
-  const asigUsuarioNorm = (profesor?.asignatura || '').trim().toLowerCase();
-  const asigEvalNorm = (config?.asignatura || '').trim().toLowerCase();
-  const esMismaAsignaturaEval = Boolean(asigUsuarioNorm && asigEvalNorm && asigUsuarioNorm === asigEvalNorm);
+  const esMismaAsignaturaEval = coincideAsignaturaUsuario(profesor?.asignatura, config?.asignatura);
 
   const puedeEditarEvalActual =
     esSuperAdmin ||
@@ -2703,6 +2737,9 @@ export default function App() {
 
   const nivelActivoNombre = obtenerNombreNivelActivo();
   const tieneDestinoAsignado = Boolean(config.cursoId || config.nivelId);
+
+  const asignaturasDisponiblesCrear = obtenerAsignaturasPorNivel(nivelActivoNombre);
+  const asignaturasPerfilUsuario = parsearListaAsignaturas(profesor.asignatura);
 
   const pestanasEvalDisponibles = [
     { id: 'avance', label: 'Avance y Pendientes', icon: Clock, visible: true },
@@ -3247,8 +3284,31 @@ export default function App() {
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Asignatura / Departamento Principal</label>
-                <input type="text" value={profesor.asignatura} onChange={(e) => setProfesor({ ...profesor, asignatura: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>
+                  Asignaturas Asignadas (definidas por UTP / Administración)
+                </label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', background: '#f8fafc' }}>
+                  {asignaturasPerfilUsuario.length > 0 ? (
+                    asignaturasPerfilUsuario.map((asig) => (
+                      <span
+                        key={asig}
+                        style={{
+                          background: '#eff6ff',
+                          color: '#1e3a8a',
+                          border: '1px solid #bfdbfe',
+                          borderRadius: '999px',
+                          padding: '4px 10px',
+                          fontSize: '12px',
+                          fontWeight: '700'
+                        }}
+                      >
+                        {asig}
+                      </span>
+                    ))
+                  ) : (
+                    <span style={{ fontSize: '12.5px', color: '#64748b' }}>Sin asignaturas registradas</span>
+                  )}
+                </div>
               </div>
 
               <button
@@ -3256,7 +3316,7 @@ export default function App() {
                   if (supabase && profesor.id) {
                     await supabase
                       .from('perfiles')
-                      .update({ nombre: profesor.nombre, asignatura: profesor.asignatura })
+                      .update({ nombre: profesor.nombre })
                       .eq('id', profesor.id);
                     await cargarEvaluacionesNube(profesor, permisosActivos);
                     alert('Perfil actualizado correctamente.');
@@ -3498,13 +3558,31 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Asignatura</label>
-                  <input
-                    type="text"
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Asignatura (Currículo MINEDUC)</label>
+                  <select
                     value={config.asignatura}
                     onChange={(e) => setConfig({ ...config, asignatura: e.target.value })}
-                    style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
-                  />
+                    style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box', fontWeight: '600', background: '#ffffff' }}
+                  >
+                    {asignaturasPerfilUsuario.length > 0 && (
+                      <optgroup label="Mis Asignaturas Asignadas">
+                        {asignaturasPerfilUsuario.map((asig) => (
+                          <option key={`mia-${asig}`} value={asig}>
+                            {asig}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    <optgroup label={`Asignaturas del Nivel ${nivelActivoNombre || ''}`}>
+                      {asignaturasDisponiblesCrear
+                        .filter((a) => !asignaturasPerfilUsuario.includes(a))
+                        .map((asig) => (
+                          <option key={`niv-${asig}`} value={asig}>
+                            {asig}
+                          </option>
+                        ))}
+                    </optgroup>
+                  </select>
                 </div>
 
                 <div>
@@ -3540,6 +3618,7 @@ export default function App() {
               config={config}
               setConfig={setConfig}
               nivelNombre={nivelActivoNombre}
+              asignaturaNombre={config.asignatura}
             />
 
             <button
@@ -3629,7 +3708,7 @@ export default function App() {
                     <div style={{ fontSize: '11.5px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase' }}>
                       {contextoAperturaEval === 'curso' && cursoActualObj
                         ? `Vista Exclusiva Curso: ${cursoActualObj.nombre}`
-                        : `Vista Nivel Completo: ${nivelActivoNombre}`}
+                        : `Vista Nivel Completo: ${nivelActivoNombre}`} • {config.asignatura}
                     </div>
                     <h2 style={{ margin: 0, fontSize: '19px', color: '#0f172a' }}>{config.tituloPrueba}</h2>
                   </div>
@@ -4134,7 +4213,12 @@ export default function App() {
 
             {subVistaEval === 'pauta' && puedeEditarEvalActual && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <PautaEditor config={config} setConfig={setConfig} nivelNombre={nivelActivoNombre} />
+                <PautaEditor
+                  config={config}
+                  setConfig={setConfig}
+                  nivelNombre={nivelActivoNombre}
+                  asignaturaNombre={config.asignatura}
+                />
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
                   <button
                     onClick={() => guardarEvaluacionNube(false)}
