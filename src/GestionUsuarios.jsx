@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import {
   UserPlus, Users, BookOpen, CheckCircle2, XCircle,
   GraduationCap, RefreshCw, ShieldCheck, Save, RotateCcw,
-  Eye, EyeOff, Copy, KeyRound, Mail
+  Eye, EyeOff, Copy, KeyRound, Mail, Trash2
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import {
@@ -35,6 +35,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
   const [nuevaClaveUsuario, setNuevaClaveUsuario] = useState('');
   const [guardandoClaveUserId, setGuardandoClaveUserId] = useState(null);
   const [enviandoResetUserId, setEnviandoResetUserId] = useState(null);
+  const [eliminandoUserId, setEliminandoUserId] = useState(null);
 
   useEffect(() => {
     cargarTodo();
@@ -216,6 +217,42 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
     if (u.id === perfilActual?.id) return;
     await supabase.from('perfiles').update({ activo: !u.activo }).eq('id', u.id);
     cargarTodo();
+  };
+
+  const eliminarUsuarioDefinitivo = async (u) => {
+    if (u.id === perfilActual?.id) {
+      alert('No puedes eliminar tu propia cuenta de Administrador.');
+      return;
+    }
+
+    const paso1 = confirm(
+      `¿Estás seguro de ELIMINAR definitivamente la cuenta de ${u.nombre} (${u.email})?\n\nEsta acción borrará su acceso del sistema.`
+    );
+    if (!paso1) return;
+
+    const paso2 = confirm(
+      `CONFIRMACIÓN FINAL: Se eliminará a ${u.nombre} de forma permanente y su correo quedará libre. ¿Continuar?`
+    );
+    if (!paso2) return;
+
+    setEliminandoUserId(u.id);
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-eliminar-usuario', {
+        body: { userId: u.id }
+      });
+
+      if (error || data?.error) {
+        alert('No se pudo eliminar el usuario: ' + (data?.error || error?.message || 'Error desconocido'));
+        return;
+      }
+
+      alert(`Usuario ${u.nombre} eliminado correctamente.`);
+      await cargarTodo();
+    } catch (err) {
+      alert('Error al conectar con la función de eliminación: ' + err.message);
+    } finally {
+      setEliminandoUserId(null);
+    }
   };
 
   const guardarCambioClaveDirecto = async (u) => {
@@ -457,6 +494,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
             const claveMostrada = u.clave_referencia || '';
             const verClave = Boolean(clavesVisibles[u.id]);
             const estaEditandoClave = editandoClaveUserId === u.id;
+            const esUsuarioActual = u.id === perfilActual?.id;
 
             return (
               <div key={u.id} style={{ padding: '16px', borderRadius: '10px', border: '1px solid #e2e8f0', background: u.activo === false ? '#f8fafc' : '#ffffff', opacity: u.activo === false ? 0.6 : 1 }}>
@@ -471,7 +509,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                     <select
                       value={u.rol}
-                      disabled={u.id === perfilActual?.id}
+                      disabled={esUsuarioActual}
                       onChange={(e) => cambiarRolUsuario(u.id, e.target.value)}
                       style={{ padding: '5px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontWeight: '700', fontSize: '12px' }}
                     >
@@ -483,17 +521,42 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
 
                     <button
                       onClick={() => toggleEstadoUsuario(u)}
-                      disabled={u.id === perfilActual?.id}
+                      disabled={esUsuarioActual}
                       style={{
                         background: u.activo !== false ? '#dcfce7' : '#fee2e2',
                         color: u.activo !== false ? '#166534' : '#991b1b',
                         border: 'none', borderRadius: '999px', padding: '5px 10px',
-                        fontSize: '12px', fontWeight: '700', cursor: 'pointer',
+                        fontSize: '12px', fontWeight: '700', cursor: esUsuarioActual ? 'not-allowed' : 'pointer',
                         display: 'inline-flex', alignItems: 'center', gap: '4px'
                       }}
                     >
                       {u.activo !== false ? <><CheckCircle2 size={13} /> Activo</> : <><XCircle size={13} /> Suspendido</>}
                     </button>
+
+                    {!esUsuarioActual && (
+                      <button
+                        type="button"
+                        disabled={eliminandoUserId === u.id}
+                        onClick={() => eliminarUsuarioDefinitivo(u)}
+                        title="Eliminar cuenta definitivamente"
+                        style={{
+                          background: '#fef2f2',
+                          color: '#dc2626',
+                          border: '1px solid #fecaca',
+                          borderRadius: '999px',
+                          padding: '5px 10px',
+                          fontSize: '12px',
+                          fontWeight: '700',
+                          cursor: eliminandoUserId === u.id ? 'wait' : 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        <Trash2 size={13} />
+                        {eliminandoUserId === u.id ? 'Eliminando...' : 'Eliminar'}
+                      </button>
+                    )}
                   </div>
                 </div>
 
