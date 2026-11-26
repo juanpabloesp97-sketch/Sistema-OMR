@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Home, User, GraduationCap, FilePlus2,
-  ChevronDown, ChevronRight, Menu, X, CheckSquare, Users, LogOut
+  ChevronDown, ChevronRight, Menu, X, CheckSquare, Users, LogOut, Calendar
 } from 'lucide-react';
 
 const ETIQUETAS_ROL = {
@@ -24,7 +24,10 @@ export default function Sidebar({
   onAbrirEvaluacion,
   profesor,
   permisos = {},
-  onCerrarSesion
+  onCerrarSesion,
+  aniosDisponibles = [2026],
+  anioEscolarActivo = 2026,
+  onCambiarAnioEscolar
 }) {
   const [colapsado, setColapsado] = useState(false);
   const [menuCursosAbierto, setMenuCursosAbierto] = useState(false);
@@ -126,6 +129,47 @@ export default function Sidebar({
         </button>
       </div>
 
+      {/* Selector Global de Año Escolar */}
+      {!colapsado && (
+        <div
+          style={{
+            padding: '10px 14px',
+            background: '#f8fafc',
+            borderBottom: '1px solid #e2e8f0',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '8px'
+          }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '800', color: '#1e3a8a' }}>
+            <Calendar size={15} color="#2563eb" />
+            Año Escolar:
+          </span>
+
+          <select
+            value={anioEscolarActivo}
+            onChange={(e) => onCambiarAnioEscolar && onCambiarAnioEscolar(Number(e.target.value))}
+            style={{
+              padding: '4px 8px',
+              borderRadius: '7px',
+              border: '1px solid #93c5fd',
+              background: '#ffffff',
+              color: '#1e3a8a',
+              fontWeight: '800',
+              fontSize: '13px',
+              cursor: 'pointer'
+            }}
+          >
+            {aniosDisponibles.map((anio) => (
+              <option key={anio} value={anio}>
+                {anio}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {/* Navegación */}
       <nav style={{ padding: '12px 10px', flex: 1, display: 'flex', flexDirection: 'column', gap: '4px', overflowY: 'auto' }}>
         <button
@@ -180,11 +224,11 @@ export default function Sidebar({
               vistaActiva === 'panel-curso' ||
               vistaActiva === 'detalle-evaluacion'
             )}
-            title="Mis Cursos"
+            title={`Mis Cursos (${anioEscolarActivo})`}
           >
             <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <GraduationCap size={18} />
-              {!colapsado && <span>Mis Cursos</span>}
+              {!colapsado && <span>Mis Cursos ({anioEscolarActivo})</span>}
             </span>
             {!colapsado && (menuCursosAbierto ? <ChevronDown size={16} /> : <ChevronRight size={16} />)}
           </button>
@@ -204,7 +248,7 @@ export default function Sidebar({
                     color: '#475569'
                   }}
                 >
-                  <span>⚙️ Configurar Niveles y Cursos</span>
+                  <span>⚙️ Configurar Cursos y Año</span>
                 </button>
               )}
 
@@ -265,7 +309,7 @@ export default function Sidebar({
                       <div style={{ paddingLeft: '10px', display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '2px' }}>
                         {cursosDelNivel.length === 0 ? (
                           <span style={{ fontSize: '11.5px', color: '#94a3b8', padding: '4px 8px' }}>
-                            Sin cursos
+                            Sin cursos en {anioEscolarActivo}
                           </span>
                         ) : (
                           cursosDelNivel.map((curso) => {
@@ -345,7 +389,7 @@ export default function Sidebar({
                                         }}
                                         title={ev.titulo}
                                       >
-                                        • {ev.titulo}
+                                        - {ev.titulo}
                                       </button>
                                     ))}
                                   </div>

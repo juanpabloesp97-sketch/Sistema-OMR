@@ -6,7 +6,7 @@ import {
   Cloud, BarChart3, Printer, Clock, AlertCircle, Save, Trash2, UserPlus,
   UserX, UserCheck, Share2, GraduationCap, Users, FolderOpen, ArrowLeft,
   FilePlus2, Filter, Eye, Upload, ShieldAlert, RefreshCw, Search, ArrowRight, X,
-  ChevronUp, ChevronDown, Image as ImageIcon
+  ChevronUp, ChevronDown, Image as ImageIcon, Copy
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import VisorCurso from './VisorCurso';
@@ -109,6 +109,9 @@ export default function App() {
   const ignorarPushHistoryRef = useRef(false);
   const ultimoHashHistoryRef = useRef('');
 
+  const [aniosDisponibles, setAniosDisponibles] = useState([2026]);
+  const [anioEscolarActivo, setAnioEscolarActivo] = useState(2026);
+
   const [profesor, setProfesor] = useState({
     id: null,
     nombre: 'Docente',
@@ -204,6 +207,37 @@ export default function App() {
     setBarraTitulo(titulo);
     setBarraPct(porcentaje);
     setBarraDetalle(detalle);
+  };
+
+  const cargarAniosEscolaresNube = async () => {
+    if (!supabase) return { lista: [2026], vigente: 2026 };
+    const { data, error } = await supabase
+      .from('anios_escolares')
+      .select('anio, activo')
+      .order('anio', { ascending: false });
+
+    if (!error && Array.isArray(data) && data.length > 0) {
+      const lista = data.map((d) => Number(d.anio));
+      const vigente = lista[0] || 2026;
+      setAniosDisponibles(lista);
+      return { lista, vigente };
+    }
+    setAniosDisponibles([2026]);
+    return { lista: [2026], vigente: 2026 };
+  };
+
+  const cambiarAnioEscolarActivo = async (nuevoAnio) => {
+    const anioNum = Number(nuevoAnio);
+    setAnioEscolarActivo(anioNum);
+    setCursoActivoId('');
+    setModoResultadosNivel(false);
+    if (vistaActiva === 'detalle-evaluacion' || vistaActiva === 'panel-curso') {
+      setVistaActiva('inicio');
+    }
+
+    await cargarAniosEscolaresNube();
+    const { cursosVisibles, idsAula } = await cargarEstructuraEscolar(profesor, permisosActivos, anioNum);
+    await cargarEvaluacionesNube(profesor, permisosActivos, idsAula, cursosVisibles, anioNum);
   };
 
   const cargarLogoInstitucionalNube = async () => {
@@ -558,7 +592,10 @@ export default function App() {
       setProfesor(perfilFinal);
       const permsUsuario = await cargarPermisosDeRol(rolFinal);
       await cargarLogoInstitucionalNube();
-      actualizarBarra(true, 'Cargando estructura escolar...', 55, 'Niveles y cursos...');
+      const { vigente } = await cargarAniosEscolaresNube();
+      setAnioEscolarActivo(vigente);
+
+      actualizarBarra(true, 'Cargando estructura escolar...', 55, `Año escolar ${vigente}...`);
 
       setConfig((prev) => ({
         ...prev,
@@ -568,9 +605,9 @@ export default function App() {
       }));
       setCargandoSesion(false);
 
-      const { nivelesVisibles, cursosVisibles, idsAula } = await cargarEstructuraEscolar(perfilFinal, permsUsuario);
+      const { nivelesVisibles, cursosVisibles, idsAula } = await cargarEstructuraEscolar(perfilFinal, permsUsuario, vigente);
       actualizarBarra(true, 'Cargando evaluaciones...', 85, 'Sincronizando panel...');
-      const { visibles } = await cargarEvaluacionesNube(perfilFinal, permsUsuario, idsAula, cursosVisibles);
+      const { visibles } = await cargarEvaluacionesNube(perfilFinal, permsUsuario, idsAula, cursosVisibles, vigente);
 
       let restaurado = false;
       try {
@@ -770,11 +807,15 @@ export default function App() {
     }
   };
 
-  const cargarEstructuraEscolar = async (perfilUsuario = profesor, permsUsuario = permisosActivos) => {
+  const cargarEstructuraEscolar = async (
+    perfilUsuario = profesor,
+    permsUsuario = permisosActivos,
+    anioFiltro = anioEscolarActivo
+  ) => {
     if (!supabase) return { nivelesVisibles: [], cursosVisibles: [], idsAula: new Set() };
     const [{ data: niv }, { data: cur }, { data: asig }] = await Promise.all([
       supabase.from('niveles').select('*').order('orden', { ascending: true }).order('nombre'),
-      supabase.from('cursos').select('*').order('nombre'),
+      supabase.from('cursos').select('*').eq('anio_escolar', anioFiltro).order('nombre'),
       perfilUsuario?.id
         ? supabase.from('docente_cursos').select('curso_id').eq('docente_id', perfilUsuario.id)
         : Promise.resolve({ data: [] })
@@ -803,7 +844,8 @@ export default function App() {
     perfilUsuario = profesor,
     permsUsuario = permisosActivos,
     idsCursosProfe = cursosAsignadosAula,
-    listaCursos = cursos
+    listaCursos = cursos,
+    anioFiltro = anioEscolarActivo
   ) => {
     if (!supabase || !perfilUsuario?.id) return { visibles: [], compartidas: [] };
 
@@ -811,6 +853,7 @@ export default function App() {
       supabase
         .from('evaluaciones')
         .select('*')
+        .eq('anio_escolar', anioFiltro)
         .order('created_at', { ascending: false }),
       supabase
         .from('evaluaciones')
@@ -1009,6 +1052,20 @@ export default function App() {
     setVistaActiva('crear-evaluacion');
   };
 
+  const duplicarEvaluacionAlAnioActivo = () => {
+    setConfig((prev) => ({
+      ...prev,
+      id: null,
+      docenteId: profesor.id,
+      docenteNombre: profesor.nombre,
+      compartida: false,
+      cursoId: '',
+      tituloPrueba: `${prev.tituloPrueba} (${anioEscolarActivo})`
+    }));
+    setVistaActiva('crear-evaluacion');
+    alert(`Plantilla cargada para el Año Escolar ${anioEscolarActivo}. Elige el curso o nivel destino y presiona Guardar.`);
+  };
+
   const guardarEvaluacionNube = async (recalcularNotasExistentes = false) => {
     if (!supabase) return;
     if (!config.tituloPrueba.trim()) {
@@ -1028,6 +1085,7 @@ export default function App() {
       asignatura: config.asignatura,
       curso_id: config.cursoId || null,
       nivel_id: nivelFinalId,
+      anio_escolar: anioEscolarActivo,
       num_preguntas: Number(config.numPreguntas),
       alternativas: config.alternativas,
       nota_min: Number(config.notaMin),
@@ -2805,6 +2863,9 @@ export default function App() {
         profesor={profesor}
         permisos={permisosActivos}
         onCerrarSesion={cerrarSesion}
+        aniosDisponibles={aniosDisponibles}
+        anioEscolarActivo={anioEscolarActivo}
+        onCambiarAnioEscolar={cambiarAnioEscolarActivo}
       />
 
       <main style={{ flex: 1, padding: '24px', maxWidth: '1100px', margin: '0 auto', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -2832,13 +2893,13 @@ export default function App() {
             >
               <div>
                 <div style={{ fontSize: '12px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', opacity: 0.85 }}>
-                  Sistema OMR • {profesor.asignatura || 'Gestión Escolar'}
+                  Sistema OMR • Año Escolar {anioEscolarActivo} • {profesor.asignatura || 'Gestión Escolar'}
                 </div>
                 <h1 style={{ margin: '4px 0 6px 0', fontSize: '26px', fontWeight: '800' }}>
                   Hola, {profesor.nombre}
                 </h1>
                 <p style={{ margin: 0, fontSize: '14px', opacity: 0.9 }}>
-                  Tienes {niveles.length} nivel(es) y {evaluacionesVisibles.length} evaluación(es) disponibles en tu panel.
+                  Tienes {cursos.length} curso(s) y {evaluacionesVisibles.length} evaluación(es) en el año escolar {anioEscolarActivo}.
                 </p>
               </div>
 
@@ -2867,12 +2928,12 @@ export default function App() {
 
             <div>
               <h2 style={{ margin: '0 0 12px 0', fontSize: '17px', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <GraduationCap size={20} color="#2563eb" /> Niveles y Cursos Disponibles
+                <GraduationCap size={20} color="#2563eb" /> Niveles y Cursos Disponibles ({anioEscolarActivo})
               </h2>
 
               {niveles.length === 0 ? (
                 <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #cbd5e1', fontSize: '14px', color: '#64748b' }}>
-                  Aún no tienes cursos asignados.
+                  Aún no tienes cursos asignados en el año escolar {anioEscolarActivo}.
                 </div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: '14px' }}>
@@ -2908,7 +2969,7 @@ export default function App() {
                         <div style={{ fontSize: '12.5px', color: '#64748b' }}>
                           {cursosNiv.length > 0
                             ? cursosNiv.map((c) => c.nombre).join(' • ')
-                            : 'Sin cursos creados'}
+                            : `Sin cursos en ${anioEscolarActivo}`}
                         </div>
                       </div>
                     );
@@ -2920,13 +2981,13 @@ export default function App() {
             <div style={{ background: '#ffffff', padding: '20px', borderRadius: '14px', border: '1px solid #cbd5e1' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                 <h2 style={{ margin: 0, fontSize: '17px', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <FolderOpen size={20} color="#16a34a" /> Evaluaciones Recientes
+                  <FolderOpen size={20} color="#16a34a" /> Evaluaciones Recientes ({anioEscolarActivo})
                 </h2>
               </div>
 
               {evaluacionesVisibles.length === 0 ? (
                 <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '9px', fontSize: '14px', color: '#64748b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                  <span>Aún no hay evaluaciones registradas en tu vista.</span>
+                  <span>Aún no hay evaluaciones registradas en el año {anioEscolarActivo}.</span>
                   {puedeCrearEvaluaciones && (
                     <button
                       onClick={() => iniciarNuevaEvaluacion()}
@@ -3000,7 +3061,9 @@ export default function App() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
               <div>
-                <div style={{ fontSize: '12px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase' }}>Nivel Escolar</div>
+                <div style={{ fontSize: '12px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase' }}>
+                  Nivel Escolar • Año {anioEscolarActivo}
+                </div>
                 <h1 style={{ margin: '2px 0 0 0', fontSize: '24px', color: '#0f172a' }}>
                   {nivelActualObj ? nivelActualObj.nombre : 'Selecciona un Nivel'}
                 </h1>
@@ -3060,7 +3123,7 @@ export default function App() {
                       <div>
                         <h3 style={{ margin: '0 0 4px 0', fontSize: '18px', color: '#0f172a' }}>{curso.nombre}</h3>
                         <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>
-                          Lista de curso y evaluaciones
+                          Lista de curso y evaluaciones ({anioEscolarActivo})
                         </p>
                       </div>
                     </div>
@@ -3102,7 +3165,7 @@ export default function App() {
             {modoResultadosNivel && (
               <div style={{ background: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #cbd5e1', marginTop: '6px' }}>
                 <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', color: '#0f172a' }}>
-                  Evaluaciones Aplicadas a {nivelActualObj?.nombre}
+                  Evaluaciones Aplicadas a {nivelActualObj?.nombre} ({anioEscolarActivo})
                 </h3>
                 {(() => {
                   const idsCursosNivel = new Set(cursos.filter((c) => c.nivel_id === nivelActivoId).map((c) => c.id));
@@ -3161,7 +3224,7 @@ export default function App() {
               </button>
               <div>
                 <div style={{ fontSize: '12px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase' }}>
-                  {nivelActualObj?.nombre}
+                  {nivelActualObj?.nombre} • Año {anioEscolarActivo}
                 </div>
                 <h1 style={{ margin: 0, fontSize: '24px', color: '#0f172a' }}>
                   {cursoActualObj ? cursoActualObj.nombre : 'Curso'}
@@ -3482,7 +3545,10 @@ export default function App() {
               cursoActivoId={cursoActivoId}
               setCursoActivoId={setCursoActivoId}
               permisos={permisosActivos}
-              onRecargarEstructura={() => cargarEstructuraEscolar(profesor, permisosActivos)}
+              esAdmin={esSuperAdmin}
+              anioEscolarActivo={anioEscolarActivo}
+              onCambiarAnioEscolar={cambiarAnioEscolarActivo}
+              onRecargarEstructura={() => cargarEstructuraEscolar(profesor, permisosActivos, anioEscolarActivo)}
             />
           </div>
         )}
@@ -3491,7 +3557,9 @@ export default function App() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
-                <h2 style={{ margin: 0, fontSize: '20px' }}>Crear Nueva Evaluación</h2>
+                <h2 style={{ margin: 0, fontSize: '20px' }}>
+                  Crear Nueva Evaluación (Año {anioEscolarActivo})
+                </h2>
 
                 {permisosActivos?.compartir_importar_pautas && evaluacionesCompartidas.length > 0 && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -3527,7 +3595,9 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Nivel completo o Curso</label>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>
+                    Nivel completo o Curso ({anioEscolarActivo})
+                  </label>
                   <select
                     value={valorSelectDestino}
                     onChange={(e) => manejarCambioDestinoEvaluacion(e.target.value)}
@@ -3544,7 +3614,7 @@ export default function App() {
                         );
                       })}
                     </optgroup>
-                    <optgroup label="Aplicar a un Curso Específico">
+                    <optgroup label={`Aplicar a un Curso Específico (${anioEscolarActivo})`}>
                       {cursos.map((c) => {
                         const niv = niveles.find((n) => n.id === c.nivel_id);
                         return (
@@ -3630,7 +3700,7 @@ export default function App() {
               }}
             >
               <Cloud size={20} />
-              Guardar Evaluación en mi Cuenta
+              Guardar Evaluación ({anioEscolarActivo})
             </button>
           </div>
         )}
@@ -3708,7 +3778,7 @@ export default function App() {
                     <div style={{ fontSize: '11.5px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase' }}>
                       {contextoAperturaEval === 'curso' && cursoActualObj
                         ? `Vista Exclusiva Curso: ${cursoActualObj.nombre}`
-                        : `Vista Nivel Completo: ${nivelActivoNombre}`} • {config.asignatura}
+                        : `Vista Nivel Completo: ${nivelActivoNombre}`} • {config.asignatura} • Año {anioEscolarActivo}
                     </div>
                     <h2 style={{ margin: 0, fontSize: '19px', color: '#0f172a' }}>{config.tituloPrueba}</h2>
                   </div>
@@ -3747,6 +3817,21 @@ export default function App() {
                     <Printer size={15} />
                     Imprimir ({estudiantesActivos.length})
                   </button>
+
+                  {puedeCrearEvaluaciones && (
+                    <button
+                      type="button"
+                      onClick={duplicarEvaluacionAlAnioActivo}
+                      title="Clonar esta evaluación como plantilla limpia"
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '5px',
+                        padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1',
+                        background: '#f8fafc', color: '#334155', fontWeight: '700', cursor: 'pointer', fontSize: '13px'
+                      }}
+                    >
+                      <Copy size={14} /> Duplicar Pauta
+                    </button>
+                  )}
 
                   {(puedeEditarEvalActual || puedeBorrarEvalActual || permisosActivos?.compartir_importar_pautas) && (
                     <>
