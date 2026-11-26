@@ -303,7 +303,6 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '', asign
           pdfUrl: config.pdfPruebaUrl || null,
           asignatura: config.asignatura || '',
           nivelNombre,
-          asignatura: asignaturaEfectiva,
           oa: item.oa || '',
           habilidad: item.habilidad || '',
           puntajeMax,
@@ -319,15 +318,18 @@ export default function PautaEditor({ config, setConfig, nivelNombre = '', asign
           actualizarItem(numP, 'enunciado', data.enunciadoDetectado);
         }
       } else {
-        throw new Error('Respuesta sin formato de rúbrica');
+        throw new Error(data?.error || 'Respuesta sin formato de rúbrica');
       }
-    } catch {
+    } catch (err) {
+      console.error('Error IA rúbrica:', err);
+      alert(`La IA no respondió (${err?.message || 'revisa Deploy en Supabase'}). Se cargó una plantilla base sin repetir niveles.`);
       const base = generarNivelesRubricaBase(cantNiveles, puntajeMax).map((niv, idx) => {
-        const tema = enunciado ? `"${enunciado.slice(0, 70)}${enunciado.length > 70 ? '...' : ''}"` : `la pregunta ${numP}`;
-        let desc = '';
-        if (idx === 0) desc = `Responde completamente y con precisión lo solicitado en ${tema}, justificando correctamente todos los pasos.`;
-        else if (idx === cantNiveles - 1) desc = `No responde, responde de forma incorrecta o no evidencia comprensión de lo solicitado en ${tema}.`;
-        else desc = `Responde parcialmente lo solicitado en ${tema}, presentando desarrollo incompleto o imprecisiones menores.`;
+        let desc = 'Responde de forma completa y correcta todo lo pedido en la pregunta, con respaldo o desarrollo claro.';
+        if (idx === cantNiveles - 1) {
+          desc = 'Deja el espacio en blanco, copia solo datos de la pregunta o escribe algo sin relación con lo pedido.';
+        } else if (idx > 0) {
+          desc = 'Responde una parte correcta de lo pedido, pero le falta completar el paso final o el respaldo.';
+        }
         return { ...niv, descriptor: desc };
       });
       actualizarItem(numP, 'rubrica', base);
