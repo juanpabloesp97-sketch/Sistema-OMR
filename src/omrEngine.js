@@ -319,8 +319,8 @@ function pintarAnotacionesSobreCanvas(outCtx, respuestas, configEvaluacion, pagi
       const ptsObtenidos = infoIa.puntajeFinal !== undefined && infoIa.puntajeFinal !== null
         ? Number(infoIa.puntajeFinal)
         : infoIa.puntajeSugerido !== undefined && infoIa.puntajeSugerido !== null
-        ? Number(infoIa.puntajeSugerido)
-        : 0;
+          ? Number(infoIa.puntajeSugerido)
+          : 0;
 
       const pxDer = Math.round((xBox + 67 - 16) * 10);
       const pyCentro = Math.round((yRow + 5.2 - 16) * 10);
@@ -359,8 +359,8 @@ function pintarAnotacionesSobreCanvas(outCtx, respuestas, configEvaluacion, pagi
       const ptsObtenidos = infoIa.puntajeFinal !== undefined && infoIa.puntajeFinal !== null
         ? Number(infoIa.puntajeFinal)
         : infoIa.puntajeSugerido !== undefined && infoIa.puntajeSugerido !== null
-        ? Number(infoIa.puntajeSugerido)
-        : 0;
+          ? Number(infoIa.puntajeSugerido)
+          : 0;
 
       const nivelNombre = obtenerNivelAlcanzadoEnRubrica(item, ptsObtenidos);
       const labelDes = nivelNombre
@@ -424,7 +424,7 @@ export async function actualizarAnotacionesImagenOMR(imagenBase64, respuestasMap
     const py = Math.round((baseY - 16) * 10);
 
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(primX - 36, py - 35, (ultX - primX) + 330, 70);
+    ctx.fillRect(ultX + 20, py - 27, 275, 54);
   });
 
   pintarAnotacionesSobreCanvas(ctx, respuestasMap, configEvaluacion, 1);
