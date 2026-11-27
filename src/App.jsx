@@ -1482,14 +1482,22 @@ export default function App() {
     doc.setLineWidth(0.35);
 
     doc.rect(23, topY, 27, boxH);
+    const nombreColegioPdf = (colegioActual?.nombre || profesor?.establecimiento || '').toUpperCase();
     if (logoEscuela) {
-      doc.addImage(logoEscuela, 'PNG', 25, topY + 3.5, 23, 24, undefined, 'FAST');
+      doc.addImage(logoEscuela, 'PNG', 27.5, topY + 1.8, 18, 18, undefined, 'FAST');
+      if (nombreColegioPdf && nombreColegioPdf !== 'ESTABLECIMIENTO PRINCIPAL') {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(4.7);
+        doc.setTextColor(20, 20, 20);
+        const colLineas = doc.splitTextToSize(nombreColegioPdf, 25);
+        doc.text(colLineas.slice(0, 2), 36.5, topY + 23.2, { align: 'center' });
+      }
     } else {
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
-      doc.setTextColor(120, 120, 120);
-      doc.text('LOGO', 36.5, topY + 14.5, { align: 'center' });
-      doc.text('INSTITUCIÓN', 36.5, topY + 18, { align: 'center' });
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(5.5);
+      doc.setTextColor(60, 60, 60);
+      const colLineas = doc.splitTextToSize(nombreColegioPdf || 'INSTITUCIÓN', 24);
+      doc.text(colLineas.slice(0, 3), 36.5, topY + 13.5, { align: 'center' });
       doc.setTextColor(0, 0, 0);
     }
 

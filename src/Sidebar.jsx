@@ -94,20 +94,26 @@ export default function Sidebar({
           borderBottom: '1px solid #e2e8f0',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: colapsado ? 'center' : 'space-between'
+          justifyContent: colapsado ? 'center' : 'space-between',
+          gap: '8px'
         }}
       >
         {!colapsado && (
           <div
             onClick={() => setVistaActiva('inicio')}
-            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', overflow: 'hidden' }}
           >
-            <CheckSquare size={22} color="#2563eb" />
-            <div>
+            <CheckSquare size={22} color="#2563eb" style={{ flexShrink: 0 }} />
+            <div style={{ overflow: 'hidden' }}>
               <div style={{ fontWeight: '800', fontSize: '15px', color: '#0f172a', lineHeight: 1.1 }}>
                 Sistema OMR
               </div>
-              <div style={{ fontSize: '11px', color: '#64748b' }}>Gestión Escolar</div>
+              <div
+                title={profesor?.establecimiento || 'Gestión Escolar'}
+                style={{ fontSize: '11.5px', fontWeight: '600', color: '#2563eb', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '2px' }}
+              >
+                {profesor?.establecimiento || 'Gestión Escolar'}
+              </div>
             </div>
           </div>
         )}
@@ -122,7 +128,8 @@ export default function Sidebar({
             cursor: 'pointer',
             color: '#475569',
             display: 'flex',
-            alignItems: 'center'
+            alignItems: 'center',
+            flexShrink: 0
           }}
         >
           {colapsado ? <Menu size={18} /> : <X size={18} />}
