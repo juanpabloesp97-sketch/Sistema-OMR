@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import {
   UserPlus, Users, BookOpen, CheckCircle2, XCircle,
   GraduationCap, RefreshCw, ShieldCheck, Save, RotateCcw,
-  Eye, EyeOff, Copy, KeyRound, Mail, Trash2, ChevronDown, X
+  Eye, EyeOff, Copy, KeyRound, Mail, Trash2, ChevronDown, X, Building2
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import {
@@ -22,7 +22,22 @@ function parsearAsignaturas(raw = '') {
     .filter(Boolean);
 }
 
-export default function GestionUsuarios({ perfilActual, onPermisosActualizados }) {
+export default function GestionUsuarios({
+  perfilActual,
+  onPermisosActualizados,
+  colegioActual,
+  onRecargarColegio
+}) {
+  const esSuperAdminGlobal =
+    perfilActual?.email?.toLowerCase().trim() === 'juan.pabloesp97@gmail.com';
+
+  const [colegiosLista, setColegiosLista] = useState([]);
+  const [colegioGestionId, setColegioGestionId] = useState(perfilActual?.colegio_id || 'default');
+  const [nuevoColegioId, setNuevoColegioId] = useState('');
+  const [nuevoColegioNombre, setNuevoColegioNombre] = useState('');
+  const [nuevoColegioMaxUsuarios, setNuevoColegioMaxUsuarios] = useState(30);
+  const [creandoColegio, setCreandoColegio] = useState(false);
+
   const [listaUsuarios, setListaUsuarios] = useState([]);
   const [niveles, setNiveles] = useState([]);
   const [cursos, setCursos] = useState([]);
@@ -34,7 +49,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
 
   const [nombre, setNombre] = useState('');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState('evaluacionesatualcance');
   const [asignaturasSeleccionadasForm, setAsignaturasSeleccionadasForm] = useState(['Matemática']);
   const [cursosSeleccionadosForm, setCursosSeleccionadosForm] = useState([]);
   const [desplegableAsigFormAbierto, setDesplegableAsigFormAbierto] = useState(false);
@@ -53,16 +68,29 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
   const [eliminandoUserId, setEliminandoUserId] = useState(null);
 
   useEffect(() => {
-    cargarTodo();
-  }, []);
+    setColegioGestionId(perfilActual?.colegio_id || 'default');
+  }, [perfilActual?.colegio_id]);
 
-  const cargarTodo = async () => {
+  useEffect(() => {
+    cargarTodo(colegioGestionId);
+  }, [colegioGestionId]);
+
+  const cargarTodo = async (targetColegioId = colegioGestionId) => {
     if (!supabase) return;
     setCargandoLista(true);
     try {
+      if (esSuperAdminGlobal) {
+        const { data: cols } = await supabase
+          .from('colegios')
+          .select('*')
+          .order('created_at', { ascending: true });
+        if (cols) setColegiosLista(cols);
+      }
+
       const { data: users, error: errUsers } = await supabase
         .from('perfiles')
         .select('*')
+        .eq('colegio_id', targetColegioId)
         .order('nombre');
 
       if (errUsers) {
@@ -72,8 +100,8 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
       }
 
       const [{ data: niv }, { data: cur }, { data: asig }, { data: permsDB }] = await Promise.all([
-        supabase.from('niveles').select('*').order('orden', { ascending: true }),
-        supabase.from('cursos').select('*').order('nombre'),
+        supabase.from('niveles').select('*').eq('colegio_id', targetColegioId).order('orden', { ascending: true }),
+        supabase.from('cursos').select('*').eq('colegio_id', targetColegioId).order('nombre'),
         supabase.from('docente_cursos').select('*'),
         supabase.from('roles_permisos').select('*')
       ]);
@@ -94,6 +122,75 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
     } finally {
       setCargandoLista(false);
     }
+  };
+
+  const colegioObjetivoObj =
+    colegiosLista.find((c) => c.id === colegioGestionId) ||
+    colegioActual || {
+      id: colegioGestionId,
+      nombre: 'Establecimiento',
+      max_usuarios: 50,
+      activo: true
+    };
+
+  const maxCupos = Number(colegioObjetivoObj?.max_usuarios || 50);
+  const usuariosActivosCount = listaUsuarios.filter((u) => u.activo !== false).length;
+  const cupoLleno = !esSuperAdminGlobal && usuariosActivosCount >= maxCupos;
+
+  const crearNuevoColegioCliente = async (e) => {
+    e.preventDefault();
+    if (!esSuperAdminGlobal || !supabase) return;
+    const slug = nuevoColegioId
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, '_');
+
+    if (!slug || !nuevoColegioNombre.trim()) {
+      alert('Ingresa un identificador corto (ej: liceo_san_jose) y el nombre del colegio.');
+      return;
+    }
+
+    setCreandoColegio(true);
+    try {
+      const { error } = await supabase.from('colegios').insert([
+        {
+          id: slug,
+          nombre: nuevoColegioNombre.trim(),
+          plan: 'institucional',
+          max_usuarios: Math.max(1, Number(nuevoColegioMaxUsuarios || 30)),
+          activo: true
+        }
+      ]);
+
+      if (error) {
+        alert('Error al crear colegio: ' + error.message);
+        return;
+      }
+
+      await supabase
+        .from('anios_escolares')
+        .upsert([{ anio: 2026, colegio_id: slug, activo: true, cerrado: false }]);
+
+      alert(`Colegio "${nuevoColegioNombre.trim()}" creado con cupo para ${nuevoColegioMaxUsuarios} usuarios.`);
+      setNuevoColegioId('');
+      setNuevoColegioNombre('');
+      setNuevoColegioMaxUsuarios(30);
+      setColegioGestionId(slug);
+      await cargarTodo(slug);
+    } finally {
+      setCreandoColegio(false);
+    }
+  };
+
+  const actualizarColegioCliente = async (colId, cambios) => {
+    if (!esSuperAdminGlobal || !supabase) return;
+    const { error } = await supabase.from('colegios').update(cambios).eq('id', colId);
+    if (error) {
+      alert('Error al actualizar colegio: ' + error.message);
+      return;
+    }
+    await cargarTodo(colegioGestionId);
+    if (onRecargarColegio) onRecargarColegio();
   };
 
   const togglePermiso = (rolId, permisoKey) => {
@@ -196,6 +293,13 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
 
   const crearNuevaCuenta = async (e) => {
     e.preventDefault();
+    if (cupoLleno) {
+      alert(
+        `Has alcanzado el límite de ${maxCupos} perfiles activos de tu plan mensual. Suspende una cuenta inactiva o contacta a soporte para ampliar tu plan.`
+      );
+      return;
+    }
+
     if (!nombre.trim() || !email.trim() || password.length < 6) {
       alert('Completa todos los campos. La contraseña debe tener al menos 6 caracteres.');
       return;
@@ -221,7 +325,8 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
           data: {
             nombre: nombre.trim(),
             asignatura: asignaturaTexto,
-            rol
+            rol,
+            colegio_id: colegioGestionId
           }
         }
       });
@@ -239,6 +344,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
             nombre: nombre.trim(),
             asignatura: asignaturaTexto,
             rol,
+            colegio_id: colegioGestionId,
             activo: true,
             clave_referencia: password
           }
@@ -253,15 +359,15 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
         }
       }
 
-      alert(`Cuenta creada correctamente para ${nombre.trim()}.`);
+      alert(`Cuenta creada correctamente para ${nombre.trim()} en ${colegioObjetivoObj.nombre}.`);
       setNombre('');
       setEmail('');
-      setPassword('');
+      setPassword('evaluacionesatualcance');
       setAsignaturasSeleccionadasForm(['Matemática']);
       setCursosSeleccionadosForm([]);
       setDesplegableAsigFormAbierto(false);
       setDesplegableCursosFormAbierto(false);
-      await cargarTodo();
+      await cargarTodo(colegioGestionId);
     } catch (err) {
       alert('Error inesperado: ' + err.message);
     } finally {
@@ -272,13 +378,20 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
   const cambiarRolUsuario = async (idUsuario, nuevoRol) => {
     if (idUsuario === perfilActual?.id) return;
     await supabase.from('perfiles').update({ rol: nuevoRol }).eq('id', idUsuario);
-    cargarTodo();
+    cargarTodo(colegioGestionId);
   };
 
   const toggleEstadoUsuario = async (u) => {
     if (u.id === perfilActual?.id) return;
+    const vaAActivar = u.activo === false;
+    if (vaAActivar && !esSuperAdminGlobal && usuariosActivosCount >= maxCupos) {
+      alert(
+        `No puedes reactivar esta cuenta porque ya tienes ${usuariosActivosCount} de ${maxCupos} cupos activos utilizados en tu plan.`
+      );
+      return;
+    }
     await supabase.from('perfiles').update({ activo: !u.activo }).eq('id', u.id);
-    cargarTodo();
+    cargarTodo(colegioGestionId);
   };
 
   const eliminarUsuarioDefinitivo = async (u) => {
@@ -288,7 +401,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
     }
 
     const paso1 = confirm(
-      `¿Estás seguro de ELIMINAR definitivamente la cuenta de ${u.nombre} (${u.email})?\n\nEsta acción borrará su acceso del sistema.`
+      `¿Estás seguro de ELIMINAR definitivamente la cuenta de ${u.nombre} (${u.email})?\n\nEsta acción borrará su acceso del sistema y liberará su cupo.`
     );
     if (!paso1) return;
 
@@ -309,7 +422,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
       }
 
       alert(`Usuario ${u.nombre} eliminado correctamente.`);
-      await cargarTodo();
+      await cargarTodo(colegioGestionId);
     } catch (err) {
       alert('Error al conectar con la función de eliminación: ' + err.message);
     } finally {
@@ -342,7 +455,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
       setEditandoClaveUserId(null);
       setNuevaClaveUsuario('');
       setClavesVisibles((prev) => ({ ...prev, [u.id]: true }));
-      await cargarTodo();
+      await cargarTodo(colegioGestionId);
     } catch (err) {
       alert('Error al conectar con la función de cambio de clave: ' + err.message);
     } finally {
@@ -376,8 +489,185 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
     alert('Contraseña copiada al portapapeles.');
   };
 
+  const porcentajeUsoCupos = Math.min(100, Math.round((usuariosActivosCount / Math.max(1, maxCupos)) * 100));
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      {/* CONSOLA SUPER-ADMIN DE COLEGIOS CLIENTES (SOLO CUENTA MAESTRA) */}
+      {esSuperAdminGlobal && (
+        <div style={{ background: '#0f172a', color: '#ffffff', padding: '22px 24px', borderRadius: '14px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+            <div>
+              <div style={{ fontSize: '11.5px', fontWeight: '800', color: '#93c5fd', textTransform: 'uppercase' }}>
+                Consola Comercial SaaS • Super-Admin
+              </div>
+              <h2 style={{ margin: '2px 0 0 0', fontSize: '19px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Building2 size={21} color="#60a5fa" />
+                Establecimientos Clientes y Cupos Contratados ({colegiosLista.length})
+              </h2>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '12.5px', color: '#cbd5e1' }}>Administrar colegio:</span>
+              <select
+                value={colegioGestionId}
+                onChange={(e) => setColegioGestionId(e.target.value)}
+                style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #3b82f6', background: '#1e293b', color: '#ffffff', fontWeight: '700', fontSize: '13px' }}
+              >
+                {colegiosLista.map((col) => (
+                  <option key={col.id} value={col.id}>
+                    {col.nombre} (Máx. {col.max_usuarios} usuarios)
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <form onSubmit={crearNuevoColegioCliente} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '10px', background: '#1e293b', padding: '14px', borderRadius: '10px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '11.5px', color: '#94a3b8', marginBottom: '4px' }}>ID único (sin espacios)</label>
+              <input
+                type="text"
+                required
+                placeholder="ej: colegio_los_andes"
+                value={nuevoColegioId}
+                onChange={(e) => setNuevoColegioId(e.target.value)}
+                style={{ width: '100%', padding: '8px', borderRadius: '7px', border: '1px solid #475569', background: '#0f172a', color: '#ffffff', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '11.5px', color: '#94a3b8', marginBottom: '4px' }}>Nombre del Establecimiento</label>
+              <input
+                type="text"
+                required
+                placeholder="Ej: Colegio Los Andes"
+                value={nuevoColegioNombre}
+                onChange={(e) => setNuevoColegioNombre(e.target.value)}
+                style={{ width: '100%', padding: '8px', borderRadius: '7px', border: '1px solid #475569', background: '#0f172a', color: '#ffffff', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '11.5px', color: '#94a3b8', marginBottom: '4px' }}>Cupo Máx. Perfiles (Plan)</label>
+              <input
+                type="number"
+                min="1"
+                max="1000"
+                required
+                value={nuevoColegioMaxUsuarios}
+                onChange={(e) => setNuevoColegioMaxUsuarios(Number(e.target.value))}
+                style={{ width: '100%', padding: '8px', borderRadius: '7px', border: '1px solid #475569', background: '#0f172a', color: '#ffffff', boxSizing: 'border-box', fontWeight: '700' }}
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+              <button
+                type="submit"
+                disabled={creandoColegio}
+                style={{ width: '100%', background: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '7px', padding: '9px 12px', fontWeight: '700', cursor: 'pointer' }}
+              >
+                {creandoColegio ? 'Creando...' : '+ Alta Colegio Cliente'}
+              </button>
+            </div>
+          </form>
+
+          {colegioObjetivoObj && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', fontSize: '13px', background: '#1e293b', padding: '10px 14px', borderRadius: '9px' }}>
+              <div>
+                Colegio seleccionado: <strong>{colegioObjetivoObj.nombre}</strong> (<code>{colegioObjetivoObj.id}</code>)
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span>Límite perfiles:</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="1000"
+                    value={colegioObjetivoObj.max_usuarios || 30}
+                    onChange={(e) =>
+                      actualizarColegioCliente(colegioObjetivoObj.id, {
+                        max_usuarios: Math.max(1, Number(e.target.value))
+                      })
+                    }
+                    style={{ width: '68px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #60a5fa', background: '#0f172a', color: '#ffffff', fontWeight: '800' }}
+                  />
+                </label>
+
+                {colegioObjetivoObj.id !== 'default' && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      actualizarColegioCliente(colegioObjetivoObj.id, {
+                        activo: colegioObjetivoObj.activo === false
+                      })
+                    }
+                    style={{
+                      background: colegioObjetivoObj.activo !== false ? '#16a34a' : '#dc2626',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '999px',
+                      padding: '4px 12px',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {colegioObjetivoObj.activo !== false ? 'Suscripción Activa' : 'Suscripción Suspendida'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* INDICADOR DE CUPOS DEL PLAN DEL ESTABLECIMIENTO */}
+      <div
+        style={{
+          background: cupoLleno ? '#fef2f2' : '#ffffff',
+          padding: '18px 22px',
+          borderRadius: '12px',
+          border: cupoLleno ? '1px solid #fca5a5' : '1px solid #cbd5e1',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px'
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+          <div style={{ fontSize: '14.5px', fontWeight: '800', color: cupoLleno ? '#991b1b' : '#0f172a' }}>
+            Plan {colegioObjetivoObj?.nombre}: {usuariosActivosCount} de {maxCupos} perfiles activos utilizados
+          </div>
+          <span
+            style={{
+              background: cupoLleno ? '#fee2e2' : '#eff6ff',
+              color: cupoLleno ? '#b91c1c' : '#1d4ed8',
+              padding: '4px 10px',
+              borderRadius: '999px',
+              fontSize: '12px',
+              fontWeight: '800'
+            }}
+          >
+            {cupoLleno ? 'Límite de plan alcanzado' : `${Math.max(0, maxCupos - usuariosActivosCount)} cupos disponibles`}
+          </span>
+        </div>
+
+        <div style={{ width: '100%', height: '8px', background: '#e2e8f0', borderRadius: '999px', overflow: 'hidden' }}>
+          <div
+            style={{
+              width: `${porcentajeUsoCupos}%`,
+              height: '100%',
+              background: cupoLleno ? '#dc2626' : '#2563eb',
+              borderRadius: '999px'
+            }}
+          />
+        </div>
+
+        {cupoLleno && (
+          <div style={{ fontSize: '12.5px', color: '#991b1b' }}>
+            Has alcanzado el máximo de perfiles contratados en tu suscripción mensual. Suspende o elimina un usuario inactivo para liberar un cupo, o solicita ampliación de plan.
+          </div>
+        )}
+      </div>
+
+      {/* MATRIZ DE ATRIBUCIONES POR ROL */}
       <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
           <div>
@@ -490,34 +780,35 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
         </div>
       </div>
 
-      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+      {/* CREAR NUEVA CUENTA DE USUARIO */}
+      <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', opacity: cupoLleno ? 0.65 : 1 }}>
         <h2 style={{ margin: '0 0 8px 0', fontSize: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <UserPlus size={22} color="#2563eb" />
-          Crear Nueva Cuenta de Usuario
+          Crear Nueva Cuenta de Usuario ({colegioObjetivoObj?.nombre})
         </h2>
         <p style={{ margin: '0 0 18px 0', fontSize: '13.5px', color: '#64748b' }}>
-          Crea las cuentas del personal, escribe su contraseña inicial, elige su rol y selecciona sus asignaturas y cursos en los desplegables.
+          Crea las cuentas del personal, define su contraseña inicial, elige su rol y selecciona sus asignaturas y cursos en los desplegables.
         </p>
 
         <form onSubmit={crearNuevaCuenta} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
           <div>
             <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Nombre Completo</label>
-            <input type="text" required placeholder="Ej: María José González" value={nombre} onChange={(e) => setNombre(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
+            <input type="text" required disabled={cupoLleno} placeholder="Ej: María José González" value={nombre} onChange={(e) => setNombre(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
           </div>
 
           <div>
             <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Correo Institucional</label>
-            <input type="email" required placeholder="mgonzalez@colegio.cl" value={email} onChange={(e) => setEmail(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
+            <input type="email" required disabled={cupoLleno} placeholder="mgonzalez@colegio.cl" value={email} onChange={(e) => setEmail(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
           </div>
 
           <div>
             <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Contraseña Inicial</label>
-            <input type="text" required minLength={6} placeholder="Escribe una clave (mín. 6)" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
+            <input type="text" required disabled={cupoLleno} minLength={6} placeholder="Escribe una clave (mín. 6)" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
           </div>
 
           <div>
             <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', marginBottom: '5px' }}>Rol</label>
-            <select value={rol} onChange={(e) => setRol(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box', fontWeight: '600' }}>
+            <select disabled={cupoLleno} value={rol} onChange={(e) => setRol(e.target.value)} style={{ width: '100%', padding: '9px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box', fontWeight: '600' }}>
               <option value="docente">Docente</option>
               <option value="jefe_depto">Jefe de Departamento</option>
               <option value="utp">UTP</option>
@@ -531,6 +822,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
             </label>
             <button
               type="button"
+              disabled={cupoLleno}
               onClick={() => {
                 setDesplegableAsigFormAbierto((prev) => !prev);
                 setDesplegableCursosFormAbierto(false);
@@ -544,7 +836,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
                 textAlign: 'left',
                 fontSize: '13px',
                 fontWeight: '600',
-                cursor: 'pointer',
+                cursor: cupoLleno ? 'not-allowed' : 'pointer',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
@@ -559,7 +851,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
               <ChevronDown size={15} />
             </button>
 
-            {desplegableAsigFormAbierto && (
+            {desplegableAsigFormAbierto && !cupoLleno && (
               <div
                 style={{
                   position: 'absolute',
@@ -617,6 +909,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
             </label>
             <button
               type="button"
+              disabled={cupoLleno}
               onClick={() => {
                 setDesplegableCursosFormAbierto((prev) => !prev);
                 setDesplegableAsigFormAbierto(false);
@@ -630,7 +923,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
                 textAlign: 'left',
                 fontSize: '13px',
                 fontWeight: '600',
-                cursor: 'pointer',
+                cursor: cupoLleno ? 'not-allowed' : 'pointer',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
@@ -645,7 +938,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
               <ChevronDown size={15} />
             </button>
 
-            {desplegableCursosFormAbierto && (
+            {desplegableCursosFormAbierto && !cupoLleno && (
               <div
                 style={{
                   position: 'absolute',
@@ -667,7 +960,7 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
                 }}
               >
                 {cursos.length === 0 ? (
-                  <div style={{ fontSize: '12px', color: '#64748b', padding: '6px' }}>No hay cursos creados aún.</div>
+                  <div style={{ fontSize: '12px', color: '#64748b', padding: '6px' }}>No hay cursos creados aún en este colegio.</div>
                 ) : (
                   cursos.map((c) => {
                     const marcado = cursosSeleccionadosForm.includes(c.id);
@@ -703,21 +996,39 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
           </div>
 
           <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-            <button type="submit" disabled={creando} style={{ width: '100%', background: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 14px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-              <UserPlus size={17} /> {creando ? 'Creando...' : 'Crear Cuenta'}
+            <button
+              type="submit"
+              disabled={creando || cupoLleno}
+              style={{
+                width: '100%',
+                background: cupoLleno ? '#94a3b8' : '#16a34a',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                fontWeight: '700',
+                cursor: cupoLleno ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px'
+              }}
+            >
+              <UserPlus size={17} /> {cupoLleno ? 'Cupo de Plan Completo' : creando ? 'Creando...' : 'Crear Cuenta'}
             </button>
           </div>
         </form>
       </div>
 
+      {/* LISTA DE USUARIOS DEL COLEGIO */}
       <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
           <h3 style={{ margin: 0, fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Users size={19} color="#0f172a" />
-            Usuarios, Asignaturas y Cursos Asignados ({listaUsuarios.length})
+            Usuarios, Asignaturas y Cursos ({listaUsuarios.length})
           </h3>
           <button
-            onClick={cargarTodo}
+            onClick={() => cargarTodo(colegioGestionId)}
             style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '7px', padding: '6px 10px', fontSize: '12.5px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}
           >
             <RefreshCw size={14} /> {cargandoLista ? 'Actualizando...' : 'Actualizar lista'}
@@ -973,7 +1284,6 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
 
                 {/* ASIGNACIÓN MULTI-ASIGNATURA Y MULTI-CURSO EN DESPLEGABLES */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px', borderTop: '1px dashed #e2e8f0', paddingTop: '10px' }}>
-                  {/* Desplegable Asignaturas */}
                   <div style={{ position: 'relative' }}>
                     <div style={{ fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '5px' }}>
                       <BookOpen size={14} /> Asignaturas asignadas:
@@ -1087,7 +1397,6 @@ export default function GestionUsuarios({ perfilActual, onPermisosActualizados }
                     </div>
                   </div>
 
-                  {/* Desplegable Cursos */}
                   <div style={{ position: 'relative' }}>
                     <div style={{ fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '5px' }}>
                       <GraduationCap size={14} /> Cursos de aula asignados:

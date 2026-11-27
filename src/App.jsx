@@ -111,25 +111,27 @@ export default function App() {
 
   const [aniosDisponibles, setAniosDisponibles] = useState([2026]);
   const [anioEscolarActivo, setAnioEscolarActivo] = useState(2026);
+  const [colegioActual, setColegioActual] = useState({
+    id: 'default',
+    nombre: 'Colegio / Liceo',
+    max_usuarios: 50,
+    activo: true,
+    logo_url: null
+  });
 
   const [profesor, setProfesor] = useState({
     id: null,
     nombre: 'Docente',
     asignatura: 'Matemática',
     establecimiento: 'Colegio / Liceo',
+    colegio_id: 'default',
     email: '',
     rol: 'docente',
     activo: true
   });
   const [permisosActivos, setPermisosActivos] = useState(() => obtenerPermisosRol(MATRIZ_DEFECTO, 'docente'));
 
-  const [logoEscuela, setLogoEscuela] = useState(() => {
-    try {
-      return localStorage.getItem('omr_logo_escuela') || null;
-    } catch {
-      return null;
-    }
-  });
+  const [logoEscuela, setLogoEscuela] = useState(null);
   const [guardandoLogo, setGuardandoLogo] = useState(false);
 
   const [vistaActiva, setVistaActiva] = useState('inicio');
@@ -209,11 +211,39 @@ export default function App() {
     setBarraDetalle(detalle);
   };
 
-  const cargarAniosEscolaresNube = async () => {
+  const cargarDatosColegioNube = async (colegioId = 'default') => {
+    if (!supabase) return null;
+    const { data: colData } = await supabase
+      .from('colegios')
+      .select('*')
+      .eq('id', colegioId)
+      .maybeSingle();
+
+    if (colData) {
+      setColegioActual(colData);
+      if (colData.logo_url) {
+        setLogoEscuela(colData.logo_url);
+      } else if (colegioId === 'default') {
+        const { data: legacyLogo } = await supabase
+          .from('configuracion_institucional')
+          .select('logo_url')
+          .eq('id', 'default')
+          .maybeSingle();
+        setLogoEscuela(legacyLogo?.logo_url || null);
+      } else {
+        setLogoEscuela(null);
+      }
+      return colData;
+    }
+    return null;
+  };
+
+  const cargarAniosEscolaresNube = async (colegioId = profesor.colegio_id || 'default') => {
     if (!supabase) return { lista: [2026], vigente: 2026 };
     const { data, error } = await supabase
       .from('anios_escolares')
       .select('anio, activo')
+      .eq('colegio_id', colegioId)
       .order('anio', { ascending: false });
 
     if (!error && Array.isArray(data) && data.length > 0) {
@@ -228,6 +258,7 @@ export default function App() {
 
   const cambiarAnioEscolarActivo = async (nuevoAnio) => {
     const anioNum = Number(nuevoAnio);
+    const colId = profesor.colegio_id || 'default';
     setAnioEscolarActivo(anioNum);
     setCursoActivoId('');
     setModoResultadosNivel(false);
@@ -235,45 +266,24 @@ export default function App() {
       setVistaActiva('inicio');
     }
 
-    await cargarAniosEscolaresNube();
-    const { cursosVisibles, idsAula } = await cargarEstructuraEscolar(profesor, permisosActivos, anioNum);
-    await cargarEvaluacionesNube(profesor, permisosActivos, idsAula, cursosVisibles, anioNum);
-  };
-
-  const cargarLogoInstitucionalNube = async () => {
-    if (!supabase) return;
-    try {
-      const { data, error } = await supabase
-        .from('configuracion_institucional')
-        .select('logo_url')
-        .eq('id', 'default')
-        .maybeSingle();
-
-      if (!error && data) {
-        const urlNube = data.logo_url || null;
-        setLogoEscuela(urlNube);
-        if (urlNube) {
-          localStorage.setItem('omr_logo_escuela', urlNube);
-        } else {
-          localStorage.removeItem('omr_logo_escuela');
-        }
-      }
-    } catch (err) {
-      console.warn('No se pudo sincronizar logo institucional:', err);
-    }
+    await cargarAniosEscolaresNube(colId);
+    const { cursosVisibles, idsAula } = await cargarEstructuraEscolar(profesor, permisosActivos, anioNum, colId);
+    await cargarEvaluacionesNube(profesor, permisosActivos, idsAula, cursosVisibles, anioNum, colId);
   };
 
   const manejarSubidaLogo = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const colId = profesor.colegio_id || 'default';
     setGuardandoLogo(true);
     try {
       const dataUrlBN = await procesarLogoBlancoYNegro(file);
 
       if (supabase) {
         const { error } = await supabase
-          .from('configuracion_institucional')
-          .upsert([{ id: 'default', logo_url: dataUrlBN, updated_at: new Date().toISOString() }]);
+          .from('colegios')
+          .update({ logo_url: dataUrlBN })
+          .eq('id', colId);
 
         if (error) {
           alert('Error al guardar el logo en la nube: ' + error.message);
@@ -282,8 +292,8 @@ export default function App() {
       }
 
       setLogoEscuela(dataUrlBN);
-      localStorage.setItem('omr_logo_escuela', dataUrlBN);
-      alert('Logo institucional actualizado para todos los docentes de la escuela.');
+      setColegioActual((prev) => ({ ...prev, logo_url: dataUrlBN }));
+      alert('Logo institucional actualizado para todos los docentes de tu establecimiento.');
     } catch {
       alert('No se pudo procesar el logo. Intenta con una imagen PNG o JPG.');
     } finally {
@@ -293,13 +303,15 @@ export default function App() {
   };
 
   const eliminarLogoEscuela = async () => {
-    if (!confirm('¿Quitar el logo institucional para todos los docentes de la escuela?')) return;
+    if (!confirm('¿Quitar el logo institucional para todos los docentes de tu establecimiento?')) return;
+    const colId = profesor.colegio_id || 'default';
     setGuardandoLogo(true);
     try {
       if (supabase) {
         const { error } = await supabase
-          .from('configuracion_institucional')
-          .upsert([{ id: 'default', logo_url: null, updated_at: new Date().toISOString() }]);
+          .from('colegios')
+          .update({ logo_url: null })
+          .eq('id', colId);
 
         if (error) {
           alert('Error al quitar el logo en la nube: ' + error.message);
@@ -308,7 +320,7 @@ export default function App() {
       }
 
       setLogoEscuela(null);
-      localStorage.removeItem('omr_logo_escuela');
+      setColegioActual((prev) => ({ ...prev, logo_url: null }));
     } finally {
       setGuardandoLogo(false);
     }
@@ -554,6 +566,7 @@ export default function App() {
         .maybeSingle();
 
       const esAdminPrincipal = user.email?.toLowerCase().trim() === 'juan.pabloesp97@gmail.com';
+      const colegioIdUsuario = perfilDB?.colegio_id || user.user_metadata?.colegio_id || 'default';
 
       if (!perfilDB) {
         const nuevoPerfil = {
@@ -562,10 +575,21 @@ export default function App() {
           nombre: esAdminPrincipal ? 'Juan Pablo Esparza' : (user.user_metadata?.nombre || user.email.split('@')[0]),
           asignatura: user.user_metadata?.asignatura || 'Matemática',
           rol: esAdminPrincipal ? 'admin' : 'docente',
+          colegio_id: colegioIdUsuario,
           activo: true
         };
         await supabase.from('perfiles').upsert([nuevoPerfil]);
         perfilDB = nuevoPerfil;
+      }
+
+      const colInfo = await cargarDatosColegioNube(colegioIdUsuario);
+
+      if (colInfo && colInfo.activo === false && !esAdminPrincipal) {
+        alert('La suscripción de tu establecimiento se encuentra temporalmente suspendida. Contacta a administración.');
+        usuarioCargadoIdRef.current = null;
+        await supabase.auth.signOut();
+        setCargandoSesion(false);
+        return;
       }
 
       const rolFinal = esAdminPrincipal ? 'admin' : (perfilDB?.rol || 'docente');
@@ -576,7 +600,8 @@ export default function App() {
         email: user.email,
         nombre: perfilDB?.nombre || (esAdminPrincipal ? 'Juan Pablo Esparza' : user.email.split('@')[0]),
         asignatura: perfilDB?.asignatura || 'Matemática',
-        establecimiento: localStorage.getItem('omr_establecimiento') || 'Colegio / Liceo',
+        establecimiento: colInfo?.nombre || 'Colegio / Liceo',
+        colegio_id: colegioIdUsuario,
         rol: rolFinal,
         activo: perfilDB?.activo !== false
       };
@@ -591,11 +616,10 @@ export default function App() {
 
       setProfesor(perfilFinal);
       const permsUsuario = await cargarPermisosDeRol(rolFinal);
-      await cargarLogoInstitucionalNube();
-      const { vigente } = await cargarAniosEscolaresNube();
+      const { vigente } = await cargarAniosEscolaresNube(colegioIdUsuario);
       setAnioEscolarActivo(vigente);
 
-      actualizarBarra(true, 'Cargando estructura escolar...', 55, `Año escolar ${vigente}...`);
+      actualizarBarra(true, 'Cargando estructura escolar...', 55, `${perfilFinal.establecimiento} • ${vigente}...`);
 
       setConfig((prev) => ({
         ...prev,
@@ -605,9 +629,21 @@ export default function App() {
       }));
       setCargandoSesion(false);
 
-      const { nivelesVisibles, cursosVisibles, idsAula } = await cargarEstructuraEscolar(perfilFinal, permsUsuario, vigente);
+      const { nivelesVisibles, cursosVisibles, idsAula } = await cargarEstructuraEscolar(
+        perfilFinal,
+        permsUsuario,
+        vigente,
+        colegioIdUsuario
+      );
       actualizarBarra(true, 'Cargando evaluaciones...', 85, 'Sincronizando panel...');
-      const { visibles } = await cargarEvaluacionesNube(perfilFinal, permsUsuario, idsAula, cursosVisibles, vigente);
+      const { visibles } = await cargarEvaluacionesNube(
+        perfilFinal,
+        permsUsuario,
+        idsAula,
+        cursosVisibles,
+        vigente,
+        colegioIdUsuario
+      );
 
       let restaurado = false;
       try {
@@ -810,12 +846,13 @@ export default function App() {
   const cargarEstructuraEscolar = async (
     perfilUsuario = profesor,
     permsUsuario = permisosActivos,
-    anioFiltro = anioEscolarActivo
+    anioFiltro = anioEscolarActivo,
+    colegioId = profesor.colegio_id || 'default'
   ) => {
     if (!supabase) return { nivelesVisibles: [], cursosVisibles: [], idsAula: new Set() };
     const [{ data: niv }, { data: cur }, { data: asig }] = await Promise.all([
-      supabase.from('niveles').select('*').order('orden', { ascending: true }).order('nombre'),
-      supabase.from('cursos').select('*').eq('anio_escolar', anioFiltro).order('nombre'),
+      supabase.from('niveles').select('*').eq('colegio_id', colegioId).order('orden', { ascending: true }).order('nombre'),
+      supabase.from('cursos').select('*').eq('colegio_id', colegioId).eq('anio_escolar', anioFiltro).order('nombre'),
       perfilUsuario?.id
         ? supabase.from('docente_cursos').select('curso_id').eq('docente_id', perfilUsuario.id)
         : Promise.resolve({ data: [] })
@@ -845,7 +882,8 @@ export default function App() {
     permsUsuario = permisosActivos,
     idsCursosProfe = cursosAsignadosAula,
     listaCursos = cursos,
-    anioFiltro = anioEscolarActivo
+    anioFiltro = anioEscolarActivo,
+    colegioId = profesor.colegio_id || 'default'
   ) => {
     if (!supabase || !perfilUsuario?.id) return { visibles: [], compartidas: [] };
 
@@ -853,11 +891,13 @@ export default function App() {
       supabase
         .from('evaluaciones')
         .select('*')
+        .eq('colegio_id', colegioId)
         .eq('anio_escolar', anioFiltro)
         .order('created_at', { ascending: false }),
       supabase
         .from('evaluaciones')
         .select('*')
+        .eq('colegio_id', colegioId)
         .eq('compartida', true)
         .neq('docente_id', perfilUsuario.id)
         .order('created_at', { ascending: false })
@@ -1077,6 +1117,7 @@ export default function App() {
       return;
     }
 
+    const colId = profesor.colegio_id || 'default';
     const cursoObj = cursos.find((c) => c.id === config.cursoId);
     const nivelFinalId = cursoObj ? cursoObj.nivel_id : (config.nivelId || null);
 
@@ -1085,6 +1126,7 @@ export default function App() {
       asignatura: config.asignatura,
       curso_id: config.cursoId || null,
       nivel_id: nivelFinalId,
+      colegio_id: colId,
       anio_escolar: anioEscolarActivo,
       num_preguntas: Number(config.numPreguntas),
       alternativas: config.alternativas,
@@ -2893,7 +2935,7 @@ export default function App() {
             >
               <div>
                 <div style={{ fontSize: '12px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', opacity: 0.85 }}>
-                  Sistema OMR • Año Escolar {anioEscolarActivo} • {profesor.asignatura || 'Gestión Escolar'}
+                  {colegioActual?.nombre || profesor.establecimiento} • Año Escolar {anioEscolarActivo}
                 </div>
                 <h1 style={{ margin: '4px 0 6px 0', fontSize: '26px', fontWeight: '800' }}>
                   Hola, {profesor.nombre}
@@ -3337,6 +3379,11 @@ export default function App() {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Establecimiento</label>
+                <input type="text" disabled value={colegioActual?.nombre || profesor.establecimiento} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#0f172a', fontWeight: '700', boxSizing: 'border-box' }} />
+              </div>
+
+              <div>
                 <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Correo Institucional</label>
                 <input type="text" disabled value={profesor.email} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#64748b', boxSizing: 'border-box' }} />
               </div>
@@ -3398,12 +3445,12 @@ export default function App() {
             <div style={{ marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <h3 style={{ margin: 0, fontSize: '16px', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <ImageIcon size={18} color="#2563eb" />
-                Logo Institucional Compartido (Hojas de Respuesta)
+                Logo Institucional Compartido ({colegioActual?.nombre || 'Establecimiento'})
               </h3>
               <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>
                 {puedeAdministrarLogoInstitucional
-                  ? 'Como administrador, el logo que subas aquí se sincroniza en la nube y aparece automáticamente en las hojas de respuesta de todos los docentes del colegio.'
-                  : 'Este logo institucional está sincronizado para todos los docentes del colegio y se imprime automáticamente en tus hojas de respuesta.'}
+                  ? 'Como administrador, el logo que subas aquí se sincroniza en la nube y aparece automáticamente en las hojas de respuesta de todos los docentes de tu colegio.'
+                  : 'Este logo institucional está sincronizado para todos los docentes de tu colegio y se imprime automáticamente en tus hojas de respuesta.'}
               </p>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
@@ -3515,6 +3562,8 @@ export default function App() {
         {vistaActiva === 'usuarios' && puedeGestionarUsuarios && (
           <GestionUsuarios
             perfilActual={profesor}
+            colegioActual={colegioActual}
+            onRecargarColegio={() => cargarDatosColegioNube(profesor.colegio_id || 'default')}
             permisos={permisosActivos}
             onPermisosActualizados={(nuevaMatriz) => {
               const normalizada = normalizarMatrizPermisos(nuevaMatriz);
@@ -3547,8 +3596,9 @@ export default function App() {
               permisos={permisosActivos}
               esAdmin={esSuperAdmin}
               anioEscolarActivo={anioEscolarActivo}
+              colegioId={profesor.colegio_id || 'default'}
               onCambiarAnioEscolar={cambiarAnioEscolarActivo}
-              onRecargarEstructura={() => cargarEstructuraEscolar(profesor, permisosActivos, anioEscolarActivo)}
+              onRecargarEstructura={() => cargarEstructuraEscolar(profesor, permisosActivos, anioEscolarActivo, profesor.colegio_id || 'default')}
             />
           </div>
         )}
