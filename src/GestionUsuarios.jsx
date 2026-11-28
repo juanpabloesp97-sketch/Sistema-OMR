@@ -37,6 +37,7 @@ export default function GestionUsuarios({
   const [nuevoColegioNombre, setNuevoColegioNombre] = useState('');
   const [nuevoColegioMaxUsuarios, setNuevoColegioMaxUsuarios] = useState(30);
   const [creandoColegio, setCreandoColegio] = useState(false);
+  const [eliminandoColegio, setEliminandoColegio] = useState(false);
 
   const [listaUsuarios, setListaUsuarios] = useState([]);
   const [niveles, setNiveles] = useState([]);
@@ -191,6 +192,45 @@ export default function GestionUsuarios({
     }
     await cargarTodo(colegioGestionId);
     if (onRecargarColegio) onRecargarColegio();
+  };
+
+  const eliminarColegioCliente = async (colObj) => {
+    if (!esSuperAdminGlobal || !colObj || colObj.id === 'default') {
+      alert('No se puede eliminar el establecimiento principal (default).');
+      return;
+    }
+
+    const paso1 = confirm(
+      `¿Estás seguro de ELIMINAR definitivamente el establecimiento "${colObj.nombre}" (${colObj.id})?\n\nSe borrarán todos sus cursos, evaluaciones, resultados y cuentas de usuarios.`
+    );
+    if (!paso1) return;
+
+    const paso2 = confirm(
+      `CONFIRMACIÓN FINAL: Esta acción es irreversible y eliminará todos los datos de "${colObj.nombre}". ¿Deseas continuar?`
+    );
+    if (!paso2) return;
+
+    setEliminandoColegio(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-eliminar-usuario', {
+        body: { colegioId: colObj.id }
+      });
+
+      if (error || data?.error) {
+        alert('No se pudo eliminar el colegio: ' + (data?.error || error?.message || 'Error desconocido'));
+        return;
+      }
+
+      alert(`Establecimiento "${colObj.nombre}" eliminado correctamente.`);
+      const destino = perfilActual?.colegio_id || 'default';
+      setColegioGestionId(destino);
+      await cargarTodo(destino);
+      if (onRecargarColegio) onRecargarColegio();
+    } catch (err) {
+      alert('Error al conectar con la función de eliminación: ' + err.message);
+    } finally {
+      setEliminandoColegio(false);
+    }
   };
 
   const togglePermiso = (rolId, permisoKey) => {
@@ -592,26 +632,51 @@ export default function GestionUsuarios({
                 </label>
 
                 {colegioObjetivoObj.id !== 'default' && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      actualizarColegioCliente(colegioObjetivoObj.id, {
-                        activo: colegioObjetivoObj.activo === false
-                      })
-                    }
-                    style={{
-                      background: colegioObjetivoObj.activo !== false ? '#16a34a' : '#dc2626',
-                      color: '#ffffff',
-                      border: 'none',
-                      borderRadius: '999px',
-                      padding: '4px 12px',
-                      fontSize: '12px',
-                      fontWeight: '700',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    {colegioObjetivoObj.activo !== false ? 'Suscripción Activa' : 'Suscripción Suspendida'}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        actualizarColegioCliente(colegioObjetivoObj.id, {
+                          activo: colegioObjetivoObj.activo === false
+                        })
+                      }
+                      style={{
+                        background: colegioObjetivoObj.activo !== false ? '#16a34a' : '#d97706',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '999px',
+                        padding: '4px 12px',
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {colegioObjetivoObj.activo !== false ? 'Suscripción Activa' : 'Suscripción Suspendida'}
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={eliminandoColegio}
+                      onClick={() => eliminarColegioCliente(colegioObjetivoObj)}
+                      title="Eliminar colegio cliente y todos sus datos"
+                      style={{
+                        background: '#dc2626',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '999px',
+                        padding: '4px 12px',
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        cursor: eliminandoColegio ? 'wait' : 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}
+                    >
+                      <Trash2 size={13} />
+                      {eliminandoColegio ? 'Eliminando...' : 'Eliminar Colegio'}
+                    </button>
+                  </>
                 )}
               </div>
             </div>
