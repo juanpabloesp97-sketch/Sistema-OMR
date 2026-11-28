@@ -9,6 +9,15 @@ import {
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
+function hexToRgb(hex) {
+  const clean = String(hex || '#2563eb').replace('#', '');
+  const full = clean.length === 3
+    ? clean.split('').map((c) => c + c).join('')
+    : clean.padEnd(6, '0');
+  const num = parseInt(full, 16);
+  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
 export default function AnalisisPanel({
   resultados = [],
   config = {},
@@ -24,40 +33,33 @@ export default function AnalisisPanel({
   });
   const [mostrarConfigCortes, setMostrarConfigCortes] = useState(false);
 
-  // Caché local de imágenes corregidas solicitadas bajo demanda
   const [imagenesBajoDemanda, setImagenesBajoDemanda] = useState({});
   const [cargandoImagenModal, setCargandoImagenModal] = useState(false);
 
-  // Modales interactivos
   const [modalGrupo, setModalGrupo] = useState(null);
   const [modalItemNum, setModalItemNum] = useState(null);
   const [opcionSeleccionadaItem, setOpcionSeleccionadaItem] = useState(null);
   const [modalAlumnoId, setModalAlumnoId] = useState(null);
   const [modalTableroMaestro, setModalTableroMaestro] = useState(false);
 
-  // Modal "Revisar preguntas dobles y blancas"
   const [modalDudasAbierto, setModalDudasAbierto] = useState(false);
   const [claveDudaSeleccionada, setClaveDudaSeleccionada] = useState('');
   const [guardandoDuda, setGuardandoDuda] = useState(false);
   const [zoomDudaImagen, setZoomDudaImagen] = useState(false);
 
-  // Modal "Revisar desarrollo y completación (IA)"
   const [modalIaAbierto, setModalIaAbierto] = useState(false);
   const [puntajeIaSeleccionado, setPuntajeIaSeleccionado] = useState(0);
   const [guardandoIa, setGuardandoIa] = useState(false);
   const [zoomIaImagen, setZoomIaImagen] = useState(false);
 
-  // Edición individual y zoom en modal alumno
   const [editandoRespuestas, setEditandoRespuestas] = useState(false);
   const [respuestasEditadas, setRespuestasEditadas] = useState({});
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
   const [zoomImagen, setZoomImagen] = useState(false);
 
-  // Visor PDF de la prueba original
   const [pdfPruebaUrl, setPdfPruebaUrl] = useState(config.pdfPruebaUrl || null);
   const [pdfPruebaNombre, setPdfPruebaNombre] = useState(config.pdfPruebaNombre || '');
 
-  // Filtros y ordenamiento
   const [busqueda, setBusqueda] = useState('');
   const [ordenTabla, setOrdenTabla] = useState({ col: 'nombre', dir: 'asc' });
   const [ordenItems, setOrdenItems] = useState('numero');
@@ -666,7 +668,7 @@ export default function AnalisisPanel({
     XLSX.writeFile(wb, `Reporte_${(config.tituloPrueba || 'Evaluacion').replace(/\s+/g, '_')}.xlsx`);
   };
 
-  // NUEVO: Descargar Informe Técnico Ejecutivo UTP en PDF
+  // INFORME VISUAL COMPLETO CON TODOS LOS GRÁFICOS Y TABLERO MAESTRO
   const descargarInformeTecnicoUTP = () => {
     if (resultados.length === 0) return;
 
@@ -675,285 +677,435 @@ export default function AnalisisPanel({
     const notasArr = resultados.map((r) => Number(r.nota || 1.0));
     const aprobadosCount = notasArr.filter((n) => n >= notaAprob).length;
     const tasaAprobacion = totalAlumnos > 0 ? Math.round((aprobadosCount / totalAlumnos) * 100) : 0;
-    const notaMinObs = notasArr.length > 0 ? Math.min(...notasArr).toFixed(1) : '-';
-    const notaMaxObs = notasArr.length > 0 ? Math.max(...notasArr).toFixed(1) : '-';
 
-    let y = 14;
+    // ==================== PÁGINA 1: RESUMEN + GRÁFICO OAs + COMPARATIVO CURSOS ====================
+    let y = 12;
 
-    const verificarSaltoPagina = (alturaNecesaria = 18) => {
-      if (y + alturaNecesaria > 258) {
-        doc.addPage();
-        y = 16;
-      }
-    };
-
-    // Cabecera institucional
+    // Cabecera
     doc.setFillColor(30, 58, 138);
-    doc.roundedRect(14, y, 188, 25, 3, 3, 'F');
+    doc.roundedRect(12, y, 192, 23, 3, 3, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8.5);
-    doc.text('INFORME TÉCNICO DE RESULTADOS Y COBERTURA CURRICULAR (UTP)', 18, y + 6.5);
+    doc.setFontSize(8);
+    doc.text('REPORTE VISUAL DE RESULTADOS Y COBERTURA CURRICULAR', 16, y + 6);
 
-    doc.setFontSize(13.5);
+    doc.setFontSize(13);
     const tituloCorto = doc.splitTextToSize((config.tituloPrueba || 'Evaluación').toUpperCase(), 145)[0];
-    doc.text(tituloCorto, 18, y + 14);
+    doc.text(tituloCorto, 16, y + 13);
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8.5);
+    doc.setFontSize(8);
     doc.text(
-      `Asignatura: ${config.asignatura || '-'}   |   Exigencia: ${config.exigencia || 60}%   |   Escala: ${Number(config.notaMin || 1).toFixed(1)} - ${Number(config.notaMax || 7).toFixed(1)} (Aprob: ${notaAprob.toFixed(1)})`,
-      18,
-      y + 20.5
+      `Asignatura: ${config.asignatura || '-'}  |  Evaluados: ${totalAlumnos}  |  Exigencia: ${config.exigencia || 60}%  |  Escala: ${Number(config.notaMin || 1).toFixed(1)} - ${Number(config.notaMax || 7).toFixed(1)}`,
+      16,
+      y + 19
     );
-    doc.text(`Fecha: ${fechaHoy}`, 198, y + 6.5, { align: 'right' });
+    doc.text(`Fecha: ${fechaHoy}`, 200, y + 6, { align: 'right' });
 
-    y += 31;
+    y += 28;
 
-    // 1. Indicadores Clave (KPIs)
-    doc.setTextColor(15, 23, 42);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
-    doc.text('1. RESUMEN ESTADÍSTICO GENERAL', 14, y);
-    y += 4;
-
+    // Tarjetas KPI a color (Rindieron / Promedio / % Logro / Aprobación)
     const kpis = [
-      { label: 'EVALUADOS', val: `${totalAlumnos}` },
-      { label: 'PROMEDIO NOTAS', val: `${promedioNota}` },
-      { label: 'LOGRO MEDIO', val: `${promedioLogro}%` },
-      { label: 'APROBACIÓN', val: `${tasaAprobacion}% (${aprobadosCount}/${totalAlumnos})` },
-      { label: 'NOTA MÍN / MÁX', val: `${notaMinObs} / ${notaMaxObs}` }
+      { label: 'RINDIERON', val: `${totalAlumnos}`, color: [15, 23, 42] },
+      { label: 'PROMEDIO DE NOTAS', val: `${promedioNota}`, color: Number(promedioNota) >= notaAprob ? [22, 163, 74] : [220, 38, 38] },
+      { label: 'PORCENTAJE DE LOGRO', val: `${promedioLogro}%`, color: [37, 99, 235] },
+      { label: 'TASA APROBACIÓN', val: `${tasaAprobacion}%`, color: [79, 70, 229] }
     ];
-
-    const anchoKpi = 36;
     kpis.forEach((k, idx) => {
-      const xK = 14 + idx * (anchoKpi + 2);
+      const xK = 12 + idx * 48.5;
       doc.setFillColor(248, 250, 252);
       doc.setDrawColor(203, 213, 225);
-      doc.roundedRect(xK, y, anchoKpi, 17, 2, 2, 'FD');
+      doc.roundedRect(xK, y, 46.5, 18, 2.5, 2.5, 'FD');
 
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(6.5);
       doc.setTextColor(100, 116, 139);
-      doc.text(k.label, xK + anchoKpi / 2, y + 5.5, { align: 'center' });
+      doc.text(k.label, xK + 23.25, y + 5.5, { align: 'center' });
 
-      doc.setFontSize(10.5);
-      doc.setTextColor(15, 23, 42);
-      doc.text(k.val, xK + anchoKpi / 2, y + 13, { align: 'center' });
+      doc.setFontSize(13.5);
+      doc.setTextColor(...k.color);
+      doc.text(k.val, xK + 23.25, y + 14, { align: 'center' });
     });
 
     y += 24;
 
-    // 2. Distribución por Niveles de Desempeño
+    // GRÁFICO 1: BARRAS VERTICALES DE LOGRO POR OA
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(12, y, 192, 84, 3, 3, 'FD');
+
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
+    doc.setFontSize(9.5);
     doc.setTextColor(15, 23, 42);
-    doc.text('2. DISTRIBUCIÓN POR NIVELES DE DESEMPEÑO', 14, y);
-    y += 4;
+    doc.text('GRÁFICO 1: PORCENTAJE DE LOGRO POR OBJETIVO DE APRENDIZAJE (OA)', 16, y + 6.5);
 
-    doc.setFillColor(241, 245, 249);
+    const chartOaX = 18;
+    const chartOaY = y + 14;
+    const chartOaW = 180;
+    const chartOaH = 44;
+
+    doc.setFillColor(248, 250, 252);
+    doc.rect(chartOaX, chartOaY, chartOaW, chartOaH, 'F');
     doc.setDrawColor(203, 213, 225);
-    doc.rect(14, y, 188, 7, 'FD');
-    doc.setFontSize(8);
-    doc.text('Nivel de Desempeño', 17, y + 4.8);
-    doc.text('Rango Logro', 78, y + 4.8);
-    doc.text('Estudiantes', 118, y + 4.8);
-    doc.text('% del Total', 152, y + 4.8);
-    y += 7;
+    doc.line(chartOaX, chartOaY + chartOaH, chartOaX + chartOaW, chartOaY + chartOaH);
 
-    [...gruposDesempeno].reverse().forEach((g) => {
-      const cant = g.estudiantes.length;
-      const pct = totalAlumnos > 0 ? Math.round((cant / totalAlumnos) * 100) : 0;
-      doc.setDrawColor(226, 232, 240);
-      doc.rect(14, y, 188, 6.8);
+    const nOas = Math.max(1, listaOAs.length);
+    const slotOa = chartOaW / nOas;
+    const barOaW = Math.min(26, slotOa * 0.55);
+
+    listaOAs.forEach((oaObj, idx) => {
+      const rgb = hexToRgb(oaObj.color);
+      const pct = oaObj.promedioLogro;
+      const barH = Math.max(2, (pct / 100) * (chartOaH - 8));
+      const xCenter = chartOaX + idx * slotOa + slotOa / 2;
+      const xBar = xCenter - barOaW / 2;
+      const yBar = chartOaY + chartOaH - barH;
+
+      doc.setFillColor(...rgb);
+      doc.roundedRect(xBar, yBar, barOaW, barH, 1.5, 1.5, 'F');
+
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
-      doc.setTextColor(30, 41, 59);
-      doc.text(g.label, 17, y + 4.6);
-
-      doc.setFont('helvetica', 'normal');
-      doc.text(g.rango, 78, y + 4.6);
-      doc.text(`${cant}`, 123, y + 4.6);
-      doc.text(`${pct}%`, 156, y + 4.6);
-
-      // Mini barra visual
-      doc.setFillColor(226, 232, 240);
-      doc.rect(172, y + 2, 26, 2.8, 'F');
-      if (pct > 0) {
-        doc.setFillColor(37, 99, 235);
-        doc.rect(172, y + 2, Math.max(1, (pct / 100) * 26), 2.8, 'F');
-      }
-
-      y += 6.8;
-    });
-
-    y += 7;
-
-    // 2B. Comparativo entre Cursos (si hay más de un curso)
-    const filasCursosReales = comparativoCursosApilado.filter((f) => !f.esConsolidado);
-    if (filasCursosReales.length > 1) {
-      verificarSaltoPagina(26 + filasCursosReales.length * 7);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10);
       doc.setTextColor(15, 23, 42);
-      doc.text('COMPARATIVO ENTRE CURSOS PARALELOS', 14, y);
-      y += 4;
+      doc.text(`${pct}%`, xCenter, yBar - 1.8, { align: 'center' });
 
-      doc.setFillColor(241, 245, 249);
-      doc.setDrawColor(203, 213, 225);
-      doc.rect(14, y, 188, 7, 'FD');
-      doc.setFontSize(8);
-      doc.text('Curso', 17, y + 4.8);
-      doc.text('Evaluados', 75, y + 4.8);
-      doc.text('Promedio Nota', 115, y + 4.8);
-      doc.text('Muy Bueno + Bueno', 158, y + 4.8);
-      y += 7;
-
-      filasCursosReales.forEach((fc) => {
-        const altos = (fc.tramos.find((t) => t.id === 'muy_bueno')?.pct || 0) + (fc.tramos.find((t) => t.id === 'bueno')?.pct || 0);
-        doc.setDrawColor(226, 232, 240);
-        doc.rect(14, y, 188, 6.8);
-        doc.setFont('helvetica', 'bold');
-        doc.text(fc.curso, 17, y + 4.6);
-        doc.setFont('helvetica', 'normal');
-        doc.text(`${fc.total}`, 80, y + 4.6);
-        doc.text(`${fc.promedio}`, 122, y + 4.6);
-        doc.text(`${altos}%`, 168, y + 4.6);
-        y += 6.8;
-      });
-
-      y += 7;
-    }
-
-    // 3. Logro por Objetivo de Aprendizaje (OA) ordenado de menor a mayor
-    verificarSaltoPagina(28);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
-    doc.setTextColor(15, 23, 42);
-    doc.text('3. COBERTURA Y LOGRO POR OBJETIVO DE APRENDIZAJE (ORDENADO DE MENOR A MAYOR)', 14, y);
-    y += 4;
-
-    doc.setFillColor(241, 245, 249);
-    doc.setDrawColor(203, 213, 225);
-    doc.rect(14, y, 188, 7, 'FD');
-    doc.setFontSize(8);
-    doc.text('Objetivo (OA)', 17, y + 4.8);
-    doc.text('Descripción / Habilidad', 48, y + 4.8);
-    doc.text('Ítems', 148, y + 4.8);
-    doc.text('% Logro', 175, y + 4.8);
-    y += 7;
-
-    const oasOrdenadosMenorAMayor = [...listaOAs].sort((a, b) => a.promedioLogro - b.promedioLogro);
-    oasOrdenadosMenorAMayor.forEach((oaObj, idxOa) => {
-      const descTxt = oaObj.descripcion || 'Objetivo evaluado en instrumento';
-      const descLineas = doc.splitTextToSize(descTxt, 95).slice(0, 2);
-      const altoFila = Math.max(7.5, descLineas.length * 4 + 3);
-      verificarSaltoPagina(altoFila + 2);
-
-      const esDescendido = idxOa < 3 && oaObj.promedioLogro < cortes.aceptable;
-      doc.setDrawColor(226, 232, 240);
-      if (esDescendido) {
-        doc.setFillColor(254, 242, 242);
-        doc.rect(14, y, 188, altoFila, 'FD');
-      } else {
-        doc.rect(14, y, 188, altoFila);
-      }
-
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(esDescendido ? 185 : 30, esDescendido ? 28 : 58, esDescendido ? 28 : 138);
-      doc.text(oaObj.oa, 17, y + 4.8);
-
-      doc.setFont('helvetica', 'normal');
       doc.setFontSize(7.5);
       doc.setTextColor(51, 65, 85);
-      doc.text(descLineas, 48, y + 4.3);
-
-      doc.setFontSize(7.5);
-      doc.text(oaObj.preguntas.join(', '), 148, y + 4.8);
-
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8.5);
-      doc.setTextColor(esDescendido ? 220 : 15, esDescendido ? 38 : 23, esDescendido ? 38 : 42);
-      doc.text(`${oaObj.promedioLogro}%${esDescendido ? ' (!)' : ''}`, 175, y + 4.8);
-
-      y += altoFila;
+      const oaLbl = doc.splitTextToSize(oaObj.oa, slotOa - 2)[0];
+      doc.text(oaLbl, xCenter, chartOaY + chartOaH + 4.5, { align: 'center' });
     });
 
-    y += 8;
+    // Leyenda compacta de ítems por OA debajo del gráfico
+    let yOaLey = chartOaY + chartOaH + 9;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.8);
+    doc.setTextColor(71, 85, 105);
+    listaOAs.slice(0, 4).forEach((oaObj) => {
+      const descShort = oaObj.descripcion ? `: ${oaObj.descripcion}` : '';
+      const lineaTxt = doc.splitTextToSize(`• ${oaObj.oa} (Ítems: ${oaObj.preguntas.join(', ')})${descShort}`, 182)[0];
+      doc.text(lineaTxt, 17, yOaLey);
+      yOaLey += 3.6;
+    });
 
-    // 4. Nómina de Estudiantes con Nota Bajo Aprobación (Alerta Pedagógica / PIE)
-    const alumnosReprobados = [...resultados]
-      .filter((r) => Number(r.nota || 1.0) < notaAprob)
-      .sort((a, b) => Number(a.nota || 1.0) - Number(b.nota || 1.0));
+    y += 89;
 
-    verificarSaltoPagina(26);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
-    doc.setTextColor(15, 23, 42);
-    doc.text(`4. ESTUDIANTES BAJO NOTA DE APROBACIÓN (< ${notaAprob.toFixed(1)}) — FOCALIZACIÓN DE REFORZAMIENTO (${alumnosReprobados.length})`, 14, y);
-    y += 4;
+    // GRÁFICO 2: COMPARATIVO DE CURSOS PARALELOS (BARRAS APILADAS HORIZONTALES)
+    if (comparativoCursosApilado.length > 1) {
+      const altoComp = 24 + comparativoCursosApilado.length * 8.5;
+      doc.setDrawColor(226, 232, 240);
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(12, y, 192, altoComp, 3, 3, 'FD');
 
-    if (alumnosReprobados.length === 0) {
-      doc.setFillColor(240, 253, 244);
-      doc.setDrawColor(187, 247, 208);
-      doc.roundedRect(14, y, 188, 9, 2, 2, 'FD');
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8.5);
-      doc.setTextColor(22, 101, 52);
-      doc.text('¡Felicitaciones! El 100% de los estudiantes evaluados obtuvo nota igual o superior a la mínima de aprobación.', 18, y + 5.8);
-      y += 14;
-    } else {
-      doc.setFillColor(254, 242, 242);
-      doc.setDrawColor(254, 202, 202);
-      doc.rect(14, y, 188, 7, 'FD');
-      doc.setFontSize(8);
-      doc.setTextColor(153, 27, 27);
-      doc.text('Estudiante', 17, y + 4.8);
-      doc.text('RUT', 98, y + 4.8);
-      doc.text('Curso', 130, y + 4.8);
-      doc.text('% Logro', 158, y + 4.8);
-      doc.text('Nota', 184, y + 4.8);
-      y += 7;
+      doc.setFontSize(9.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text('GRÁFICO 2: COMPARATIVO DE CURSOS (DISTRIBUCIÓN POR NIVEL DE LOGRO)', 16, y + 6.5);
 
-      alumnosReprobados.forEach((al) => {
-        verificarSaltoPagina(7.5);
-        doc.setDrawColor(241, 245, 249);
-        doc.rect(14, y, 188, 6.5);
+      // Leyenda de los 5 colores
+      let xLeg = 16;
+      const yLeg = y + 12.5;
+      gruposDesempeno.forEach((g) => {
+        const rgb = hexToRgb(g.color);
+        doc.setFillColor(...rgb);
+        doc.rect(xLeg, yLeg - 2.5, 3, 3, 'F');
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(8);
-        doc.setTextColor(15, 23, 42);
-        doc.text(al.nombre.slice(0, 42), 17, y + 4.4);
-
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(71, 85, 105);
-        doc.text(al.rut || '-', 98, y + 4.4);
-        doc.text(al.curso || '-', 130, y + 4.4);
-        doc.text(`${Number(al.porcentaje || 0)}%`, 161, y + 4.4);
-
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(220, 38, 38);
-        doc.text(Number(al.nota || 1.0).toFixed(1), 184, y + 4.4);
-        y += 6.5;
+        doc.setFontSize(6.5);
+        doc.setTextColor(51, 65, 85);
+        doc.text(g.label, xLeg + 4, yLeg);
+        xLeg += 36;
       });
-      y += 10;
+
+      let yRowC = y + 17;
+      comparativoCursosApilado.forEach((fila) => {
+        if (fila.esConsolidado) {
+          doc.setFillColor(239, 246, 255);
+          doc.rect(14, yRowC - 1, 188, 7.5, 'F');
+        }
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7.5);
+        doc.setTextColor(fila.esConsolidado ? 30 : 15, fila.esConsolidado ? 64 : 23, fila.esConsolidado ? 175 : 42);
+        doc.text(`${fila.curso} (${fila.total})`, 16, yRowC + 4);
+
+        const barStartX = 56;
+        const barTotalW = 122;
+        doc.setFillColor(241, 245, 249);
+        doc.rect(barStartX, yRowC, barTotalW, 5.5, 'F');
+
+        let xSeg = barStartX;
+        fila.tramos.forEach((t) => {
+          if (t.count > 0) {
+            const wSeg = (t.pct / 100) * barTotalW;
+            const rgb = hexToRgb(t.color);
+            doc.setFillColor(...rgb);
+            doc.rect(xSeg, yRowC, wSeg, 5.5, 'F');
+            if (t.pct >= 9) {
+              doc.setTextColor(255, 255, 255);
+              doc.setFontSize(6.2);
+              doc.text(`${t.pct}%`, xSeg + wSeg / 2, yRowC + 3.9, { align: 'center' });
+            }
+            xSeg += wSeg;
+          }
+        });
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7.5);
+        doc.setTextColor(51, 65, 85);
+        doc.text(`Prom: ${fila.promedio}`, 199, yRowC + 4, { align: 'right' });
+
+        yRowC += 8.2;
+      });
     }
 
-    // Firmas técnicas al pie
-    verificarSaltoPagina(24);
-    y = Math.max(y + 8, 242);
-    doc.setDrawColor(100, 116, 139);
-    doc.setLineWidth(0.3);
-    doc.line(28, y, 88, y);
-    doc.line(126, y, 186, y);
+    // ==================== PÁGINA 2: GRUPOS DE DESEMPEÑO + GRÁFICO POR PREGUNTA ====================
+    doc.addPage('letter', 'portrait');
+    y = 12;
+
+    // GRÁFICO 3: GRUPOS DE DESEMPEÑO
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(12, y, 192, 82, 3, 3, 'FD');
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(51, 65, 85);
-    doc.text('Firma Docente Asignatura', 58, y + 4.5, { align: 'center' });
-    doc.text('V°B° Unidad Técnico Pedagógica (UTP)', 156, y + 4.5, { align: 'center' });
+    doc.setFontSize(9.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text('GRÁFICO 3: GRUPOS DE DESEMPEÑO DEL CURSO / NIVEL', 16, y + 6.5);
 
-    doc.save(`Informe_Tecnico_UTP_${(config.tituloPrueba || 'Evaluacion').replace(/\s+/g, '_')}.pdf`);
+    const chartGrpX = 18;
+    const chartGrpY = y + 14;
+    const chartGrpW = 180;
+    const chartGrpH = 48;
+
+    doc.setFillColor(248, 250, 252);
+    doc.rect(chartGrpX, chartGrpY, chartGrpW, chartGrpH, 'F');
+    doc.setDrawColor(203, 213, 225);
+    doc.line(chartGrpX, chartGrpY + chartGrpH, chartGrpX + chartGrpW, chartGrpY + chartGrpH);
+
+    const slotGrp = chartGrpW / 5;
+    const barGrpW = 20;
+
+    gruposDesempeno.forEach((g, idx) => {
+      const cant = g.estudiantes.length;
+      const pctG = totalAlumnos > 0 ? Math.round((cant / totalAlumnos) * 100) : 0;
+      const hBar = Math.max(2, (cant / maxAlumnosGrupo) * (chartGrpH - 9));
+      const xCenter = chartGrpX + idx * slotGrp + slotGrp / 2;
+      const yBar = chartGrpY + chartGrpH - hBar;
+      const rgb = hexToRgb(g.color);
+
+      doc.setFillColor(...rgb);
+      doc.roundedRect(xCenter - barGrpW / 2, yBar, barGrpW, hBar, 1.5, 1.5, 'F');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.8);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`${cant} (${pctG}%)`, xCenter, yBar - 1.8, { align: 'center' });
+
+      doc.setFontSize(7.2);
+      doc.setTextColor(30, 41, 59);
+      doc.text(g.label, xCenter, chartGrpY + chartGrpH + 4.5, { align: 'center' });
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text(g.rango, xCenter, chartGrpY + chartGrpH + 8.5, { align: 'center' });
+    });
+
+    y += 88;
+
+    // GRÁFICO 4: PORCENTAJE DE LOGRO POR PREGUNTA (TODAS LAS PREGUNTAS CON SUS COLORES)
+    const bloquesPreguntas = preguntasOrdenadas.length > 30
+      ? [preguntasOrdenadas.slice(0, Math.ceil(preguntasOrdenadas.length / 2)), preguntasOrdenadas.slice(Math.ceil(preguntasOrdenadas.length / 2))]
+      : [preguntasOrdenadas];
+
+    const altoCardPreg = bloquesPreguntas.length === 2 ? 156 : 92;
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(12, y, 192, altoCardPreg, 3, 3, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text('GRÁFICO 4: PORCENTAJE DE LOGRO POR PREGUNTA (COLOREADO POR NIVEL)', 16, y + 6.5);
+
+    let yBloqueP = y + 14;
+    bloquesPreguntas.forEach((subLista) => {
+      const chPX = 16;
+      const chPW = 184;
+      const chPH = 52;
+
+      doc.setFillColor(248, 250, 252);
+      doc.rect(chPX, yBloqueP, chPW, chPH, 'F');
+      doc.setDrawColor(203, 213, 225);
+      doc.line(chPX, yBloqueP + chPH, chPX + chPW, yBloqueP + chPH);
+
+      const nSub = Math.max(1, subLista.length);
+      const slotP = chPW / nSub;
+      const barPW = Math.min(8, Math.max(2.6, slotP * 0.68));
+
+      subLista.forEach((it, idx) => {
+        const xC = chPX + idx * slotP + slotP / 2;
+        const pct = it.anulada ? 0 : it.pctLogro;
+        const hP = Math.max(1.8, (pct / 100) * (chPH - 9));
+        const yP = yBloqueP + chPH - hP;
+        const rgb = hexToRgb(it.colorInfo.color);
+
+        doc.setFillColor(...rgb);
+        doc.rect(xC - barPW / 2, yP, barPW, hP, 'F');
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(nSub > 25 ? 4.8 : 6);
+        doc.setTextColor(51, 65, 85);
+        doc.text(it.anulada ? 'AN' : `${pct}%`, xC, yP - 1.3, { align: 'center' });
+
+        doc.setFontSize(nSub > 25 ? 5 : 6.2);
+        doc.text(`P${it.numero}`, xC, yBloqueP + chPH + 4, { align: 'center' });
+      });
+
+      yBloqueP += chPH + 14;
+    });
+
+    // ==================== PÁGINA 3 (LANDSCAPE / HORIZONTAL): TABLERO MAESTRO COMPLETO ====================
+    doc.addPage('letter', 'landscape');
+    const pageW = 279.4;
+    const pageH = 215.9;
+    y = 12;
+
+    doc.setFillColor(15, 23, 42);
+    doc.roundedRect(10, y, pageW - 20, 14, 2.5, 2.5, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text(`TABLERO MAESTRO DE RESULTADOS — ${(config.tituloPrueba || 'Evaluación').toUpperCase()}`, 14, y + 6.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.text('Ordenado de mayor a menor % de logro en ambos ejes (ítems arriba, estudiantes abajo)', 14, y + 11.2);
+
+    y += 18;
+
+    const colAlumnoW = 48;
+    const colLogroW = 11;
+    const colNotaW = 10;
+    const nColsPreg = Math.max(1, preguntasTableroOrdenadas.length);
+    const anchoDisponibleItems = pageW - 20 - colAlumnoW - colLogroW - colNotaW;
+    const colPregW = anchoDisponibleItems / nColsPreg;
+    const fontTabla = nColsPreg > 35 ? 4.5 : nColsPreg > 25 ? 5.2 : 6;
+
+    const dibujarCabeceraTablero = (yPos) => {
+      doc.setFillColor(15, 23, 42);
+      doc.rect(10, yPos, pageW - 20, 9.5, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.5);
+      doc.text('ESTUDIANTE', 12, yPos + 6);
+      doc.text('LOGRO', 10 + colAlumnoW + colLogroW / 2, yPos + 6, { align: 'center' });
+      doc.text('NOTA', 10 + colAlumnoW + colLogroW + colNotaW / 2, yPos + 6, { align: 'center' });
+
+      preguntasTableroOrdenadas.forEach((it, idx) => {
+        const xCell = 10 + colAlumnoW + colLogroW + colNotaW + idx * colPregW;
+        if (it.anulada) {
+          doc.setFillColor(71, 85, 105);
+          doc.rect(xCell, yPos, colPregW, 9.5, 'F');
+        }
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(fontTabla);
+        doc.text(`P${it.numero}`, xCell + colPregW / 2, yPos + 4, { align: 'center' });
+        doc.setTextColor(147, 197, 253);
+        doc.setFontSize(Math.max(4, fontTabla - 0.7));
+        doc.text(it.anulada ? 'AN' : `${it.pctLogro}%`, xCell + colPregW / 2, yPos + 7.8, { align: 'center' });
+      });
+    };
+
+    dibujarCabeceraTablero(y);
+    y += 9.5;
+
+    const rowH = 5.4;
+    alumnosTableroOrdenados.forEach((al, idxAl) => {
+      if (y + rowH > pageH - 14) {
+        doc.addPage('letter', 'landscape');
+        y = 12;
+        dibujarCabeceraTablero(y);
+        y += 9.5;
+      }
+
+      doc.setFillColor(idxAl % 2 === 0 ? 255 : 248, idxAl % 2 === 0 ? 255 : 250, idxAl % 2 === 0 ? 255 : 252);
+      doc.setDrawColor(226, 232, 240);
+      doc.rect(10, y, pageW - 20, rowH, 'FD');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.2);
+      doc.setTextColor(30, 58, 138);
+      const nomCorto = doc.splitTextToSize(al.nombre || '', colAlumnoW - 3)[0];
+      doc.text(nomCorto, 11.5, y + 3.8);
+
+      doc.setTextColor(15, 23, 42);
+      doc.text(`${al.porcentaje}%`, 10 + colAlumnoW + colLogroW / 2, y + 3.8, { align: 'center' });
+
+      const notaVal = Number(al.nota || 1.0);
+      doc.setTextColor(notaVal >= notaAprob ? 22 : 220, notaVal >= notaAprob ? 163 : 38, notaVal >= notaAprob ? 74 : 38);
+      doc.text(notaVal.toFixed(1), 10 + colAlumnoW + colLogroW + colNotaW / 2, y + 3.8, { align: 'center' });
+
+      preguntasTableroOrdenadas.forEach((it, idxP) => {
+        const xCell = 10 + colAlumnoW + colLogroW + colNotaW + idxP * colPregW;
+        let bg = [248, 250, 252];
+        let fg = [148, 163, 184];
+        let txtCell = '-';
+
+        if (it.tipo === 'completacion' || it.tipo === 'desarrollo') {
+          const ptsMax = obtenerPuntajeItem(pauta[it.numero]);
+          const ptsAl = obtenerPuntosObtenidosEnPregunta(it.numero, al.respuestas || {});
+          const pleno = !it.anulada && ptsAl >= ptsMax && ptsMax > 0;
+          const parcial = !it.anulada && ptsAl > 0 && ptsAl < ptsMax;
+
+          if (it.anulada) {
+            bg = [241, 245, 249]; fg = [100, 116, 139]; txtCell = 'AN';
+          } else if (pleno) {
+            bg = [220, 252, 231]; fg = [22, 101, 52]; txtCell = `${ptsAl}/${ptsMax}`;
+          } else if (parcial) {
+            bg = [254, 249, 195]; fg = [133, 77, 14]; txtCell = `${ptsAl}/${ptsMax}`;
+          } else {
+            bg = [254, 226, 226]; fg = [153, 27, 27]; txtCell = `0/${ptsMax}`;
+          }
+        } else {
+          const resp = al.respuestas?.[it.numero] || '';
+          const ok = !it.anulada && it.clavesCorrectas.includes(resp);
+          if (it.anulada) {
+            bg = [241, 245, 249]; fg = [100, 116, 139]; txtCell = 'AN';
+          } else if (ok) {
+            bg = [220, 252, 231]; fg = [22, 101, 52]; txtCell = 'OK';
+          } else if (!resp) {
+            bg = [248, 250, 252]; fg = [148, 163, 184]; txtCell = '-';
+          } else {
+            bg = [254, 226, 226]; fg = [153, 27, 27]; txtCell = resp === 'DOBLE' ? 'DUP' : `X:${resp}`;
+          }
+        }
+
+        doc.setFillColor(...bg);
+        doc.setDrawColor(235, 240, 245);
+        doc.rect(xCell, y, colPregW, rowH, 'FD');
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(fontTabla);
+        doc.setTextColor(...fg);
+        doc.text(txtCell, xCell + colPregW / 2, y + 3.8, { align: 'center' });
+      });
+
+      y += rowH;
+    });
+
+    // Pie de firmas en el borde inferior de la última página
+    const yFirma = Math.min(pageH - 10, y + 14);
+    if (yFirma <= pageH - 8) {
+      doc.setDrawColor(100, 116, 139);
+      doc.setLineWidth(0.3);
+      doc.line(45, yFirma, 115, yFirma);
+      doc.line(165, yFirma, 235, yFirma);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(51, 65, 85);
+      doc.text('Firma Docente Asignatura', 80, yFirma + 4, { align: 'center' });
+      doc.text('V°B° Unidad Técnico Pedagógica (UTP)', 200, yFirma + 4, { align: 'center' });
+    }
+
+    doc.save(`Informe_Graficos_UTP_${(config.tituloPrueba || 'Evaluacion').replace(/\s+/g, '_')}.pdf`);
   };
 
   if (totalAlumnos === 0) {
@@ -1099,7 +1251,7 @@ export default function AnalisisPanel({
               }}
             >
               <FileCheck2 size={15} />
-              Informe Técnico UTP (PDF)
+              Informe Gráficos UTP (PDF)
             </button>
 
             <button
