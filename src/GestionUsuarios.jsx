@@ -38,6 +38,8 @@ export default function GestionUsuarios({
   const [nuevoColegioMaxUsuarios, setNuevoColegioMaxUsuarios] = useState(30);
   const [creandoColegio, setCreandoColegio] = useState(false);
   const [eliminandoColegio, setEliminandoColegio] = useState(false);
+  const [ticketsSoporte, setTicketsSoporte] = useState([]);
+  const [cargandoTickets, setCargandoTickets] = useState(false);
 
   const [listaUsuarios, setListaUsuarios] = useState([]);
   const [niveles, setNiveles] = useState([]);
@@ -86,6 +88,14 @@ export default function GestionUsuarios({
           .select('*')
           .order('created_at', { ascending: true });
         if (cols) setColegiosLista(cols);
+        setCargandoTickets(true);
+        const { data: tks } = await supabase
+          .from('soporte_tickets')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(30);
+        if (tks) setTicketsSoporte(tks);
+        setCargandoTickets(false);
       }
 
       const { data: users, error: errUsers } = await supabase
@@ -684,6 +694,90 @@ export default function GestionUsuarios({
         </div>
       )}
 
+{/* BANDEJA DE SOLICITUDES DE SOPORTE (SOLO SUPER-ADMIN) */}
+      {esSuperAdminGlobal && (
+        <div style={{ background: '#ffffff', padding: '20px 24px', borderRadius: '12px', border: '1px solid #cbd5e1' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <h3 style={{ margin: 0, fontSize: '17px', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Mail size={19} color="#2563eb" />
+              Buzón de Solicitudes de Soporte ({ticketsSoporte.filter((t) => t.estado === 'pendiente').length} pendientes)
+            </h3>
+            <button
+              type="button"
+              onClick={() => cargarTodo(colegioGestionId)}
+              style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '7px', padding: '5px 10px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
+            >
+              {cargandoTickets ? 'Actualizando...' : 'Actualizar'}
+            </button>
+          </div>
+
+          {ticketsSoporte.length === 0 ? (
+            <div style={{ fontSize: '13px', color: '#64748b', background: '#f8fafc', padding: '12px', borderRadius: '8px' }}>
+              No hay solicitudes de soporte registradas aún.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '300px', overflowY: 'auto' }}>
+              {ticketsSoporte.map((tk) => {
+                const pendiente = tk.estado === 'pendiente';
+                return (
+                  <div
+                    key={tk.id}
+                    style={{
+                      padding: '12px 14px',
+                      borderRadius: '10px',
+                      border: pendiente ? '1px solid #93c5fd' : '1px solid #e2e8f0',
+                      background: pendiente ? '#eff6ff' : '#f8fafc',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
+                      flexWrap: 'wrap',
+                      gap: '10px'
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: '240px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <strong style={{ fontSize: '14px', color: '#0f172a' }}>{tk.asunto}</strong>
+                        <span style={{ fontSize: '11px', fontWeight: '700', background: '#dbeafe', color: '#1e3a8a', padding: '2px 8px', borderRadius: '999px' }}>
+                          {tk.colegio_nombre || tk.colegio_id}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#475569', marginTop: '2px' }}>
+                        De: <strong>{tk.usuario_nombre}</strong> ({tk.usuario_email}) • {new Date(tk.created_at).toLocaleDateString('es-CL')}
+                      </div>
+                      <p style={{ margin: '6px 0 0 0', fontSize: '13px', color: '#1e293b', whiteSpace: 'pre-line' }}>
+                        {tk.mensaje}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const nuevoEstado = pendiente ? 'resuelto' : 'pendiente';
+                        await supabase.from('soporte_tickets').update({ estado: nuevoEstado }).eq('id', tk.id);
+                        setTicketsSoporte((prev) =>
+                          prev.map((item) => (item.id === tk.id ? { ...item, estado: nuevoEstado } : item))
+                        );
+                      }}
+                      style={{
+                        background: pendiente ? '#16a34a' : '#e2e8f0',
+                        color: pendiente ? '#ffffff' : '#475569',
+                        border: 'none',
+                        borderRadius: '999px',
+                        padding: '5px 12px',
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {pendiente ? 'Marcar Resuelto ✓' : 'Resuelto'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
       {/* INDICADOR DE CUPOS DEL PLAN DEL ESTABLECIMIENTO */}
       <div
         style={{

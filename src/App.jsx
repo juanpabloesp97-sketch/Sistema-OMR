@@ -15,6 +15,7 @@ import AnalisisPanel from './AnalisisPanel';
 import Login from './Login';
 import GestionUsuarios from './GestionUsuarios';
 import CamaraOMR from './CamaraOMR';
+import CentroAyudaSoporte from './CentroAyudaSoporte';
 import { procesarHojaOMR, actualizarAnotacionesImagenOMR } from './omrEngine';
 import { convertirPdfAImagenes } from './pdfToImages';
 import { procesarLogoBlancoYNegro } from './utils/logoEscuela';
@@ -5028,6 +5029,7 @@ export default function App() {
             </div>
           </div>
         )}
+        <CentroAyudaSoporte profesor={profesor} colegioActual={colegioActual} />
       </main>
     </div>
   );
